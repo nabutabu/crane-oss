@@ -39,6 +39,18 @@ type Fleet struct {
 	name string
 }
 
+type HostHealth string
+
+const (
+	HostHealthUnknown   HostHealth = "unknown"
+	HostHealthHealthy   HostHealth = "healthy"
+	HostHealthUnhealthy HostHealth = "unhealthy"
+)
+
+type HealthRequest struct {
+	Health string
+}
+
 type Host struct {
 	ID         string
 	HostName   string
@@ -50,6 +62,6 @@ type Host struct {
 	ImageID    string
 	Capacity   Capacity
 	State      HostState
-	Health     string
+	Health     HostHealth
 	CreatedAt  time.Time
 }
