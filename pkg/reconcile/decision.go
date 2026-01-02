@@ -1,6 +1,7 @@
 package reconcile
 
 import (
+	"github.com/nabutabu/crane-oss/internal/execute"
 	"github.com/nabutabu/crane-oss/pkg/api"
 )
 
@@ -12,13 +13,22 @@ const (
 	DecisionReplace ReconcileDecision = "replace"
 )
 
-func Decide(host *api.Host) ReconcileDecision {
+func Decide(host *api.Host) *execute.Action {
 	// for a given host decide what to do given host.Health and host.Status
 	if host.Health == api.HostHealthHealthy && (host.State == api.HostReady || host.State == api.HostDraining) {
-		return DecisionDrain
+		return &execute.Action{
+			HostID: host.ID,
+			Type:   execute.ActionDrainHost,
+		}
 	} else if host.Health == api.HostHealthUnhealthy && (host.State == api.HostReady || host.State == api.HostDraining) {
-		return DecisionReplace
+		return &execute.Action{
+			HostID: host.ID,
+			Type:   execute.ActionReplaceHost,
+		}
 	}
 
-	return DecisionDrain
+	return &execute.Action{
+		HostID: host.ID,
+		Type:   execute.ActionDrainHost,
+	}
 }

@@ -2,9 +2,9 @@ package reconcile
 
 import (
 	"context"
-	"log"
-
+	"github.com/nabutabu/crane-oss/internal/execute"
 	"github.com/nabutabu/crane-oss/internal/hostcatalog/store"
+	"log"
 )
 
 type HostReconciler interface {
@@ -12,7 +12,8 @@ type HostReconciler interface {
 }
 
 type DefaultHostReconciler struct {
-	store store.PostgresHostStore
+	store   store.PostgresHostStore
+	execute execute.Executor
 }
 
 func (r *DefaultHostReconciler) Reconcile(ctx context.Context) error {
@@ -22,8 +23,12 @@ func (r *DefaultHostReconciler) Reconcile(ctx context.Context) error {
 	}
 
 	for _, host := range hosts {
-		decision := Decide(host)
-		log.Printf("For host: %s, decision: %s", host, decision)
+		action := Decide(host)
+		log.Printf("For host: %s, decision: %s", host, action)
+		err := r.execute.Execute(ctx, action)
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil
