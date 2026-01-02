@@ -12,6 +12,12 @@ type PostgresHostStore struct {
 	DB *sql.DB
 }
 
+func NewPostgresHostStore(DB *sql.DB) *PostgresHostStore {
+	return &PostgresHostStore{
+		DB: DB,
+	}
+}
+
 func (store *PostgresHostStore) Create(ctx context.Context, host *api.Host) error {
 	log.Println("/PostgresHostStore/Create")
 	query := "INSERT INTO host(id, role, zone, imageid, state, health, createdat) VALUES($1, $2, $3, $4, $5, $6, $7)"
@@ -65,7 +71,7 @@ func (store *PostgresHostStore) UpdateState(ctx context.Context, id string, newS
 	return nil
 }
 
-func (store *PostgresHostStore) UpdateHealth(ctx context.Context, id string, newHealth string) error {
+func (store *PostgresHostStore) UpdateHealth(ctx context.Context, id string, newHealth api.HostHealth) error {
 	log.Println("/PostgresHostStore/UpdateHealth")
 
 	query := "UPDATE host SET health = $1 WHERE id = $2"
@@ -75,4 +81,41 @@ func (store *PostgresHostStore) UpdateHealth(ctx context.Context, id string, new
 	}
 
 	return nil
+}
+
+func (store *PostgresHostStore) ListHosts(ctx context.Context) ([]*api.Host, error) {
+	log.Println("/PostgresHostStore/UpdateHealth")
+
+	query := `SELECT id, role, zone, imageid, state, health, createdat FROM host`
+	rows, err := store.DB.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var hosts []*api.Host
+	for rows.Next() {
+		var host api.Host
+		var role string
+
+		err = rows.Scan(
+			&host.ID,
+			&role,
+			&host.Zone,
+			&host.ImageID,
+			&host.State,
+			&host.Health,
+			&host.CreatedAt,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		host.Role = api.Role{
+			Name: role,
+		}
+		hosts = append(hosts, &host)
+	}
+
+	return hosts, nil
 }

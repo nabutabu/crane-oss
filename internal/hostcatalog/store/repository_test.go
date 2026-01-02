@@ -330,7 +330,7 @@ func TestPostgresHostStore_UpdateHealth(t *testing.T) {
 
 			tt.mock(mock)
 
-			err = store.UpdateHealth(context.Background(), tt.id, tt.health)
+			err = store.UpdateHealth(context.Background(), tt.id, api.HostHealth(tt.health))
 
 			if tt.wantErr {
 				if err == nil {
@@ -341,6 +341,116 @@ func TestPostgresHostStore_UpdateHealth(t *testing.T) {
 
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatalf("unmet sql expectations: %v", err)
+			}
+		})
+	}
+}
+
+func TestPostgresHostStore_ListHosts(t *testing.T) {
+	now := time.Now()
+
+	tests := []struct {
+		name    string
+		mock    func(sqlmock.Sqlmock)
+		want    []*api.Host
+		wantErr bool
+	}{
+		{
+			name: "returns multiple hosts",
+			mock: func(mock sqlmock.Sqlmock) {
+				rows := sqlmock.NewRows(
+					[]string{"id", "role", "zone", "imageid", "state", "health", "createdat"},
+				).
+					AddRow(
+						"host-1",
+						"worker",
+						"us-west-2a",
+						"ami-123",
+						"running",
+						"healthy",
+						now,
+					).
+					AddRow(
+						"host-2",
+						"control-plane",
+						"us-east-1a",
+						"ami-456",
+						"pending",
+						"unknown",
+						now,
+					)
+
+				mock.ExpectQuery(
+					`SELECT id, role, zone, imageid, state, health, createdat FROM host`,
+				).
+					WillReturnRows(rows)
+			},
+			want: []*api.Host{
+				{
+					ID:        "host-1",
+					Role:      api.Role{Name: "worker"},
+					Zone:      "us-west-2a",
+					ImageID:   "ami-123",
+					State:     "running",
+					Health:    "healthy",
+					CreatedAt: now,
+				},
+				{
+					ID:        "host-2",
+					Role:      api.Role{Name: "control-plane"},
+					Zone:      "us-east-1a",
+					ImageID:   "ami-456",
+					State:     "pending",
+					Health:    "unknown",
+					CreatedAt: now,
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "database error is returned",
+			mock: func(mock sqlmock.Sqlmock) {
+				mock.ExpectQuery(
+					`SELECT id, role, zone, imageid, state, health, createdat FROM host`,
+				).
+					WillReturnError(errors.New("query failed"))
+			},
+			want:    nil,
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			if err != nil {
+				t.Fatalf("failed to create sqlmock: %v", err)
+			}
+			defer db.Close()
+
+			tt.mock(mock)
+
+			store := store.NewPostgresHostStore(db)
+
+			got, err := store.ListHosts(context.Background())
+
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got nil")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("ListHosts() = %+v, want %+v", got, tt.want)
 			}
 
 			if err := mock.ExpectationsWereMet(); err != nil {
