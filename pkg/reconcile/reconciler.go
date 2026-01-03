@@ -13,7 +13,7 @@ type HostReconciler interface {
 
 type DefaultHostReconciler struct {
 	store   store.PostgresHostStore
-	execute execute.Executor
+	execute execute.ActionStore
 }
 
 func (r *DefaultHostReconciler) Reconcile(ctx context.Context) error {
@@ -25,7 +25,7 @@ func (r *DefaultHostReconciler) Reconcile(ctx context.Context) error {
 	for _, host := range hosts {
 		action := Decide(host)
 		log.Printf("For host: %s, decision: %s", host, action)
-		err := r.execute.Execute(ctx, action)
+		err := r.execute.Enqueue(ctx, action)
 		if err != nil {
 			return err
 		}
