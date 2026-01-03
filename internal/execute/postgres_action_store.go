@@ -30,6 +30,7 @@ func (store *PostgresActionStore) Enqueue(ctx context.Context, action *Action) e
 }
 
 func (store *PostgresActionStore) Next(ctx context.Context) (*ActionRecord, error) {
+	log.Println("/PostgresActionStore/Next")
 	var record ActionRecord
 	query := `
         UPDATE actions
@@ -59,6 +60,7 @@ func (store *PostgresActionStore) Next(ctx context.Context) (*ActionRecord, erro
 }
 
 func (store *PostgresActionStore) MarkDone(ctx context.Context, id int) error {
+	log.Println("/PostgresActionStore/MarkDone")
 	// Mark it done
 	_, err := store.DB.Exec("UPDATE actions SET status='done', updatedat=NOW() WHERE id=$1", id)
 	if err != nil {
@@ -68,6 +70,7 @@ func (store *PostgresActionStore) MarkDone(ctx context.Context, id int) error {
 }
 
 func (store *PostgresActionStore) MarkFailed(ctx context.Context, id int) error {
+	log.Println("/PostgresActionStore/MarkFailed")
 	// Mark it failed
 	_, err := store.DB.Exec("UPDATE actions SET status='failed', updatedat=NOW() WHERE id=$1", id)
 	if err != nil {
