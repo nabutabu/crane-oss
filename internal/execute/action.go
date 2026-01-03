@@ -24,10 +24,11 @@ const (
 )
 
 type ActionRecord struct {
-	ID        string
+	ID        int
 	HostID    string
 	Type      ActionType
 	Status    ActionStatus
 	Attempts  int
 	CreatedAt time.Time
+	UpdatedAt time.Time
 }
