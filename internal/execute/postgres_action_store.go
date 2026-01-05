@@ -7,7 +7,13 @@ import (
 )
 
 type PostgresActionStore struct {
-	DB sql.DB
+	DB *sql.DB
+}
+
+func NewPostgresActionStore(DB *sql.DB) *PostgresActionStore {
+	return &PostgresActionStore{
+		DB: DB,
+	}
 }
 
 func (store *PostgresActionStore) Enqueue(ctx context.Context, action *Action) error {

@@ -9,7 +9,14 @@ type Worker struct {
 	executor Executor
 }
 
-func (w *Worker) do(ctx context.Context) error {
+func NewWorker(store ActionStore, executor Executor) *Worker {
+	return &Worker{
+		store:    store,
+		executor: executor,
+	}
+}
+
+func (w *Worker) Run(ctx context.Context) error {
 	for record, err := w.store.Next(ctx); err != nil; {
 		err := w.executor.Execute(ctx, &Action{
 			HostID: record.HostID,

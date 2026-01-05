@@ -2,9 +2,10 @@ package reconcile
 
 import (
 	"context"
+	"log"
+
 	"github.com/nabutabu/crane-oss/internal/execute"
 	"github.com/nabutabu/crane-oss/internal/hostcatalog/store"
-	"log"
 )
 
 type HostReconciler interface {
@@ -14,6 +15,13 @@ type HostReconciler interface {
 type DefaultHostReconciler struct {
 	store   store.PostgresHostStore
 	execute execute.ActionStore
+}
+
+func NewDefaultHostReconciler(store store.PostgresHostStore, execute execute.ActionStore) *DefaultHostReconciler {
+	return &DefaultHostReconciler{
+		store:   store,
+		execute: execute,
+	}
 }
 
 func (r *DefaultHostReconciler) Reconcile(ctx context.Context) error {
