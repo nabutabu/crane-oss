@@ -34,6 +34,8 @@ func (r *DefaultHostReconciler) Reconcile(ctx context.Context) error {
 		action := Decide(host)
 		log.Printf("For host: %s, decision: %s", host, action)
 		err := r.execute.Enqueue(ctx, action)
+
+		log.Printf("reconciling host=%s desired=%s actual=%s", host.ID, host.State, host.Health)
 		if err != nil {
 			return err
 		}
