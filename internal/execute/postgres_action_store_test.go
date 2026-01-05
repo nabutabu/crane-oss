@@ -29,7 +29,7 @@ func TestPostgresActionStore_Enqueue(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			db, mock, _ := sqlmock.New()
 			defer db.Close()
-			store := execute.PostgresActionStore{DB: *db}
+			store := execute.PostgresActionStore{DB: db}
 
 			if tt.action != nil {
 				mock.ExpectQuery("INSERT INTO actions").
@@ -85,7 +85,7 @@ func TestPostgresActionStore_Next(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			db, mock, _ := sqlmock.New()
 			defer db.Close()
-			store := execute.PostgresActionStore{DB: *db}
+			store := execute.PostgresActionStore{DB: db}
 
 			mock.ExpectQuery("UPDATE actions").WillReturnRows(tt.mockRows)
 
@@ -130,7 +130,7 @@ func TestPostgresActionStore_MarkDone(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			db, mock, _ := sqlmock.New()
 			defer db.Close()
-			store := execute.PostgresActionStore{DB: *db}
+			store := execute.PostgresActionStore{DB: db}
 
 			mock.ExpectExec("UPDATE actions SET status='done'").
 				WithArgs(tt.id).
@@ -166,7 +166,7 @@ func TestPostgresActionStore_MarkFailed(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			db, mock, _ := sqlmock.New()
 			defer db.Close()
-			store := execute.PostgresActionStore{DB: *db}
+			store := execute.PostgresActionStore{DB: db}
 
 			mock.ExpectExec("UPDATE actions SET status='failed'").
 				WithArgs(tt.id).

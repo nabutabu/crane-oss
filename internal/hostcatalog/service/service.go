@@ -10,10 +10,10 @@ import (
 )
 
 type HostCatalogService struct {
-	store store.PostgresHostStore
+	store *store.PostgresHostStore
 }
 
-func NewHostCatalogService(store store.PostgresHostStore) *HostCatalogService {
+func NewHostCatalogService(store *store.PostgresHostStore) *HostCatalogService {
 	return &HostCatalogService{store: store}
 }
 
