@@ -8,10 +8,12 @@ import (
 	"log"
 	"net/http"
 
+	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/nabutabu/crane-oss/internal/execute"
 	"github.com/nabutabu/crane-oss/internal/hostcatalog/service"
 	"github.com/nabutabu/crane-oss/internal/hostcatalog/store"
 	"github.com/nabutabu/crane-oss/internal/provider"
+	"github.com/nabutabu/crane-oss/pkg/api"
 	"github.com/nabutabu/crane-oss/pkg/reconcile"
 )
 
@@ -21,14 +23,14 @@ func main() {
 	host := "localhost"
 	port := 43544
 	user := "postgres"
-	password := "postgres"
-	dbname := "mysecretpassword"
+	password := "mysecretpassword"
+	dbname := "crane"
 
 	// 2. Create the connection string
 	// The sslmode parameter is often set to 'disable' for local development.
 	psqlInfo := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
 		host, port, user, password, dbname)
-	db, err := sql.Open("postgres", psqlInfo)
+	db, err := sql.Open("pgx", psqlInfo)
 	if err != nil {
 		log.Println(err)
 	}

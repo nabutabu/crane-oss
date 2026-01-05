@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"log"
 	"slices"
 
 	"github.com/nabutabu/crane-oss/internal/hostcatalog/store"
@@ -39,6 +40,7 @@ func (service *HostCatalogService) TransitionState(
 	id string,
 	newState string,
 ) error {
+	log.Printf("/service.go/TransitionState %s newState: %s\n", id, newState)
 	// 1. load host
 	host, err := service.store.GetByID(ctx, id)
 	if err != nil {
