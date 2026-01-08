@@ -8,12 +8,13 @@ import (
 	"log"
 	"net/http"
 
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/nabutabu/crane-oss/internal/execute"
 	"github.com/nabutabu/crane-oss/internal/hostcatalog/service"
 	"github.com/nabutabu/crane-oss/internal/hostcatalog/store"
-	"github.com/nabutabu/crane-oss/internal/provider"
-	"github.com/nabutabu/crane-oss/pkg/api"
+	"github.com/nabutabu/crane-oss/internal/provider/awscompute"
 	"github.com/nabutabu/crane-oss/pkg/reconcile"
 )
 
@@ -39,7 +40,17 @@ func main() {
 	hostStore := store.NewPostgresHostStore(db)
 
 	hostCatalog := service.NewHostCatalogService(hostStore)
-	provider := provider.NewNoopProvider()
+
+	cfg, err := config.LoadDefaultConfig(context.TODO(),
+		config.WithRegion("us-west-2"), // Optional: specify region here
+	)
+	if err != nil {
+		log.Fatalf("unable to load SDK config, %v", err)
+	}
+
+	ec2Client := ec2.NewFromConfig(cfg)
+
+	provider := awscompute.New(ec2Client)
 
 	executor := execute.NewDefaultExecutor(
 		hostCatalog,

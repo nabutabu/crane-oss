@@ -12,11 +12,17 @@ func NewNoopProvider() *NoopProvider {
 	return &NoopProvider{}
 }
 
-func (np *NoopProvider) ProvisionHost(ctx context.Context, spec HostSpec) (string, error) {
-	return "232", nil
+func (n *NoopProvider) DrainHost(ctx context.Context, hostID string) error {
+	log.Println("/NoopProvider/DrainHost")
+	return nil
 }
 
-func (np *NoopProvider) DecommissionHost(ctx context.Context, hostID string) error {
-	log.Printf("/NoopProvider/DecommissionHost: %s", hostID)
+func (n *NoopProvider) TerminateHost(ctx context.Context, hostID string) error {
+	log.Println("/NoopProvider/TerminateHost")
 	return nil
+}
+
+func (n *NoopProvider) ProvisionHost(ctx context.Context, role string) (string, error) {
+	log.Println("/NoopProvider/ProvisionHost")
+	return "noop-host-id", nil
 }

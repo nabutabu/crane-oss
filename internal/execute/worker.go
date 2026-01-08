@@ -18,11 +18,15 @@ func NewWorker(store ActionStore, executor Executor) *Worker {
 }
 
 func (w *Worker) Run(ctx context.Context) error {
-	for record, err := w.store.Next(ctx); err == nil; {
-		log.Printf("failed to fetch next record: %v", err)
+	for {
+		record, err := w.store.Next(ctx)
+		if err != nil {
+			log.Printf("failed to fetch next record: %v", err)
+			break // Stop the loop on error
+		}
 
 		log.Println("calling execute")
-		err := w.executor.Execute(ctx, &Action{
+		err = w.executor.Execute(ctx, &Action{
 			HostID: record.HostID,
 			Type:   record.Type,
 		})
@@ -41,6 +45,5 @@ func (w *Worker) Run(ctx context.Context) error {
 		}
 	}
 
-	log.Println("returning nil")
 	return nil
 }

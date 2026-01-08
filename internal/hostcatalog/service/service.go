@@ -66,3 +66,21 @@ func (service *HostCatalogService) TransitionHealth(ctx context.Context, id stri
 
 	return service.store.UpdateHealth(ctx, id, health)
 }
+
+func (service *HostCatalogService) GetByID(ctx context.Context, id string) (*api.Host, error) {
+	return service.store.GetByID(ctx, id)
+}
+
+func (service *HostCatalogService) CreateHost(ctx context.Context, id string, provider string) error {
+	return service.store.Create(ctx, &api.Host{
+		ID:         "host-1",
+		ProviderID: id,
+		Provider:   provider,
+		Zone:       "us-west-2",
+		State:      api.HostDraining,
+	})
+}
+
+func (service *HostCatalogService) DeleteHost(ctx context.Context, id string) error {
+	return service.store.Delete(ctx, id)
+}

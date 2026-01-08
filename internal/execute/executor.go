@@ -30,22 +30,43 @@ func (e *DefaultExecutor) Execute(ctx context.Context, action *Action) error {
 	switch action.Type {
 	case ActionDrainHost:
 		log.Println("action drain host")
-		err := e.catalog.TransitionState(ctx, action.HostID, string(api.HostDraining))
+		// provision host here
+		provider_id, err := e.provider.ProvisionHost(ctx, action.HostID)
 		if err != nil {
 			return err
 		}
-		// provision host here
+
+		// err = e.catalog.TransitionState(ctx, action.HostID, string(api.HostDraining))
+		// if err != nil {
+		// 	return err
+		// }
+
+		// create new host
+		err = e.catalog.CreateHost(ctx, provider_id, "aws")
+		if err != nil {
+			return err
+		}
 
 	case ActionReplaceHost:
 		log.Println("action replace host")
-		err := e.catalog.TransitionState(ctx, action.HostID, string(api.HostUnhealthy))
+		// get providerid
+		host, err := e.catalog.GetByID(ctx, action.HostID)
 		if err != nil {
 			return err
 		}
 
 		// decommission host here
+		err = e.provider.TerminateHost(ctx, host.ProviderID)
+		if err != nil {
+			return err
+		}
+
+		err = e.catalog.TransitionState(ctx, action.HostID, string(api.HostUnhealthy))
+		if err != nil {
+			return err
+		}
+
 	}
 
-	log.Println("returning nil")
 	return nil
 }
