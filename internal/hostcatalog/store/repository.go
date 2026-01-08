@@ -20,9 +20,9 @@ func NewPostgresHostStore(DB *sql.DB) *PostgresHostStore {
 
 func (store *PostgresHostStore) Create(ctx context.Context, host *api.Host) error {
 	log.Println("/PostgresHostStore/Create")
-	query := "INSERT INTO host(id, role, zone, imageid, state, health, createdat) VALUES($1, $2, $3, $4, $5, $6, $7)"
+	query := "INSERT INTO host(id, role, zone, imageid, state, health, createdat, provider, providerid) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9)"
 
-	_, err := store.DB.Exec(query, host.ID, host.Role.Name, host.Zone, host.ImageID, host.State, host.Health, host.CreatedAt)
+	_, err := store.DB.Exec(query, host.ID, host.Role.Name, host.Zone, host.ImageID, host.State, host.Health, host.CreatedAt, host.Provider, host.ProviderID)
 	if err != nil {
 		return err
 	}
@@ -30,9 +30,18 @@ func (store *PostgresHostStore) Create(ctx context.Context, host *api.Host) erro
 	return nil
 }
 
+func (store *PostgresHostStore) Delete(ctx context.Context, id string) error {
+	log.Printf("/PostgresHostStore/Delete: id: %s\n", id)
+	query := "DELETE FROM host WHERE id = $1"
+
+	_, err := store.DB.Exec(query, id)
+
+	return err
+}
+
 func (store *PostgresHostStore) GetByID(ctx context.Context, id string) (*api.Host, error) {
 	query := `
-		SELECT id, role, zone, imageid, state, health, createdat
+		SELECT id, role, zone, imageid, state, health, createdat, provider, providerID
 		FROM host
 		WHERE id = $1
 	`
@@ -41,6 +50,8 @@ func (store *PostgresHostStore) GetByID(ctx context.Context, id string) (*api.Ho
 
 	var h api.Host
 	var role string
+	var provider sql.NullString
+	var providerID sql.NullString
 
 	err := row.Scan(
 		&h.ID,
@@ -50,9 +61,23 @@ func (store *PostgresHostStore) GetByID(ctx context.Context, id string) (*api.Ho
 		&h.State,
 		&h.Health,
 		&h.CreatedAt,
+		&provider,
+		&providerID,
 	)
 	if err != nil {
 		return nil, err
+	}
+
+	if provider.Valid {
+		h.Provider = provider.String
+	} else {
+		h.Provider = "" // or leave unset
+	}
+
+	if providerID.Valid {
+		h.ProviderID = providerID.String
+	} else {
+		h.ProviderID = "" // or leave unset
 	}
 
 	h.Role = api.Role{Name: role}

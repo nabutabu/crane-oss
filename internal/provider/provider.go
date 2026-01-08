@@ -8,6 +8,8 @@ type HostSpec struct {
 }
 
 type Provider interface {
-	ProvisionHost(ctx context.Context, spec HostSpec) (string, error)
-	DecommissionHost(ctx context.Context, hostID string) error
+	DrainHost(ctx context.Context, hostID string) error
+	TerminateHost(ctx context.Context, hostID string) error
+	ProvisionHost(ctx context.Context, role string) (string, error)
+	GetProviderName() string
 }

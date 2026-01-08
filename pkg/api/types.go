@@ -32,7 +32,8 @@ type Capacity struct {
 }
 
 type Role struct {
-	Name string
+	Name          string
+	ExpectedImage string
 }
 
 type Fleet struct {
