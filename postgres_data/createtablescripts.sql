@@ -11,7 +11,9 @@ CREATE TABLE public.actions (
 	createdat timestamptz NULL,
 	"type" varchar NOT NULL,
 	id int4 NOT NULL,
-	updatedat timestamptz NULL
+	updatedat timestamptz NULL,
+	provider varchar NULL,
+	providerID varchar NULL,
 );
 
 -- dbo.host definition

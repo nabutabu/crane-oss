@@ -2,9 +2,10 @@ package http
 
 import (
 	"encoding/json"
+	"net/http"
+
 	"github.com/nabutabu/crane-oss/internal/hostcatalog/service"
 	"github.com/nabutabu/crane-oss/pkg/api"
-	"net/http"
 )
 
 type Handler struct {
@@ -22,7 +23,7 @@ func (h *Handler) TransitionState(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := h.catalog.TransitionState(ctx, id, newState)
+	err := h.catalog.TransitionState(ctx, id, api.HostState(newState))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

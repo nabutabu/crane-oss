@@ -39,8 +39,13 @@ func (p *Provider) TerminateHost(ctx context.Context, hostID string) error {
 	return err
 }
 
-func (p *Provider) ProvisionHost(ctx context.Context, role string) (string, error) {
+func (p *Provider) ProvisionHost(ctx context.Context, role string, id string) (string, error) {
 	log.Println("/ec2/ProvisionHost")
+
+	if role == "" {
+		return "", errors.New("role empty")
+	}
+
 	out, err := p.client.RunInstances(ctx, &ec2.RunInstancesInput{
 		ImageId:      aws.String("ami-00a8151272c45cd8e"), // placeholder
 		InstanceType: "t2.micro",
@@ -51,8 +56,12 @@ func (p *Provider) ProvisionHost(ctx context.Context, role string) (string, erro
 				ResourceType: types.ResourceTypeInstance,
 				Tags: []types.Tag{
 					{
-						Key:   aws.String("role"),
+						Key:   aws.String("Role"),
 						Value: aws.String(role),
+					},
+					{
+						Key:   aws.String("HostID"),
+						Value: aws.String(id),
 					},
 				},
 			},

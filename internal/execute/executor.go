@@ -28,24 +28,32 @@ type Executor interface {
 func (e *DefaultExecutor) Execute(ctx context.Context, action *Action) error {
 	log.Printf("/Execute hostID: %s type: %s\n", action.HostID, action.Type)
 	switch action.Type {
+	case ActionCreateHost:
+		log.Println("action create host")
+
+		// create new host, currently hardcoded to only use AWS, role is also being hardcoded
+		hostID, err := e.catalog.CreateHost(ctx, "aws")
+		if err != nil {
+			return err
+		}
+
+		// provision host here
+		provider_id, err := e.provider.ProvisionHost(ctx, "role", hostID)
+		if err != nil {
+			return err
+		}
+
+		// update host with providerID
+		err = e.catalog.UpdateHostProviderID(ctx, hostID, provider_id)
+		if err != nil {
+			return err
+		}
+
 	case ActionDrainHost:
 		log.Println("action drain host")
-		// provision host here
-		provider_id, err := e.provider.ProvisionHost(ctx, action.HostID)
-		if err != nil {
-			return err
-		}
 
-		// err = e.catalog.TransitionState(ctx, action.HostID, string(api.HostDraining))
-		// if err != nil {
-		// 	return err
-		// }
-
-		// create new host
-		err = e.catalog.CreateHost(ctx, provider_id, "aws")
-		if err != nil {
-			return err
-		}
+		// mark host draining in catalog
+		return e.catalog.TransitionState(ctx, action.HostID, api.HostDraining)
 
 	case ActionReplaceHost:
 		log.Println("action replace host")
@@ -61,7 +69,7 @@ func (e *DefaultExecutor) Execute(ctx context.Context, action *Action) error {
 			return err
 		}
 
-		err = e.catalog.TransitionState(ctx, action.HostID, string(api.HostUnhealthy))
+		err = e.catalog.TransitionState(ctx, action.HostID, api.HostUnhealthy)
 		if err != nil {
 			return err
 		}
