@@ -14,6 +14,13 @@ const (
 )
 
 func Decide(host *api.Host) *execute.Action {
+	if HasImageDrift(host) {
+		return &execute.Action{
+			HostID: host.ID,
+			Type:   execute.ActionReplaceHost,
+		}
+	}
+
 	// for a given host decide what to do given host.Health and host.Status
 	if host.Health == api.HostHealthHealthy && (host.State == api.HostReady || host.State == api.HostDraining) {
 		return &execute.Action{
