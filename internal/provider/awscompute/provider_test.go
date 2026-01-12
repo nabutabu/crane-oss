@@ -130,7 +130,7 @@ func TestProvider_ProvisionHost(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			p := awscompute.New(tt.client)
 
-			got, gotErr := p.ProvisionHost(context.Background(), tt.role)
+			got, gotErr := p.ProvisionHost(context.Background(), tt.role, "")
 			if gotErr != nil {
 				if !tt.wantErr {
 					t.Errorf("ProvisionHost() failed: %v", gotErr)

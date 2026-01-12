@@ -6,6 +6,7 @@ import (
 	"log"
 	"slices"
 
+	"github.com/google/uuid"
 	"github.com/nabutabu/crane-oss/internal/hostcatalog/store"
 	"github.com/nabutabu/crane-oss/pkg/api"
 )
@@ -38,7 +39,7 @@ func GetValidNextStates(currState api.HostState) []api.HostState {
 func (service *HostCatalogService) TransitionState(
 	ctx context.Context,
 	id string,
-	newState string,
+	newState api.HostState,
 ) error {
 	log.Printf("/service.go/TransitionState %s newState: %s\n", id, newState)
 	// 1. load host
@@ -47,17 +48,14 @@ func (service *HostCatalogService) TransitionState(
 		return errors.New("Host not found")
 	}
 
-	// convert newState to api.HostState
-	state := api.HostState(newState)
-
 	// 2. validate transition
 	validNextStates := GetValidNextStates(host.State)
-	if !slices.Contains(validNextStates, state) {
+	if !slices.Contains(validNextStates, newState) {
 		return errors.New("Not a valid next state")
 	}
 
 	// 3. update new state
-	return service.store.UpdateState(ctx, id, state)
+	return service.store.UpdateState(ctx, id, newState)
 }
 
 func (service *HostCatalogService) TransitionHealth(ctx context.Context, id string, newHealth string) error {
@@ -71,14 +69,19 @@ func (service *HostCatalogService) GetByID(ctx context.Context, id string) (*api
 	return service.store.GetByID(ctx, id)
 }
 
-func (service *HostCatalogService) CreateHost(ctx context.Context, id string, provider string) error {
-	return service.store.Create(ctx, &api.Host{
-		ID:         "host-1",
-		ProviderID: id,
+func (service *HostCatalogService) CreateHost(ctx context.Context, provider string) (string, error) {
+	id := uuid.NewString()
+	return id, service.store.Create(ctx, &api.Host{
+		ID:         id,
+		ProviderID: "",
 		Provider:   provider,
 		Zone:       "us-west-2",
-		State:      api.HostDraining,
+		State:      api.HostProvisioning,
 	})
+}
+
+func (service *HostCatalogService) UpdateHostProviderID(ctx context.Context, hostID string, providerID string) error {
+	return service.store.UpdateProviderID(ctx, hostID, providerID)
 }
 
 func (service *HostCatalogService) DeleteHost(ctx context.Context, id string) error {

@@ -5,6 +5,7 @@ import "time"
 type ActionType string
 
 const (
+	ActionCreateHost  ActionType = "create_host"
 	ActionDrainHost   ActionType = "drain_host"
 	ActionReplaceHost ActionType = "replace_host"
 )

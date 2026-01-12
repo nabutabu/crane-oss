@@ -111,7 +111,7 @@ func (store *PostgresHostStore) UpdateHealth(ctx context.Context, id string, new
 func (store *PostgresHostStore) ListHosts(ctx context.Context) ([]*api.Host, error) {
 	log.Println("/PostgresHostStore/UpdateHealth")
 
-	query := `SELECT id, role, zone, imageid, state, health, createdat FROM host`
+	query := `SELECT id, role, zone, imageid, state, health, createdat, provider, providerid FROM host`
 	rows, err := store.DB.Query(query)
 	if err != nil {
 		return nil, err
@@ -131,6 +131,8 @@ func (store *PostgresHostStore) ListHosts(ctx context.Context) ([]*api.Host, err
 			&host.State,
 			&host.Health,
 			&host.CreatedAt,
+			&host.Provider,
+			&host.ProviderID,
 		)
 		if err != nil {
 			return nil, err
@@ -143,4 +145,12 @@ func (store *PostgresHostStore) ListHosts(ctx context.Context) ([]*api.Host, err
 	}
 
 	return hosts, nil
+}
+
+func (store *PostgresHostStore) UpdateProviderID(ctx context.Context, hostID string, providerID string) error {
+	query := "UPDATE host set providerID = $1 WHERE id = $2"
+
+	_, err := store.DB.Exec(query, providerID, hostID)
+
+	return err
 }

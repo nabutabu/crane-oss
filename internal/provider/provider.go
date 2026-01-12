@@ -10,6 +10,6 @@ type HostSpec struct {
 type Provider interface {
 	DrainHost(ctx context.Context, hostID string) error
 	TerminateHost(ctx context.Context, hostID string) error
-	ProvisionHost(ctx context.Context, role string) (string, error)
+	ProvisionHost(ctx context.Context, role string, id string) (string, error)
 	GetProviderName() string
 }
