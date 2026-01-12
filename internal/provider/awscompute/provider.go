@@ -30,7 +30,6 @@ func (p *Provider) TerminateHost(ctx context.Context, hostID string) error {
 	log.Println("/ec2/TerminateHost")
 	_, err := p.client.TerminateInstances(ctx, &ec2.TerminateInstancesInput{
 		InstanceIds: []string{hostID},
-		DryRun:      aws.Bool(true),
 	})
 
 	if isDryRunSuccess(err) {
@@ -47,7 +46,6 @@ func (p *Provider) ProvisionHost(ctx context.Context, role string) (string, erro
 		InstanceType: "t2.micro",
 		MinCount:     aws.Int32(1),
 		MaxCount:     aws.Int32(1),
-		DryRun:       aws.Bool(true),
 		TagSpecifications: []types.TagSpecification{
 			{
 				ResourceType: types.ResourceTypeInstance,
