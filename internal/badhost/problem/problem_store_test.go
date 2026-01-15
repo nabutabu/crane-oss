@@ -1,4 +1,4 @@
-package badhost_test
+package problem_test
 
 import (
 	"context"
@@ -10,23 +10,23 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/stretchr/testify/require"
 
-	"github.com/nabutabu/crane-oss/internal/badhost"
+	"github.com/nabutabu/crane-oss/internal/badhost/problem"
 )
 
 func TestPostgresProblemStore_RecordProblem(t *testing.T) {
 	tests := []struct {
 		name    string
 		hostID  string
-		problem badhost.Problem
+		problem problem.Problem
 		mockErr error
 		wantErr bool
 	}{
 		{
 			name:   "successful insert",
 			hostID: "host-123",
-			problem: badhost.Problem{
-				Type:     badhost.ProblemType("disk_full"),
-				Severity: badhost.ProblemSeverity("critical"),
+			problem: problem.Problem{
+				Type:     problem.ProblemType("disk_full"),
+				Severity: problem.ProblemSeverity("critical"),
 				Details:  `{"disk":"/dev/sda1","used":"95%"}`,
 			},
 			wantErr: false,
@@ -34,9 +34,9 @@ func TestPostgresProblemStore_RecordProblem(t *testing.T) {
 		{
 			name:   "database insert failure",
 			hostID: "host-456",
-			problem: badhost.Problem{
-				Type:     badhost.ProblemType("heartbeat_missing"),
-				Severity: badhost.ProblemSeverity("warning"),
+			problem: problem.Problem{
+				Type:     problem.ProblemType("heartbeat_missing"),
+				Severity: problem.ProblemSeverity("warning"),
 				Details:  "no heartbeat received for 5 minutes",
 			},
 			mockErr: errors.New("insert failed"),
@@ -50,7 +50,7 @@ func TestPostgresProblemStore_RecordProblem(t *testing.T) {
 			require.NoError(t, err)
 			defer db.Close()
 
-			store := badhost.PostgresProblemStore{
+			store := problem.PostgresProblemStore{
 				DB: db,
 			}
 
@@ -144,7 +144,7 @@ func TestPostgresProblemStore_GetUnresolvedProblems(t *testing.T) {
 			require.NoError(t, err)
 			defer db.Close()
 
-			store := badhost.PostgresProblemStore{DB: db}
+			store := problem.PostgresProblemStore{DB: db}
 
 			query := regexp.QuoteMeta(`
 SELECT id, host_id, problem_type, severity, detected_at, resolvedat, details

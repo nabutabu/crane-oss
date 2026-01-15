@@ -5,22 +5,22 @@ import (
 	"log"
 	"time"
 
+	"github.com/nabutabu/crane-oss/internal/badhost/problem"
 	"github.com/nabutabu/crane-oss/internal/hostcatalog/service"
 	"github.com/nabutabu/crane-oss/pkg/api"
 )
 
 type BadHostDetector struct {
 	hostStore    service.HostCatalogService
-	problemStore ProblemStore
-	definitions  map[ProblemType]ProblemDefinition
+	problemStore problem.ProblemStore
 	cfg          Config
-	registry     *Registry
 }
 
-func New(hostStore service.HostCatalogService, cfg Config) *BadHostDetector {
+func New(hostStore service.HostCatalogService, problemStore problem.ProblemStore, cfg Config) *BadHostDetector {
 	return &BadHostDetector{
-		hostStore: hostStore,
-		cfg:       cfg,
+		hostStore:    hostStore,
+		problemStore: problemStore,
+		cfg:          cfg,
 	}
 }
 
@@ -65,19 +65,8 @@ func (detector *BadHostDetector) ScanZone(ctx context.Context, zone string) erro
 	return nil
 }
 
-func (detector *BadHostDetector) detectProblems(ctx context.Context, host *api.Host) []*Problem {
-	var problems []*Problem
-
-	// Check each centralized definition
-	for _, definition := range detector.definitions {
-		if problem := detector.checkDefinition(ctx, host, definition); problem != nil {
-			problems = append(problems, problem)
-		}
-	}
+func (detector *BadHostDetector) detectProblems(ctx context.Context, host *api.Host) []*problem.Problem {
+	var problems []*problem.Problem
 
 	return problems
-}
-
-func (detector *BadHostDetector) checkDefinition(ctx context.Context, host *api.Host, definition ProblemDefinition) *Problem {
-	return nil
 }
