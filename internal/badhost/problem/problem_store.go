@@ -1,4 +1,4 @@
-package badhost
+package problem
 
 import (
 	"context"
