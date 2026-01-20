@@ -15,6 +15,7 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/nabutabu/crane-oss/internal/badhost"
 	"github.com/nabutabu/crane-oss/internal/badhost/checks"
+	"github.com/nabutabu/crane-oss/internal/badhost/problem"
 	"github.com/nabutabu/crane-oss/internal/execute"
 	"github.com/nabutabu/crane-oss/internal/hostcatalog/service"
 	"github.com/nabutabu/crane-oss/internal/hostcatalog/store"
@@ -100,7 +101,23 @@ func main() {
 		executor,
 	)
 
+	problemStore := problem.New(db)
+
+	bhd_config, err := LoadConfigFromFile(BHD_CONFIG_YAML_PATH)
+	if err != nil {
+		log.Println(err)
+	}
+
+	checks, err := BuildChecks(bhd_config.Checks)
+	if err != nil {
+		log.Println(err)
+	}
+
+	bhd := badhost.New(hostCatalog, problemStore, checks, bhd_config)
+
 	go worker.Run(ctx)
+
+	go bhd.Run(ctx)
 
 	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Healthy, %q", html.EscapeString(r.URL.Path))

@@ -5,6 +5,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/nabutabu/crane-oss/internal/badhost/checks"
 	"github.com/nabutabu/crane-oss/internal/badhost/problem"
 	"github.com/nabutabu/crane-oss/internal/hostcatalog/service"
 	"github.com/nabutabu/crane-oss/pkg/api"
@@ -14,13 +15,14 @@ type BadHostDetector struct {
 	hostStore    service.HostCatalogService
 	problemStore problem.ProblemStore
 	cfg          Config
+	checks       []checks.Check
 }
 
-func New(hostStore service.HostCatalogService, problemStore problem.ProblemStore, cfg Config) *BadHostDetector {
+func New(hostStore *service.HostCatalogService, problemStore problem.ProblemStore, checks []checks.Check, cfg *Config) *BadHostDetector {
 	return &BadHostDetector{
-		hostStore:    hostStore,
+		hostStore:    *hostStore,
 		problemStore: problemStore,
-		cfg:          cfg,
+		cfg:          *cfg,
 	}
 }
 
@@ -67,6 +69,18 @@ func (detector *BadHostDetector) ScanZone(ctx context.Context, zone string) erro
 
 func (detector *BadHostDetector) detectProblems(ctx context.Context, host *api.Host) []*problem.Problem {
 	var problems []*problem.Problem
+
+	for _, check := range detector.checks {
+		ps, err := check.Detect(ctx, host)
+		if err != nil {
+			log.Println(err)
+			continue
+		}
+
+		for _, p := range ps {
+			problems = append(problems, &p)
+		}
+	}
 
 	return problems
 }

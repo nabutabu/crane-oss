@@ -7,12 +7,18 @@ import (
 )
 
 type ProblemStore interface {
-	RecordProblem(ctx context.Context, hostID string, problem Problem)
+	RecordProblem(ctx context.Context, hostID string, problem Problem) error
 	GetUnresolvedProblems(ctx context.Context) ([]Problem, error)
 	GetRecentProblems(ctx context.Context, hostID string, duration time.Duration) ([]Problem, error)
 }
 type PostgresProblemStore struct {
 	DB *sql.DB
+}
+
+func New(db *sql.DB) *PostgresProblemStore {
+	return &PostgresProblemStore{
+		DB: db,
+	}
 }
 
 func (store *PostgresProblemStore) RecordProblem(ctx context.Context, hostID string, problem Problem) error {
@@ -65,4 +71,8 @@ func (store *PostgresProblemStore) GetUnresolvedProblems(ctx context.Context) ([
 	}
 
 	return problems, nil
+}
+
+func (store *PostgresProblemStore) GetRecentProblems(ctx context.Context, hostID string, duration time.Duration) ([]Problem, error) {
+	return nil, nil
 }
