@@ -115,9 +115,11 @@ func main() {
 
 	bhd := badhost.New(hostCatalog, problemStore, checks, bhd_config)
 
-	go worker.Run(ctx)
-
+	// Bad Host Detector
 	go bhd.Run(ctx)
+
+	// Worker to put the hosts in appropriate states once detected by BHD
+	go worker.Run(ctx)
 
 	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Healthy, %q", html.EscapeString(r.URL.Path))
