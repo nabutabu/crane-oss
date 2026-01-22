@@ -6,16 +6,16 @@ import (
 )
 
 type Node struct {
-	Key   string
-	Value time.Time
-	Next  *Node
-	Prev  *Node
+	Key      string
+	LastSeen time.Time
+	Next     *Node
+	Prev     *Node
 }
 
 func NewNode(key string, value time.Time) *Node {
 	return &Node{
-		Key:   key,
-		Value: value,
+		Key:      key,
+		LastSeen: value,
 	}
 }
 
@@ -56,7 +56,7 @@ func (lrc *lr_cache) PeriodicRun() {
 
 	// traverse from LR to find expired nodes
 	current := lrc.LR.Next
-	for current != lrc.MR && current.Value.Before(cutoff) {
+	for current != lrc.MR && current.LastSeen.Before(cutoff) {
 		next := current.Next
 		lrc.RemoveNode(current)
 		current = next
