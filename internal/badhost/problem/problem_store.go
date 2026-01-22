@@ -74,5 +74,36 @@ func (store *PostgresProblemStore) GetUnresolvedProblems(ctx context.Context) ([
 }
 
 func (store *PostgresProblemStore) GetRecentProblems(ctx context.Context, hostID string, duration time.Duration) ([]Problem, error) {
-	return nil, nil
+	query := `SELECT id, host_id, problem_type, severity, detected_at, resolvedat, details
+	FROM host_problems
+	WHERE host_id = $1 AND detected_at >= $2
+	ORDER BY detected_at DESC`
+
+	var problems []Problem
+	rows, err := store.DB.QueryContext(ctx, query, hostID, time.Now().Add(-duration))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var problem Problem
+
+		err = rows.Scan(
+			&problem.ID,
+			&problem.Host_id,
+			&problem.Type,
+			&problem.Severity,
+			&problem.DetectedAt,
+			&problem.ResolvedAt,
+			&problem.Details,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		problems = append(problems, problem)
+	}
+
+	return problems, nil
 }
