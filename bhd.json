@@ -1,0 +1,7 @@
+{
+  "zone": "us-east-1",
+  "scan_interval": "5m",
+  "checks": [
+    "aws-ec2-unhealthy"
+  ]
+}

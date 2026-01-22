@@ -1,10 +1,19 @@
 package provider
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
-type HostSpec struct {
-	Role string
-	// capacity, zone, image, etc — later
+type InstanceStatus struct {
+	SystemStatus   string
+	InstanceStatus string
+	Events         []InstanceEvent
+}
+type InstanceEvent struct {
+	Code        string
+	Description string
+	NotBefore   time.Time
 }
 
 type Provider interface {
@@ -12,4 +21,5 @@ type Provider interface {
 	TerminateHost(ctx context.Context, hostID string) error
 	ProvisionHost(ctx context.Context, role string, id string) (string, error)
 	GetProviderName() string
+	GetInstanceStatus(ctx context.Context, providerID string) (*InstanceStatus, error)
 }
