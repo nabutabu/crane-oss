@@ -3,20 +3,54 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"html"
 	"log"
 	"net/http"
+	"os"
 
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/nabutabu/crane-oss/internal/badhost"
+	"github.com/nabutabu/crane-oss/internal/badhost/checks"
+	"github.com/nabutabu/crane-oss/internal/badhost/problem"
 	"github.com/nabutabu/crane-oss/internal/execute"
 	"github.com/nabutabu/crane-oss/internal/hostcatalog/service"
 	"github.com/nabutabu/crane-oss/internal/hostcatalog/store"
 	"github.com/nabutabu/crane-oss/internal/provider/awscompute"
 	"github.com/nabutabu/crane-oss/pkg/reconcile"
 )
+
+const BHD_CONFIG_YAML_PATH = "../../bhd.json"
+
+func LoadConfigFromFile(path string) (*badhost.Config, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	var config badhost.Config
+	err = json.Unmarshal(data, &config)
+	if err != nil {
+		return nil, err
+	}
+
+	return &config, nil
+}
+
+func BuildChecks(enabled []string) ([]checks.Check, error) {
+	var res []checks.Check
+	for _, name := range enabled {
+		c, ok := checks.CheckCatalog[name]
+		if !ok {
+			return nil, fmt.Errorf("unknown check: %s", name)
+		}
+		res = append(res, c)
+	}
+	return res, nil
+}
 
 func main() {
 	ctx := context.Background()
@@ -67,6 +101,24 @@ func main() {
 		executor,
 	)
 
+	problemStore := problem.New(db)
+
+	bhd_config, err := LoadConfigFromFile(BHD_CONFIG_YAML_PATH)
+	if err != nil {
+		log.Println(err)
+	}
+
+	checks, err := BuildChecks(bhd_config.Checks)
+	if err != nil {
+		log.Println(err)
+	}
+
+	bhd := badhost.New(hostCatalog, problemStore, checks, bhd_config)
+
+	// Bad Host Detector
+	go bhd.Run(ctx)
+
+	// Worker to put the hosts in appropriate states once detected by BHD
 	go worker.Run(ctx)
 
 	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
