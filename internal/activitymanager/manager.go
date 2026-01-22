@@ -33,24 +33,30 @@ func (am *ActivityManager) Run(ctx context.Context) {
 
 	// process each host's problems
 	for hostID, hostProblemList := range hostProblems {
-		// create cache key for this host
-		cacheKey := hostID
+		for _, hostProblem := range hostProblemList {
+			cacheKey := problemcache.ProblemCacheKey{
+				Host_id: hostID,
+				Type:    hostProblem.Type,
+			}
 
-		// if we have seen problems for this host recently, skip
-		if am.cache.SeenRecently(cacheKey) {
-			continue
-		}
+			if am.cache.SeenRecently(cacheKey.String()) {
+				continue
+			}
 
-		// record that we've processed this host
-		am.cache.Record(cacheKey)
+			// record that we've processed this host
+			am.cache.Record(cacheKey.String())
 
-		// make a decision based on this host's problems
-		action := Decide(hostID, hostProblemList)
-		if action != nil {
-			// enqueue the action if one was decided
-			err := am.actionStore.Enqueue(ctx, action)
-			if err != nil {
-				log.Printf("Failed to enqueue action for host %s: %v", hostID, err)
+			// make a decision based on this host's problems
+			action := Decide(hostID, hostProblemList)
+
+			if action != nil {
+				log.Printf("Host: %s - Action: %s", hostID, action.Type)
+
+				// enqueue the action if one was decided
+				err := am.actionStore.Enqueue(ctx, action)
+				if err != nil {
+					log.Printf("Failed to enqueue action for host %s: %v", hostID, err)
+				}
 			}
 		}
 	}
