@@ -1,6 +1,7 @@
 package problemcache
 
 import (
+	"sync"
 	"time"
 )
 
@@ -24,6 +25,7 @@ type lr_cache struct {
 	Capacity int
 	TTL      time.Duration
 	Cache    map[string]*Node
+	mu       sync.Mutex
 }
 
 func NewCache(capacity int, ttl time.Duration) *lr_cache {
@@ -71,6 +73,8 @@ func (lrc *lr_cache) startPeriodicCleanup() {
 }
 
 func (lrc *lr_cache) RemoveNode(node_to_remove *Node) {
+	lrc.mu.Lock()
+	defer lrc.mu.Unlock()
 	prevNode := node_to_remove.Prev
 	nextNode := node_to_remove.Next
 
@@ -81,6 +85,8 @@ func (lrc *lr_cache) RemoveNode(node_to_remove *Node) {
 }
 
 func (lrc *lr_cache) AddMR(key string) *Node {
+	lrc.mu.Lock()
+	defer lrc.mu.Unlock()
 	node_to_add := NewNode(key, time.Now())
 
 	prevNode := lrc.MR.Prev
@@ -94,11 +100,10 @@ func (lrc *lr_cache) AddMR(key string) *Node {
 	return node_to_add
 }
 
-func (lrc *lr_cache) Record(key string) time.Time {
+func (lrc *lr_cache) Record(key string) {
 	if _, found := lrc.Cache[key]; found {
 		lrc.RemoveNode(lrc.Cache[key])
-		addedNode := lrc.AddMR(key)
-		return addedNode.Value
+		lrc.AddMR(key)
 	}
 
 	if lrc.Capacity == len(lrc.Cache) {
@@ -106,18 +111,15 @@ func (lrc *lr_cache) Record(key string) time.Time {
 		lrc.RemoveNode(lrc.LR.Next)
 	}
 
-	addedNode := lrc.AddMR(key)
-
-	return addedNode.Value
+	lrc.AddMR(key)
 }
 
-func (lrc *lr_cache) SeenRecord(key string) *time.Time {
+func (lrc *lr_cache) SeenRecord(key string) bool {
 	if _, found := lrc.Cache[key]; found {
-		value := lrc.Cache[key].Value
 		lrc.RemoveNode(lrc.Cache[key])
 		lrc.AddMR(key)
-		return &value
+		return true
 	}
 
-	return nil
+	return false
 }
