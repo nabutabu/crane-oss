@@ -26,7 +26,7 @@ type lr_cache struct {
 	Cache    map[string]*Node
 }
 
-func NewCache(capacity int) *lr_cache {
+func NewCache(capacity int, ttl time.Duration) *lr_cache {
 	// initialize LR and MR
 	lr := NewNode("", time.Now())
 	mr := NewNode("", time.Now())
@@ -34,16 +34,40 @@ func NewCache(capacity int) *lr_cache {
 	lr.Next = mr
 	mr.Prev = lr
 
-	return &lr_cache{
+	cache := &lr_cache{
 		LR:       lr,
 		MR:       mr,
 		Capacity: capacity,
+		TTL:      ttl,
+		Cache:    make(map[string]*Node),
 	}
+
+	// Start periodic cleanup
+	go cache.startPeriodicCleanup()
+
+	return cache
 }
 
 func (lrc *lr_cache) PeriodicRun() {
-	// from LR traverse through all nodes to find first node such that node.Value < time.Now + TTL
-	// once found remove all nodes between that node and LR
+	now := time.Now()
+	cutoff := now.Add(-lrc.TTL)
+
+	// traverse from LR to find expired nodes
+	current := lrc.LR.Next
+	for current != lrc.MR && current.Value.Before(cutoff) {
+		next := current.Next
+		lrc.RemoveNode(current)
+		current = next
+	}
+}
+
+func (lrc *lr_cache) startPeriodicCleanup() {
+	ticker := time.NewTicker(lrc.TTL)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		lrc.PeriodicRun()
+	}
 }
 
 func (lrc *lr_cache) RemoveNode(node_to_remove *Node) {
