@@ -10,6 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/smithy-go"
+	"github.com/nabutabu/crane-oss/internal/provider"
 )
 
 type Provider struct {
@@ -89,4 +90,8 @@ func (p *Provider) DrainHost(ctx context.Context, hostID string) error {
 func isDryRunSuccess(err error) bool {
 	var apiErr smithy.APIError
 	return errors.As(err, &apiErr) && apiErr.ErrorCode() == "DryRunOperation"
+}
+
+func (provider *Provider) GetInstanceStatus(ctx context.Context, providerID string) (*provider.InstanceStatus, error) {
+	return nil, nil
 }

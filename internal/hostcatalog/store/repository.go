@@ -108,8 +108,47 @@ func (store *PostgresHostStore) UpdateHealth(ctx context.Context, id string, new
 	return nil
 }
 
+func (store *PostgresHostStore) GetByZone(ctx context.Context, zone string) ([]*api.Host, error) {
+	log.Println("/PostgresHostStore/GetByZone")
+
+	query := `SELECT id, role, zone, imageid, state, health, createdat, provider, providerid FROM host`
+	rows, err := store.DB.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var hosts []*api.Host
+	for rows.Next() {
+		var host api.Host
+		var role string
+
+		err = rows.Scan(
+			&host.ID,
+			&role,
+			&host.Zone,
+			&host.ImageID,
+			&host.State,
+			&host.Health,
+			&host.CreatedAt,
+			&host.Provider,
+			&host.ProviderID,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		host.Role = api.Role{
+			Name: role,
+		}
+		hosts = append(hosts, &host)
+	}
+
+	return hosts, nil
+}
+
 func (store *PostgresHostStore) ListHosts(ctx context.Context) ([]*api.Host, error) {
-	log.Println("/PostgresHostStore/UpdateHealth")
+	log.Println("/PostgresHostStore/ListHosts")
 
 	query := `SELECT id, role, zone, imageid, state, health, createdat, provider, providerid FROM host`
 	rows, err := store.DB.Query(query)
@@ -148,6 +187,7 @@ func (store *PostgresHostStore) ListHosts(ctx context.Context) ([]*api.Host, err
 }
 
 func (store *PostgresHostStore) UpdateProviderID(ctx context.Context, hostID string, providerID string) error {
+	log.Println("/PostgresHostStore/UpdateProviderID")
 	query := "UPDATE host set providerID = $1 WHERE id = $2"
 
 	_, err := store.DB.Exec(query, providerID, hostID)
