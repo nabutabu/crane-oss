@@ -32,7 +32,13 @@ func (r *DefaultHostReconciler) Reconcile(ctx context.Context) error {
 
 	for _, host := range hosts {
 		action := Decide(host)
+
 		log.Printf("For host: %s, decision: %s", host, action)
+
+		if action == nil {
+			continue
+		}
+
 		err := r.execute.Enqueue(ctx, action)
 
 		log.Printf("reconciling host=%s desired=%s actual=%s", host.ID, host.State, host.Health)
