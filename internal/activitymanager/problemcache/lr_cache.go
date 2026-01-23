@@ -19,7 +19,7 @@ func NewNode(key string, value time.Time) *Node {
 	}
 }
 
-type lr_cache struct {
+type LRCache struct {
 	LR       *Node
 	MR       *Node
 	Capacity int
@@ -28,15 +28,15 @@ type lr_cache struct {
 	mu       sync.Mutex
 }
 
-func NewCache(capacity int, ttl time.Duration) *lr_cache {
+func NewCache(capacity int, ttl time.Duration) *LRCache {
 	// initialize LR and MR
-	lr := NewNode("", time.Now())
-	mr := NewNode("", time.Now())
+	lr := &Node{}
+	mr := &Node{}
 
 	lr.Next = mr
 	mr.Prev = lr
 
-	cache := &lr_cache{
+	cache := &LRCache{
 		LR:       lr,
 		MR:       mr,
 		Capacity: capacity,
@@ -50,7 +50,9 @@ func NewCache(capacity int, ttl time.Duration) *lr_cache {
 	return cache
 }
 
-func (lrc *lr_cache) PeriodicRun() {
+func (lrc *LRCache) PeriodicRun() {
+	lrc.mu.Lock()
+	defer lrc.mu.Unlock()
 	now := time.Now()
 	cutoff := now.Add(-lrc.TTL)
 
@@ -58,12 +60,12 @@ func (lrc *lr_cache) PeriodicRun() {
 	current := lrc.LR.Next
 	for current != lrc.MR && current.LastSeen.Before(cutoff) {
 		next := current.Next
-		lrc.RemoveNode(current)
+		lrc.removeNode(current)
 		current = next
 	}
 }
 
-func (lrc *lr_cache) startPeriodicCleanup() {
+func (lrc *LRCache) startPeriodicCleanup() {
 	ticker := time.NewTicker(lrc.TTL)
 	defer ticker.Stop()
 
@@ -72,9 +74,7 @@ func (lrc *lr_cache) startPeriodicCleanup() {
 	}
 }
 
-func (lrc *lr_cache) RemoveNode(node_to_remove *Node) {
-	lrc.mu.Lock()
-	defer lrc.mu.Unlock()
+func (lrc *LRCache) removeNode(node_to_remove *Node) {
 	prevNode := node_to_remove.Prev
 	nextNode := node_to_remove.Next
 
@@ -84,9 +84,7 @@ func (lrc *lr_cache) RemoveNode(node_to_remove *Node) {
 	delete(lrc.Cache, node_to_remove.Key)
 }
 
-func (lrc *lr_cache) AddMR(key string) *Node {
-	lrc.mu.Lock()
-	defer lrc.mu.Unlock()
+func (lrc *LRCache) addMR(key string) *Node {
 	node_to_add := NewNode(key, time.Now())
 
 	prevNode := lrc.MR.Prev
@@ -100,24 +98,28 @@ func (lrc *lr_cache) AddMR(key string) *Node {
 	return node_to_add
 }
 
-func (lrc *lr_cache) Record(key string) {
+func (lrc *LRCache) Record(key string) {
+	lrc.mu.Lock()
+	defer lrc.mu.Unlock()
 	if _, found := lrc.Cache[key]; found {
-		lrc.RemoveNode(lrc.Cache[key])
-		lrc.AddMR(key)
+		lrc.removeNode(lrc.Cache[key])
+		lrc.addMR(key)
 	}
 
 	if lrc.Capacity == len(lrc.Cache) {
 		// remove lr
-		lrc.RemoveNode(lrc.LR.Next)
+		lrc.removeNode(lrc.LR.Next)
 	}
 
-	lrc.AddMR(key)
+	lrc.addMR(key)
 }
 
-func (lrc *lr_cache) SeenRecord(key string) bool {
+func (lrc *LRCache) SeenRecord(key string) bool {
+	lrc.mu.Lock()
+	defer lrc.mu.Unlock()
 	if _, found := lrc.Cache[key]; found {
-		lrc.RemoveNode(lrc.Cache[key])
-		lrc.AddMR(key)
+		lrc.removeNode(lrc.Cache[key])
+		lrc.addMR(key)
 		return true
 	}
 
