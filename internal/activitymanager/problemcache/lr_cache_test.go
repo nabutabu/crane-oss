@@ -1,6 +1,8 @@
 package problemcache
 
 import (
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 )
@@ -232,11 +234,56 @@ func TestPeriodicRun(t *testing.T) {
 }
 
 func TestPeriodicRunOrder(t *testing.T) {
-	t.Skip("Skipping timing-dependent test - PeriodicRun timing is complex to test reliably")
+	cache := NewCache(5, 200*time.Millisecond)
+
+	// Add keys with delays to ensure different timestamps
+	cache.Record("key1")
+	time.Sleep(50 * time.Millisecond)
+	cache.Record("key2")
+	time.Sleep(50 * time.Millisecond)
+	cache.Record("key3")
+
+	// Wait enough for first key to expire but not others
+	time.Sleep(250 * time.Millisecond)
+	cache.Record("key4") // Add newer key
+
+	cache.PeriodicRun()
+
+	// Should have newer keys (key2, key3, key4)
+	if len(cache.Cache) == 0 {
+		t.Error("Should have some items remaining")
+	}
+
+	if _, exists := cache.Cache["key4"]; !exists {
+		t.Error("key4 should remain")
+	}
 }
 
 func TestConcurrentAccess(t *testing.T) {
-	t.Skip("Skipping concurrent test due to race condition in LRU cache implementation")
+	cache := NewCache(100, 1*time.Hour)
+	var wg sync.WaitGroup
+	numGoroutines := 10
+	operationsPerGoroutine := 10
+
+	// Test concurrent Record and SeenRecord operations
+	for i := 0; i < numGoroutines; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			for j := 0; j < operationsPerGoroutine; j++ {
+				key := fmt.Sprintf("key-%d-%d", id, j)
+				cache.Record(key)
+				cache.SeenRecord(key)
+			}
+		}(i)
+	}
+
+	wg.Wait()
+
+	// Verify cache is in consistent state and no crashes occurred
+	if len(cache.Cache) > cache.Capacity {
+		t.Errorf("Cache size %d exceeds capacity %d", len(cache.Cache), cache.Capacity)
+	}
 }
 
 func TestEdgeCases(t *testing.T) {
