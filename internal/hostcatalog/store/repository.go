@@ -20,9 +20,9 @@ func NewPostgresHostStore(DB *sql.DB) *PostgresHostStore {
 
 func (store *PostgresHostStore) Create(ctx context.Context, host *api.Host) error {
 	log.Println("/PostgresHostStore/Create")
-	query := "INSERT INTO host(id, role, zone, imageid, state, health, createdat, provider, providerid) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9)"
+	query := "INSERT INTO host(id, role, zone, imageid, state, health, createdat, provider, providerid, assignedpool) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)"
 
-	_, err := store.DB.Exec(query, host.ID, host.Role.Name, host.Zone, host.ImageID, host.State, host.Health, host.CreatedAt, host.Provider, host.ProviderID)
+	_, err := store.DB.Exec(query, host.ID, host.Role.Name, host.Zone, host.ImageID, host.State, host.Health, host.CreatedAt, host.Provider, host.ProviderID, host.AssignedPool)
 	if err != nil {
 		return err
 	}
@@ -41,7 +41,7 @@ func (store *PostgresHostStore) Delete(ctx context.Context, id string) error {
 
 func (store *PostgresHostStore) GetByID(ctx context.Context, id string) (*api.Host, error) {
 	query := `
-		SELECT id, role, zone, imageid, state, health, createdat, provider, providerID
+		SELECT id, role, zone, imageid, state, health, createdat, provider, providerID, assignedpool
 		FROM host
 		WHERE id = $1
 	`
@@ -52,6 +52,7 @@ func (store *PostgresHostStore) GetByID(ctx context.Context, id string) (*api.Ho
 	var role string
 	var provider sql.NullString
 	var providerID sql.NullString
+	var assignedPool sql.NullString
 
 	err := row.Scan(
 		&h.ID,
@@ -63,6 +64,7 @@ func (store *PostgresHostStore) GetByID(ctx context.Context, id string) (*api.Ho
 		&h.CreatedAt,
 		&provider,
 		&providerID,
+		&assignedPool,
 	)
 	if err != nil {
 		return nil, err
@@ -78,6 +80,10 @@ func (store *PostgresHostStore) GetByID(ctx context.Context, id string) (*api.Ho
 		h.ProviderID = providerID.String
 	} else {
 		h.ProviderID = "" // or leave unset
+	}
+
+	if assignedPool.Valid {
+		h.AssignedPool = &assignedPool.String
 	}
 
 	h.Role = api.Role{Name: role}
@@ -111,7 +117,7 @@ func (store *PostgresHostStore) UpdateHealth(ctx context.Context, id string, new
 func (store *PostgresHostStore) GetByZone(ctx context.Context, zone string) ([]*api.Host, error) {
 	log.Println("/PostgresHostStore/GetByZone")
 
-	query := `SELECT id, role, zone, imageid, state, health, createdat, provider, providerid FROM host`
+	query := `SELECT id, role, zone, imageid, state, health, createdat, provider, providerid, assignedpool FROM host`
 	rows, err := store.DB.Query(query)
 	if err != nil {
 		return nil, err
@@ -122,6 +128,7 @@ func (store *PostgresHostStore) GetByZone(ctx context.Context, zone string) ([]*
 	for rows.Next() {
 		var host api.Host
 		var role string
+		var assignedPool sql.NullString
 
 		err = rows.Scan(
 			&host.ID,
@@ -133,9 +140,14 @@ func (store *PostgresHostStore) GetByZone(ctx context.Context, zone string) ([]*
 			&host.CreatedAt,
 			&host.Provider,
 			&host.ProviderID,
+			&assignedPool,
 		)
 		if err != nil {
 			return nil, err
+		}
+
+		if assignedPool.Valid {
+			host.AssignedPool = &assignedPool.String
 		}
 
 		host.Role = api.Role{
@@ -150,7 +162,7 @@ func (store *PostgresHostStore) GetByZone(ctx context.Context, zone string) ([]*
 func (store *PostgresHostStore) ListHosts(ctx context.Context) ([]*api.Host, error) {
 	log.Println("/PostgresHostStore/ListHosts")
 
-	query := `SELECT id, role, zone, imageid, state, health, createdat, provider, providerid FROM host`
+	query := `SELECT id, role, zone, imageid, state, health, createdat, provider, providerid, assignedpool FROM host`
 	rows, err := store.DB.Query(query)
 	if err != nil {
 		return nil, err
@@ -161,6 +173,7 @@ func (store *PostgresHostStore) ListHosts(ctx context.Context) ([]*api.Host, err
 	for rows.Next() {
 		var host api.Host
 		var role string
+		var assignedPool sql.NullString
 
 		err = rows.Scan(
 			&host.ID,
@@ -172,9 +185,14 @@ func (store *PostgresHostStore) ListHosts(ctx context.Context) ([]*api.Host, err
 			&host.CreatedAt,
 			&host.Provider,
 			&host.ProviderID,
+			&assignedPool,
 		)
 		if err != nil {
 			return nil, err
+		}
+
+		if assignedPool.Valid {
+			host.AssignedPool = &assignedPool.String
 		}
 
 		host.Role = api.Role{

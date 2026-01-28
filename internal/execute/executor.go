@@ -74,6 +74,9 @@ func (e *DefaultExecutor) Execute(ctx context.Context, action *Action) error {
 			return err
 		}
 
+	case ActionAssignHost:
+		log.Println("Action Assign Host")
+
 	}
 
 	return nil

@@ -30,7 +30,10 @@ CREATE TABLE public.host (
 	state varchar NOT NULL,
 	health varchar NULL,
 	createdat timestamptz NULL,
-	updatedat timestamptz NULL
+	updatedat timestamptz NULL,
+	provider varchar NULL,
+	providerID varchar NULL,
+	assignedpool varchar NULL
 );
 
 -- Problems detected on hosts
@@ -55,4 +58,30 @@ CREATE TABLE host_health_trends (
     health_score DECIMAL(3,2) NOT NULL DEFAULT 100.0,
     INDEX(host_id, date),
     FOREIGN KEY (host_id) REFERENCES public.host(id)
+);
+
+-- dbo.team definition
+
+-- Drop table
+
+DROP TABLE public.team;
+
+CREATE TABLE public.team (
+	id varchar NOT NULL,
+	name varchar NOT NULL,
+	CONSTRAINT team_pkey PRIMARY KEY (id)
+);
+
+-- dbo.pool definition
+
+-- Drop table
+
+DROP TABLE public.pool;
+
+CREATE TABLE public.pool (
+	id varchar NOT NULL,
+	teamid varchar NOT NULL,
+	role varchar NULL,
+	CONSTRAINT pool_pkey PRIMARY KEY (id),
+	CONSTRAINT pool_teamid_fkey FOREIGN KEY (teamid) REFERENCES public.team (id)
 );
