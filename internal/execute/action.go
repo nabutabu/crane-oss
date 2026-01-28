@@ -1,6 +1,8 @@
 package execute
 
-import "time"
+import (
+	"time"
+)
 
 type ActionType string
 
@@ -8,11 +10,13 @@ const (
 	ActionCreateHost  ActionType = "create_host"
 	ActionDrainHost   ActionType = "drain_host"
 	ActionReplaceHost ActionType = "replace_host"
+	ActionAssignHost  ActionType = "assign_host"
 )
 
 type Action struct {
 	HostID string
 	Type   ActionType
+	PoolID string
 }
 
 type ActionStatus string

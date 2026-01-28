@@ -53,16 +53,28 @@ type HealthRequest struct {
 }
 
 type Host struct {
-	ID         string
-	HostName   string
-	ProviderID string
-	Provider   string
-	Role       Role
-	Zone       string
-	Fleet      Fleet
-	ImageID    string
-	Capacity   Capacity
-	State      HostState
-	Health     HostHealth
-	CreatedAt  time.Time
+	ID           string
+	HostName     string
+	ProviderID   string
+	Provider     string
+	Role         Role
+	Zone         string
+	Fleet        Fleet
+	ImageID      string
+	Capacity     Capacity
+	State        HostState
+	Health       HostHealth
+	CreatedAt    time.Time
+	AssignedPool *string
+}
+
+type Team struct {
+	ID   string
+	Name string
+}
+
+type Pool struct {
+	ID     string
+	TeamID string
+	Role   Role
 }
