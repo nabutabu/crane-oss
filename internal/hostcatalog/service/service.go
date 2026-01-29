@@ -91,3 +91,7 @@ func (service *HostCatalogService) DeleteHost(ctx context.Context, id string) er
 func (service *HostCatalogService) GetByZone(ctx context.Context, zone string) ([]*api.Host, error) {
 	return service.store.GetByZone(ctx, zone)
 }
+
+func (service *HostCatalogService) UpdateHostPoolID(ctx context.Context, hostID string, poolID string) error {
+	return service.store.UpdateHostPool(ctx, hostID, poolID)
+}

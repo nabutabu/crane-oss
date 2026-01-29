@@ -212,3 +212,12 @@ func (store *PostgresHostStore) UpdateProviderID(ctx context.Context, hostID str
 
 	return err
 }
+
+func (store *PostgresHostStore) UpdateHostPool(ctx context.Context, hostID string, poolID string) error {
+	log.Println("/PostgresHostStore/UpdateHostPool")
+	query := "UPDATE host set poolID = $1 WHERE id = $2"
+
+	_, err := store.DB.Exec(query, poolID, hostID)
+
+	return err
+}

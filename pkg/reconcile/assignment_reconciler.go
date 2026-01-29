@@ -48,15 +48,18 @@ func (reconciler *DefaultAssignmentReconciler) Reconcile(ctx context.Context) er
 				return err
 			}
 
+			// TODO: lots of hardcodedness for credits
+
 			err = reconciler.ActionStore.Enqueue(ctx, &execute.Action{
 				HostID: host.ID,
 				Type:   execute.ActionAssignHost,
 				PoolID: pool.ID,
+				Cost:   1,
 			})
 			if err != nil {
 				log.Printf("Error while enqueue action from AssignmentReconciler: %s", err)
 				// return the credits if enqueue failed
-				err = reconciler.Selector.Release(pool.ID, 1)
+				err = reconciler.Selector.Release(pool.ID, 1) // TODO
 				if err != nil {
 					return err
 				}
