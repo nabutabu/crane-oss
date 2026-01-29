@@ -2,12 +2,11 @@ package reconcile
 
 import (
 	"context"
-	"errors"
+	"log"
 
-	"github.com/nabutabu/crane-oss/internal/creditmanager/poolstore"
 	"github.com/nabutabu/crane-oss/internal/execute"
 	"github.com/nabutabu/crane-oss/internal/hostcatalog/store"
-	"github.com/nabutabu/crane-oss/pkg/api"
+	"github.com/nabutabu/crane-oss/pkg/selector"
 )
 
 type AssignmentReconciler interface {
@@ -15,38 +14,22 @@ type AssignmentReconciler interface {
 }
 
 type DefaultAssignmentReconciler struct {
-	hStore      store.PostgresHostStore
-	pStore      poolstore.PoolStore
-	actionStore execute.ActionStore
+	HStore      store.PostgresHostStore
+	Selector    selector.PoolSelector
+	ActionStore execute.ActionStore
 }
 
-func NewDefaultAssignmentReconciler(hStore store.PostgresHostStore, pStore poolstore.PoolStore,
+func NewDefaultAssignmentReconciler(hStore store.PostgresHostStore, poolselector selector.PoolSelector,
 	actionStore execute.ActionStore) *DefaultAssignmentReconciler {
 	return &DefaultAssignmentReconciler{
-		hStore:      hStore,
-		pStore:      pStore,
-		actionStore: actionStore,
+		HStore:      hStore,
+		Selector:    poolselector,
+		ActionStore: actionStore,
 	}
-}
-
-func (reconciler *DefaultAssignmentReconciler) findPool(ctx context.Context, host *api.Host) (*api.Pool, error) {
-	pools, err := reconciler.pStore.ListPools(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, pool := range pools {
-		if pool.Role == host.Role {
-			// we found a Pool?
-			return pool, nil
-		}
-	}
-
-	return nil, errors.New("could not find any pool that needs this host")
 }
 
 func (reconciler *DefaultAssignmentReconciler) Reconcile(ctx context.Context) error {
-	hosts, err := reconciler.hStore.ListHosts(ctx)
+	hosts, err := reconciler.HStore.ListHosts(ctx)
 	if err != nil {
 		return err
 	}
@@ -54,17 +37,30 @@ func (reconciler *DefaultAssignmentReconciler) Reconcile(ctx context.Context) er
 	for _, host := range hosts {
 		if host.AssignedPool == nil {
 			// host is unassigned, find a pool that may need it
-			pool, err := reconciler.findPool(ctx, host)
+			pool, err := reconciler.Selector.SelectPool(ctx, host)
 			if err != nil && err.Error() != "could not find any pool that needs this host" {
 				return err
 			}
 
-			err = reconciler.actionStore.Enqueue(ctx, &execute.Action{
+			// reserve credits
+			err = reconciler.Selector.Reserve(pool.ID, 1) // TODO: amount hardcoded rn
+			if err != nil {
+				return err
+			}
+
+			err = reconciler.ActionStore.Enqueue(ctx, &execute.Action{
 				HostID: host.ID,
 				Type:   execute.ActionAssignHost,
 				PoolID: pool.ID,
 			})
 			if err != nil {
+				log.Printf("Error while enqueue action from AssignmentReconciler: %s", err)
+				// return the credits if enqueue failed
+				err = reconciler.Selector.Release(pool.ID, 1)
+				if err != nil {
+					return err
+				}
+
 				return err
 			}
 		}
