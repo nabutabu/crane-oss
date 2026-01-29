@@ -17,6 +17,7 @@ type Action struct {
 	HostID string
 	Type   ActionType
 	PoolID string
+	Cost   int // number of credits used for this action
 }
 
 type ActionStatus string

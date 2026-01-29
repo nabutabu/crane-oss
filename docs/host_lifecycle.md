@@ -111,3 +111,25 @@ HostCatalog (desired state)
   - Stuck states
 
 **Why Reconciler goes through all hosts:** Ensures no host drifts from its intended state over time.
+
+### 🔁 Loop 3: Capacity Reconciliation (Proactive)
+*Goal: Create hosts when (Team credits > hosts assigned to pools owned by that team)*
+
+```
+CapacityReconciler (credits → hosts)
+        ↓ creates
+    HostCatalog
+        ↓ seen as unassigned
+AssignmentReconciler (host → pool)
+        ↓
+    Executor
+```
+
+**Characteristics:**
+- Credit-driven host provisioning
+- Proactive capacity management
+- Handles team resource allocation
+- Links pool creation to team credits
+- Ensures available hosts for team workloads
+
+**Note:** CapacityReconciler should be called through the API since credit values change infrequently.

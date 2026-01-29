@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 
+	"github.com/nabutabu/crane-oss/internal/creditmanager"
 	"github.com/nabutabu/crane-oss/internal/hostcatalog/service"
 	"github.com/nabutabu/crane-oss/internal/provider"
 	"github.com/nabutabu/crane-oss/pkg/api"
@@ -12,6 +13,7 @@ import (
 type DefaultExecutor struct {
 	catalog  *service.HostCatalogService
 	provider provider.Provider
+	manager  creditmanager.Manager
 }
 
 func NewDefaultExecutor(catalog *service.HostCatalogService, provider provider.Provider) *DefaultExecutor {
@@ -76,6 +78,14 @@ func (e *DefaultExecutor) Execute(ctx context.Context, action *Action) error {
 
 	case ActionAssignHost:
 		log.Println("Action Assign Host")
+
+		// assign the poolID to host
+		err := e.catalog.UpdateHostPoolID(ctx, action.HostID, action.PoolID)
+		if err != nil {
+			// if err release the credits that were used up
+			e.manager.Release(action.PoolID, action.Cost)
+			return err
+		}
 
 	}
 
