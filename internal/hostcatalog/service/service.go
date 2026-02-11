@@ -95,3 +95,5 @@ func (service *HostCatalogService) GetByZone(ctx context.Context, zone string) (
 func (service *HostCatalogService) GetByToken(ctx context.Context, token string) (*api.Host, error) {
 	return service.store.GetByToken(ctx, token)
 }
+
+func (service *HostCatalogService) UpdateState(ctx context.Context)
