@@ -20,7 +20,6 @@ The system enforces a uniform OS layer across all hosts while preserving flexibi
 - Full package-manager reconciliation
 - subd self-upgrades
 - Filesystem-wide lockdown
-- mTLS / SPIFFE identity
 
 ## High-Level Architecture
 
