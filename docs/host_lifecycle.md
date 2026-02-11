@@ -88,6 +88,9 @@ ActivityManager → Decide(host, problems)
 ### 🔁 Loop 2: State Reconciliation (Declarative)
 *Goal: Reality ≠ Intent → Converge it*
 
+This is being changed as part of the subd_and_Dominator branch
+subd is a continuously running host agent that enforces convergence to a centrally defined OS image published by Dominator. Rather than reporting arbitrary host state and awaiting patch instructions, subd pulls the desired state, locally computes drift, and applies minimal in-place changes to restore compliance. Dominator acts as the control plane, coordinating OS versions and rollouts across zones and providers.
+
 ```
 HostCatalog (desired state)
        ↓
@@ -109,5 +112,6 @@ HostCatalog (desired state)
   - Incorrect role
   - Capacity discrepancies
   - Stuck states
-
+EvaluateEscalation
 **Why Reconciler goes through all hosts:** Ensures no host drifts from its intended state over time.
+This should be replaced by subd
