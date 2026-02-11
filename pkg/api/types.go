@@ -66,3 +66,19 @@ type Host struct {
 	Health     HostHealth
 	CreatedAt  time.Time
 }
+
+type DesiredState struct {
+	ImageID string `json:"image_id"`
+	Track   string `json:"track"`
+	Version string `json:"version"`
+}
+
+type Service struct {
+	Name        string
+	Running     bool
+	Description string
+}
+
+type CurrentState struct {
+	Services map[string]Service
+}
