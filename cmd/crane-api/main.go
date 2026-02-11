@@ -20,7 +20,6 @@ import (
 	"github.com/nabutabu/crane-oss/internal/hostcatalog/service"
 	"github.com/nabutabu/crane-oss/internal/hostcatalog/store"
 	"github.com/nabutabu/crane-oss/internal/provider/awscompute"
-	"github.com/nabutabu/crane-oss/pkg/reconcile"
 )
 
 const BHD_CONFIG_YAML_PATH = "../../bhd.json"
@@ -89,11 +88,6 @@ func main() {
 	executor := execute.NewDefaultExecutor(
 		hostCatalog,
 		provider,
-	)
-
-	reconcile.NewDefaultHostReconciler(
-		*hostStore,
-		actionStore,
 	)
 
 	worker := execute.NewWorker(
