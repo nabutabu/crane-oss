@@ -48,10 +48,10 @@ func computeBucket(hostID string) int {
 	return int(num % 100)
 }
 
-func starlarkResultToDesiredState(val starlark.Value) (DesiredState, error) {
+func starlarkResultToDesiredState(val starlark.Value) (api.DesiredState, error) {
 	dict, ok := val.(*starlark.Dict)
 	if !ok {
-		return DesiredState{}, fmt.Errorf("policy must return dict")
+		return api.DesiredState{}, fmt.Errorf("policy must return dict")
 	}
 
 	get := func(key string) (string, error) {
@@ -64,37 +64,37 @@ func starlarkResultToDesiredState(val starlark.Value) (DesiredState, error) {
 
 	imageID, err := get("image_id")
 	if err != nil {
-		return DesiredState{}, err
+		return api.DesiredState{}, err
 	}
 
 	track, err := get("track")
 	if err != nil {
-		return DesiredState{}, err
+		return api.DesiredState{}, err
 	}
 
 	version, err := get("version")
 	if err != nil {
-		return DesiredState{}, err
+		return api.DesiredState{}, err
 	}
 
-	return DesiredState{
+	return api.DesiredState{
 		ImageID: imageID,
 		Track:   track,
 		Version: version,
 	}, nil
 }
 
-func (r *PolicyResolver) Resolve(host *api.Host) (DesiredState, error) {
+func (r *PolicyResolver) Resolve(host *api.Host) (api.DesiredState, error) {
 	thread := &starlark.Thread{Name: "dominator"}
 
 	globals, err := r.program.Init(thread, nil)
 	if err != nil {
-		return DesiredState{}, err
+		return api.DesiredState{}, err
 	}
 
 	resolveFn, ok := globals["resolve"] // the name of the function in the file path provided to constructor
 	if !ok {
-		return DesiredState{}, fmt.Errorf("resolve() not defined in policy")
+		return api.DesiredState{}, fmt.Errorf("resolve() not defined in policy")
 	}
 
 	hostDict := starlark.StringDict{
@@ -108,7 +108,7 @@ func (r *PolicyResolver) Resolve(host *api.Host) (DesiredState, error) {
 
 	result, err := starlark.Call(thread, resolveFn, starlark.Tuple{hostStruct}, nil)
 	if err != nil {
-		return DesiredState{}, err
+		return api.DesiredState{}, err
 	}
 
 	log.Printf("Sending following desired state to subd: %s", result)

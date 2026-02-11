@@ -37,7 +37,7 @@ func (s *Server) Start() error {
 
 func (s *Server) recordState(host *api.Host, body []byte) error {
 	// since we received a heartbeat the host should be considered healthy
-	s.catalog.TransitionState(context.Background(), host.ID, api.HostReady)
+	s.catalog.TransitionHealth(context.Background(), host.ID, string(api.HostHealthHealthy))
 
 	// raw state should also probably be recorded, we need a statecatalog for this
 
