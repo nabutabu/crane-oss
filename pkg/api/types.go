@@ -68,9 +68,11 @@ type Host struct {
 }
 
 type DesiredState struct {
-	ImageID string `json:"image_id"`
-	Track   string `json:"track"`
-	Version string `json:"version"`
+	ImageID  string `json:"image_id"`
+	Track    string `json:"track"`
+	Version  string `json:"version"`
+	Services map[string]Service
+	Packages []Package
 }
 
 type Service struct {
@@ -79,6 +81,36 @@ type Service struct {
 	Description string
 }
 
+type Package struct {
+	Name    string
+	Version string
+}
+
 type CurrentState struct {
 	Services map[string]Service
+	Packages []Package
 }
+
+type ServiceAction struct {
+	Name   string
+	Action ServiceActionType
+}
+
+type PackageAction struct {
+	Name   string
+	Action PackageActionType
+}
+
+type ServiceActionType string
+
+const (
+	StartService ServiceActionType = "start"
+	StopService  ServiceActionType = "stop"
+)
+
+type PackageActionType string
+
+const (
+	InstallPackage   PackageActionType = "install"
+	UninstallPackage PackageActionType = "uninstall"
+)
