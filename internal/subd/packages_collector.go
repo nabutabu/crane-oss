@@ -17,7 +17,7 @@ func NewPackagesCollecetor() *PackagesCollector {
 }
 
 func getPackages() ([]api.Package, error) {
-	cmd := exec.Command("dpkg-query", "-W")
+	cmd := exec.Command("dpkg-query", "-W", "-f=${Package} ${Version}\n")
 
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -91,14 +91,14 @@ func (c *PackagesCollector) DiffPackages(observed, desired []api.Package) []api.
 }
 
 func (c *PackagesCollector) Install(name string) error {
-	cmd := exec.Command("apt-get", "install", "-y", name)
+	cmd := exec.Command("pkexec", "apt-get", "install", "-y", name)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
 }
 
 func (c *PackagesCollector) Remove(name string) error {
-	cmd := exec.Command("apt-get", "remove", "-y", name)
+	cmd := exec.Command("pkexec", "apt-get", "remove", "-y", name)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
