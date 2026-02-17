@@ -8,10 +8,19 @@ import (
 )
 
 type Runner struct {
-	client            Client
-	servicesCollector ServicesCollector
-	pkgsCollector     PackagesCollector
+	client            *Client
+	servicesCollector *ServicesCollector
+	pkgsCollector     *PackagesCollector
 	interval          time.Duration
+}
+
+func NewRunner(client *Client, svcsCollector *ServicesCollector, pkgsCollector *PackagesCollector, interval time.Duration) *Runner {
+	return &Runner{
+		client: client,
+		servicesCollector: svcsCollector,
+		pkgsCollector: pkgsCollector,
+		interval: interval,
+	}
 }
 
 func (r *Runner) Check() {
@@ -45,14 +54,18 @@ func (r *Runner) Check() {
 	// perform actions
 	err = r.servicesCollector.PerformActions(actions)
 	if err != nil {
-		log.Printf("Error Performing actions %s\n", err)
+		log.Printf("Error Performing actions on services %s\n", err)
 	}
 
 	for _, action := range pkgActions {
 		if action.Action == api.InstallPackage {
-			r.pkgsCollector.Install(action.Name)
+			err = r.pkgsCollector.Install(action.Name)
 		} else {
-			r.pkgsCollector.Remove(action.Name)
+			err = r.pkgsCollector.Remove(action.Name)
+		}
+
+		if err != nil {
+			log.Printf("Error performing actions on packages %s\n", err)
 		}
 	}
 }

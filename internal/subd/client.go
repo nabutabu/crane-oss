@@ -20,7 +20,7 @@ type Client struct {
 	Client *http.Client
 }
 
-func New(url string, token string) *Client {
+func NewClient(url string, token string) *Client {
 	return &Client{
 		URL:    url,
 		Token:  token,

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"os"
+	"time"
 
 	"github.com/nabutabu/crane-oss/internal/subd"
 )
@@ -36,7 +37,8 @@ func LoadConfig() Configuration {
 
 func main() {
 	config := LoadConfig()
+	
+	runner := subd.NewRunner(subd.NewClient(config.DominatorURL, config.Token), subd.NewServicesCollector(), subd.NewPackagesCollecetor(), time.Minute * 5)
 
-	subd.New(config.DominatorURL, config.Token)
-
+	go runner.Run()
 }
