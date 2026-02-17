@@ -71,8 +71,8 @@ func (s *Server) recordState(host *api.Host, body []byte) error {
 }
 
 func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
-	log.Println("/Dominator/HandleState")
 	hostID := r.URL.Query().Get("hostID")
+	log.Printf("/Dominator/HandleState/%s\n",hostID)
 
 	if hostID == "" {
 		http.Error(w, "missing token", http.StatusBadRequest)

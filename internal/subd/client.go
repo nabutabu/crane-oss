@@ -39,13 +39,12 @@ func (client *Client) Heartbeat(currState api.CurrentState) (*api.DesiredState, 
 	}
 
 	// POST to Dominator with current state
-	req, err := http.NewRequest("POST", client.URL+HEARTBEAT, bytes.NewReader(jsonData))
+	req, err := http.NewRequest("POST", client.URL+HEARTBEAT+"?hostID="+client.HostID, bytes.NewReader(jsonData))
 	if err != nil {
 		return nil, err
 	}
 
 	req.Header.Set("Authorization", "Bearer "+client.Token)
-	req.Header.Set("HostID", client.HostID)
 
 	response, err := client.Client.Do(req)
 	if err != nil {
