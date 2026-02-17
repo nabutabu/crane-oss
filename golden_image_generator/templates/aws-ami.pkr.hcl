@@ -62,7 +62,28 @@ build {
     inline = ["sudo apt-get update", "sudo apt-get install -y curl"]
   }
   provisioner "shell" {
-    script = "${path.root}/setup_k8s.sh"
+    script = "${path.root}/setup-k8s.sh"
+  }
+  provisioner "file" {
+    source = "${path.root}/subd"
+    destination = "/tmp/subd"
+  }
+  provisioner "file" {
+    source = "${path.root}/subd-appsettings.json"
+    destination = "/tmp/appsettings.json"
+  }
+  provisioner "file" {
+    source = "${path.root}/subd.service"
+    destination = "/tmp/subd.service"
+  }
+  provisioner "shell" {
+    inline = [
+      "sudo mv /tmp/subd /usr/local/bin/subd",
+      "sudo chmod +x /usr/local/bin/subd",
+      "sudo mv /tmp/appsettings.json /home/ubuntu/appsettings.json",
+      "sudo mv /tmp/subd.service /etc/systemd/system/subd.service",
+      "sudo systemctl enable subd"
+    ]
   }
   provisioner "shell" {
     inline = [
