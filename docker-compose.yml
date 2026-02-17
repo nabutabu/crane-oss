@@ -20,5 +20,24 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
 
+  dominator:
+    build:
+      context: .
+      dockerfile: Dockerfile.dominator
+    container_name: crane-dominator
+    ports:
+      - "44000:44000"
+    # depends_on:
+    #   db:
+    #     condition: service_started
+    environment:
+      - DB_HOST=db
+      - DB_PORT=5432
+      - DB_USER=postgres
+      - DB_PASSWORD=mysecretpassword
+      - DB_NAME=crane
+    volumes:
+      - ./policy:/app/policy
+
 volumes:
   postgres_data:

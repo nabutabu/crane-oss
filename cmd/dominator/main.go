@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"os"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/nabutabu/crane-oss/internal/dominator"
@@ -12,11 +13,11 @@ import (
 )
 
 func main() {
-	host := "localhost"
-	port := 43544
-	user := "postgres"
-	password := "mysecretpassword"
-	dbname := "crane"
+	host := getEnv("DB_HOST", "localhost")
+	port := getEnvInt("DB_PORT", 43544)
+	user := getEnv("DB_USER", "postgres")
+	password := getEnv("DB_PASSWORD", "mysecretpassword")
+	dbname := getEnv("DB_NAME", "crane")
 
 	// 2. Create the connection string
 	// The sslmode parameter is often set to 'disable' for local development.
@@ -40,4 +41,21 @@ func main() {
 	if err := server.Start(); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func getEnv(key, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return defaultValue
+}
+
+func getEnvInt(key string, defaultValue int) int {
+	if value := os.Getenv(key); value != "" {
+		var intVal int
+		if _, err := fmt.Sscanf(value, "%d", &intVal); err == nil {
+			return intVal
+		}
+	}
+	return defaultValue
 }
