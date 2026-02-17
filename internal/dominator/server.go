@@ -29,7 +29,7 @@ func NewServer(addr string, catalog *service.HostCatalogService, resolver *Polic
 func (s *Server) Start() error {
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("/heartbeat", s.handleState)
+	mux.HandleFunc("/v1/heartbeat", s.handleState)
 	mux.HandleFunc("/v1/health", s.Health)
 
 	log.Printf("Dominator listening on %s\n", s.addr)
