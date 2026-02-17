@@ -2,6 +2,7 @@ package dominator
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,13 +15,15 @@ import (
 
 type Server struct {
 	addr     string
+	db       *sql.DB
 	catalog  *service.HostCatalogService
 	resolver *PolicyResolver
 }
 
-func NewServer(addr string, catalog *service.HostCatalogService, resolver *PolicyResolver) *Server {
+func NewServer(addr string, db *sql.DB, catalog *service.HostCatalogService, resolver *PolicyResolver) *Server {
 	return &Server{
 		addr:     addr,
+		db:       db,
 		catalog:  catalog,
 		resolver: resolver,
 	}
@@ -31,10 +34,24 @@ func (s *Server) Start() error {
 
 	mux.HandleFunc("/v1/heartbeat", s.handleState)
 	mux.HandleFunc("/v1/health", s.Health)
+	mux.HandleFunc("/v1/db/health", s.dbHealth)
 
 	log.Printf("Dominator listening on %s\n", s.addr)
 
 	return http.ListenAndServe(s.addr, mux)
+}
+
+func (s *Server) dbHealth(w http.ResponseWriter, r *http.Request) {
+	if err := s.db.Ping(); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		fmt.Fprintf(w, `{"status": "unavailable", "error": "%v"}`, err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	fmt.Fprintf(w, `{"status": "available"}`)
 }
 
 func (s *Server) Health(w http.ResponseWriter, r *http.Request) {
