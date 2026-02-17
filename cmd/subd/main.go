@@ -15,6 +15,7 @@ const (
 
 type Configuration struct {
 	DominatorURL string
+	HostID       string
 	Token        string
 }
 
@@ -37,8 +38,8 @@ func LoadConfig() Configuration {
 
 func main() {
 	config := LoadConfig()
-	
-	runner := subd.NewRunner(subd.NewClient(config.DominatorURL, config.Token), subd.NewServicesCollector(), subd.NewPackagesCollecetor(), time.Minute * 5)
 
-	go runner.Run()
+	runner := subd.NewRunner(subd.NewClient(config.DominatorURL, config.HostID, config.Token), subd.NewServicesCollector(), subd.NewPackagesCollecetor(), time.Second*10)
+
+	runner.Run()
 }

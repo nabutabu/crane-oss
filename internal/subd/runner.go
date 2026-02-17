@@ -12,14 +12,15 @@ type Runner struct {
 	servicesCollector *ServicesCollector
 	pkgsCollector     *PackagesCollector
 	interval          time.Duration
+	healthChecked     bool
 }
 
 func NewRunner(client *Client, svcsCollector *ServicesCollector, pkgsCollector *PackagesCollector, interval time.Duration) *Runner {
 	return &Runner{
-		client: client,
+		client:            client,
 		servicesCollector: svcsCollector,
-		pkgsCollector: pkgsCollector,
-		interval: interval,
+		pkgsCollector:     pkgsCollector,
+		interval:          interval,
 	}
 }
 
@@ -71,6 +72,15 @@ func (r *Runner) Check() {
 }
 
 func (r *Runner) Run() {
+	if !r.healthChecked {
+		if err := r.client.Health(); err != nil {
+			log.Printf("Failed to connect to dominator: %v\n", err)
+		} else {
+			log.Println("Connected to dominator")
+		}
+		r.healthChecked = true
+	}
+
 	ticker := time.NewTicker(r.interval)
 	defer ticker.Stop()
 
