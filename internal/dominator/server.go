@@ -3,6 +3,7 @@ package dominator
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -29,10 +30,18 @@ func (s *Server) Start() error {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/heartbeat", s.handleState)
+	mux.HandleFunc("/v1/health", s.Health)
 
 	log.Printf("Dominator listening on %s\n", s.addr)
 
 	return http.ListenAndServe(s.addr, mux)
+}
+
+func (s *Server) Health(w http.ResponseWriter, r *http.Request) {
+	log.Println("/Dominator/Health")
+
+	w.WriteHeader(http.StatusOK)
+	fmt.Fprintf(w, "Dominator listening on %s\n", s.addr)
 }
 
 func (s *Server) recordState(host *api.Host, body []byte) error {

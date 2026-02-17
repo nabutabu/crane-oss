@@ -96,4 +96,6 @@ func (service *HostCatalogService) GetByToken(ctx context.Context, token string)
 	return service.store.GetByToken(ctx, token)
 }
 
-func (service *HostCatalogService) UpdateState(ctx context.Context)
+func (service *HostCatalogService) UpdateState(ctx context.Context, id string, newState string) error {
+	return service.store.UpdateState(ctx, id, api.HostState(newState))
+}
