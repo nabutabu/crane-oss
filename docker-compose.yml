@@ -39,5 +39,25 @@ services:
     volumes:
       - ./policy:/app/policy
 
+  crane-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.crane-api
+    container_name: crane-api
+    ports:
+      - "43060:43060"
+    environment:
+      - DB_HOST=db
+      - DB_PORT=5432
+      - DB_USER=postgres
+      - DB_PASSWORD=mysecretpassword
+      - DB_NAME=crane
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_ENDPOINT_URL=http://localstack:4566
+    depends_on:
+      - db
+      - localstack
+
 volumes:
   postgres_data:
