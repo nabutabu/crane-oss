@@ -5,10 +5,10 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"html"
 	"log"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
@@ -20,10 +20,15 @@ import (
 	"github.com/nabutabu/crane-oss/internal/hostcatalog/service"
 	"github.com/nabutabu/crane-oss/internal/hostcatalog/store"
 	"github.com/nabutabu/crane-oss/internal/provider/awscompute"
-	"github.com/nabutabu/crane-oss/pkg/reconcile"
 )
 
-const BHD_CONFIG_YAML_PATH = "../../bhd.json"
+const BHD_CONFIG_YAML_PATH = "bhd.json"
+
+type configJSON struct {
+	Zone                string   `json:"zone"`
+	ScanIntervalMinutes int      `json:"scan_interval"`
+	Checks              []string `json:"checks"`
+}
 
 func LoadConfigFromFile(path string) (*badhost.Config, error) {
 	data, err := os.ReadFile(path)
@@ -31,13 +36,17 @@ func LoadConfigFromFile(path string) (*badhost.Config, error) {
 		return nil, err
 	}
 
-	var config badhost.Config
-	err = json.Unmarshal(data, &config)
+	var tmp configJSON
+	err = json.Unmarshal(data, &tmp)
 	if err != nil {
 		return nil, err
 	}
 
-	return &config, nil
+	return &badhost.Config{
+		Zone:         tmp.Zone,
+		ScanInterval: time.Duration(tmp.ScanIntervalMinutes) * time.Minute,
+		Checks:       tmp.Checks,
+	}, nil
 }
 
 func BuildChecks(enabled []string) ([]checks.Check, error) {
@@ -52,14 +61,31 @@ func BuildChecks(enabled []string) ([]checks.Check, error) {
 	return res, nil
 }
 
+func getEnv(key, defaultValue string) string {
+	if value, exists := os.LookupEnv(key); exists {
+		return value
+	}
+	return defaultValue
+}
+
+func getEnvInt(key string, defaultValue int) int {
+	if value, exists := os.LookupEnv(key); exists {
+		var intVal int
+		if _, err := fmt.Sscanf(value, "%d", &intVal); err == nil {
+			return intVal
+		}
+	}
+	return defaultValue
+}
+
 func main() {
 	ctx := context.Background()
 
-	host := "localhost"
-	port := 43544
-	user := "postgres"
-	password := "mysecretpassword"
-	dbname := "crane"
+	host := getEnv("DB_HOST", "localhost")
+	port := getEnvInt("DB_PORT", 5432)
+	user := getEnv("DB_USER", "postgres")
+	password := getEnv("DB_PASSWORD", "mysecretpassword")
+	dbname := getEnv("DB_NAME", "crane")
 
 	// 2. Create the connection string
 	// The sslmode parameter is often set to 'disable' for local development.
@@ -91,11 +117,6 @@ func main() {
 		provider,
 	)
 
-	reconcile.NewDefaultHostReconciler(
-		*hostStore,
-		actionStore,
-	)
-
 	worker := execute.NewWorker(
 		actionStore,
 		executor,
@@ -121,9 +142,23 @@ func main() {
 	// Worker to put the hosts in appropriate states once detected by BHD
 	go worker.Run(ctx)
 
-	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("Healthy, %q", html.EscapeString(r.URL.Path))
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("Healthy, %s", r.URL.Path)
 	})
 
-	log.Fatal(http.ListenAndServe(":43060", nil))
+	mux.HandleFunc("/v1/db/health", func(w http.ResponseWriter, r *http.Request) {
+		if err := db.Ping(); err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			fmt.Fprintf(w, `{"status": "unavailable", "error": "%v"}`, err)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintf(w, `{"status": "available"}`)
+	})
+
+	log.Fatal(http.ListenAndServe(":43060", mux))
 }

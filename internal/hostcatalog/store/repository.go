@@ -194,3 +194,45 @@ func (store *PostgresHostStore) UpdateProviderID(ctx context.Context, hostID str
 
 	return err
 }
+
+func (store *PostgresHostStore) GetByToken(ctx context.Context, token string) (*api.Host, error) {
+	log.Println("/PostgresHostStore/")
+	query := "SELECT id, role, zone, imageid, state, health, createdat, provider, providerid FROM host WHERE token = $1"
+
+	row := store.DB.QueryRowContext(ctx, query, token)
+
+	var h api.Host
+	var role string
+	var provider sql.NullString
+	var providerID sql.NullString
+
+	err := row.Scan(
+		&h.ID,
+		&role,
+		&h.Zone,
+		&h.ImageID,
+		&h.State,
+		&h.Health,
+		&h.CreatedAt,
+		&provider,
+		&providerID,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	if provider.Valid {
+		h.Provider = provider.String
+	} else {
+		h.Provider = "" // or leave unset
+	}
+
+	if providerID.Valid {
+		h.ProviderID = providerID.String
+	} else {
+		h.ProviderID = "" // or leave unset
+	}
+
+	h.Role = api.Role{Name: role}
+	return &h, nil
+}
