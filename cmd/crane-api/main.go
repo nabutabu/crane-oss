@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"html"
 	"log"
 	"net/http"
 	"os"
@@ -143,9 +142,23 @@ func main() {
 	// Worker to put the hosts in appropriate states once detected by BHD
 	go worker.Run(ctx)
 
-	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("Healthy, %q", html.EscapeString(r.URL.Path))
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("Healthy, %s", r.URL.Path)
 	})
 
-	log.Fatal(http.ListenAndServe(":43060", nil))
+	mux.HandleFunc("/v1/db/health", func(w http.ResponseWriter, r *http.Request) {
+		if err := db.Ping(); err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			fmt.Fprintf(w, `{"status": "unavailable", "error": "%v"}`, err)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintf(w, `{"status": "available"}`)
+	})
+
+	log.Fatal(http.ListenAndServe(":43060", mux))
 }

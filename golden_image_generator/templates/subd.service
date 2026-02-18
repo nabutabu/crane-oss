@@ -1,0 +1,10 @@
+[Unit]
+Description=subd agent
+
+[Service]
+User=root
+ExecStart=/usr/local/bin/subd
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
