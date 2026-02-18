@@ -48,8 +48,8 @@ func (p *Provider) ProvisionHost(ctx context.Context, role string, id string) (s
 	}
 
 	out, err := p.client.RunInstances(ctx, &ec2.RunInstancesInput{
-		ImageId:      aws.String("ami-00a8151272c45cd8e"), // placeholder
-		InstanceType: "t2.micro",
+		ImageId:      aws.String("ami-01556d821c687af3b"), // placeholder
+		InstanceType: "t4g.micro",
 		MinCount:     aws.Int32(1),
 		MaxCount:     aws.Int32(1),
 		TagSpecifications: []types.TagSpecification{
