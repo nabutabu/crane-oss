@@ -2,6 +2,7 @@
   "zone": "us-west-2",
   "scan_interval": 5,
   "checks": [
-    "aws.ec2.unhealthy"
+    "aws.ec2.unhealthy",
+    "host-store-check"
   ]
 }
