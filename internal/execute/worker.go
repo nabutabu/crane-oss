@@ -3,6 +3,7 @@ package execute
 import (
 	"context"
 	"log"
+	"time"
 )
 
 type Worker struct {
@@ -17,12 +18,15 @@ func NewWorker(store ActionStore, executor Executor) *Worker {
 	}
 }
 
-func (w *Worker) Run(ctx context.Context) error {
-	for {
+func (w *Worker) Run(ctx context.Context) {
+	ticker := time.NewTicker(time.Minute * 1)
+	defer ticker.Stop()
+
+	for range ticker.C {
 		record, err := w.store.Next(ctx)
 		if err != nil {
 			log.Printf("failed to fetch next record: %v", err)
-			break // Stop the loop on error
+			return
 		}
 
 		log.Println("calling execute")
@@ -34,16 +38,12 @@ func (w *Worker) Run(ctx context.Context) error {
 			// action failed
 			w.store.MarkFailed(ctx, record.ID)
 			log.Println(err)
-			return err
 		}
 
 		// mark action completed
 		err = w.store.MarkDone(ctx, record.ID)
 		if err != nil {
 			log.Println(err)
-			return err
 		}
 	}
-
-	return nil
 }
