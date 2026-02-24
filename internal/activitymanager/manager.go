@@ -17,6 +17,15 @@ type ActivityManager struct {
 	cooldown     time.Duration
 }
 
+func NewActivityManager(pStore problem.ProblemStore, aStore execute.ActionStore, cache problemcache.SeenProblemCache, cooldown time.Duration) *ActivityManager {
+	return &ActivityManager{
+		problemStore: pStore,
+		actionStore: aStore,
+		cache: cache,
+		cooldown: cooldown,
+	}
+}
+
 func (am *ActivityManager) Run(ctx context.Context) {
 	// get problems from ProblemStore
 	problems, err := am.problemStore.GetRecentProblems(ctx, "", am.cooldown)

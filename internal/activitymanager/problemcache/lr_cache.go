@@ -114,7 +114,7 @@ func (lrc *LRCache) Record(key string) {
 	lrc.addMR(key)
 }
 
-func (lrc *LRCache) SeenRecord(key string) bool {
+func (lrc *LRCache) SeenRecently(key string) bool {
 	lrc.mu.Lock()
 	defer lrc.mu.Unlock()
 	if _, found := lrc.Cache[key]; found {
