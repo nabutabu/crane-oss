@@ -99,7 +99,7 @@ func TestPostgresProblemStore_GetUnresolvedProblems(t *testing.T) {
 			name: "returns unresolved problems",
 			rows: sqlmock.NewRows([]string{
 				"id", "host_id", "problem_type", "severity",
-				"detected_at", "resolvedat", "details",
+				"detected_at", "resolved_at", "details",
 			}).
 				AddRow(
 					1,
@@ -126,7 +126,7 @@ func TestPostgresProblemStore_GetUnresolvedProblems(t *testing.T) {
 			name: "no unresolved problems",
 			rows: sqlmock.NewRows([]string{
 				"id", "host_id", "problem_type", "severity",
-				"detected_at", "resolvedat", "details",
+				"detected_at", "resolved_at", "details",
 			}),
 			wantLen: 0,
 			wantErr: false,
@@ -147,9 +147,9 @@ func TestPostgresProblemStore_GetUnresolvedProblems(t *testing.T) {
 			store := problem.PostgresProblemStore{DB: db}
 
 			query := regexp.QuoteMeta(`
-SELECT id, host_id, problem_type, severity, detected_at, resolvedat, details
+SELECT id, host_id, problem_type, severity, detected_at, resolved_at, details
 FROM host_problems
-WHERE resolvedat IS NULL
+WHERE resolved_at IS NULL
 `)
 
 			if tt.queryErr != nil {

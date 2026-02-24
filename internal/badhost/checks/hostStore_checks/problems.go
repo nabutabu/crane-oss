@@ -32,7 +32,12 @@ func (check *UnhealthyEC2Instance) Detect(ctx context.Context, host *api.Host) (
 		problems = append(problems, p)
 	}
 
-	if !host.LastSeenHeartbeat.IsZero() && time.Since(host.LastSeenHeartbeat) > 3*time.Minute {
+	timeSinceHeartbeat := time.Since(host.LastSeenHeartbeat)
+	if host.LastSeenHeartbeat.IsZero() {
+		timeSinceHeartbeat = time.Since(host.CreatedAt)
+	}
+
+	if timeSinceHeartbeat > 3*time.Minute {
 		p := problem.Problem{
 			Host_id:    host.ID,
 			Type:       problem.ProblemTypeNoHeartbeat,

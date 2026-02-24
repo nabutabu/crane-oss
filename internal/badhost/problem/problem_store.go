@@ -39,9 +39,9 @@ func (store *PostgresProblemStore) RecordProblem(ctx context.Context, hostID str
 }
 
 func (store *PostgresProblemStore) GetUnresolvedProblems(ctx context.Context) ([]Problem, error) {
-	query := `SELECT id, host_id, problem_type, severity, detected_at, resolvedat, details
+	query := `SELECT id, host_id, problem_type, severity, detected_at, resolved_at, details
 	FROM host_problems
-	WHERE resolvedat IS NULL
+	WHERE resolved_at IS NULL
 	GROUP BY host_id`
 
 	var problems []Problem
@@ -74,7 +74,7 @@ func (store *PostgresProblemStore) GetUnresolvedProblems(ctx context.Context) ([
 }
 
 func (store *PostgresProblemStore) GetRecentProblems(ctx context.Context, hostID string, duration time.Duration) ([]Problem, error) {
-	query := `SELECT id, host_id, problem_type, severity, detected_at, resolvedat, details
+	query := `SELECT id, host_id, problem_type, severity, detected_at, resolved_at, details
 	FROM host_problems
 	WHERE host_id = $1 AND detected_at >= $2
 	ORDER BY detected_at DESC`

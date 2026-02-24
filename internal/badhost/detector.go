@@ -44,11 +44,11 @@ func (detector *BadHostDetector) Run(ctx context.Context) {
 	}
 }
 
-func (detector *BadHostDetector) ScanZone(ctx context.Context, zone string) error {
+func (detector *BadHostDetector) ScanZone(ctx context.Context, zone string)  {
 	// 1. Get all hosts in zone from host catalog
 	hosts, err := detector.hostStore.GetByZone(ctx, zone)
 	if err != nil {
-		return err
+		log.Printf("[Error]/ActivityManager/ScanByZone: %v", err)
 	}
 
 	// 2. Scan each host for problems
@@ -57,12 +57,15 @@ func (detector *BadHostDetector) ScanZone(ctx context.Context, zone string) erro
 		if len(problems) > 0 {
 			// 3. Record problems in central database
 			for _, problem := range problems {
-				detector.problemStore.RecordProblem(ctx, host.ID, *problem)
+				err = detector.problemStore.RecordProblem(ctx, host.ID, *problem)
+				if err != nil {
+					log.Printf("[Error]/ActivityManager/RecordProblem: %v", err)
+				}
 			}
 		}
 	}
 
-	return nil
+
 }
 
 func (detector *BadHostDetector) detectProblems(ctx context.Context, host *api.Host) []*problem.Problem {

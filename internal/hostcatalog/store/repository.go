@@ -113,13 +113,14 @@ func (store *PostgresHostStore) UpdateHealth(ctx context.Context, id string, new
 func (store *PostgresHostStore) GetByZone(ctx context.Context, zone string) ([]*api.Host, error) {
 	log.Println("/PostgresHostStore/GetByZone")
 
-	query := `SELECT id, role, zone, imageid, state, health, createdat, provider, providerid, lastseenheartbeat FROM host`
+	query := `SELECT id, role, zone, imageid, state, health, createdat, provider, providerid, lastSeenHeartbeat FROM host`
 	rows, err := store.DB.Query(query)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
+	
 	var hosts []*api.Host
 	for rows.Next() {
 		var host api.Host
