@@ -62,8 +62,6 @@ func (detector *BadHostDetector) ScanZone(ctx context.Context, zone string) erro
 		}
 	}
 
-	// 4. Analyze trends and identify cycling hosts
-	// return b.analyzeTrends(ctx, zone)
 	return nil
 }
 

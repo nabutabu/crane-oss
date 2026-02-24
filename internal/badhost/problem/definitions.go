@@ -12,6 +12,7 @@ const (
 	ProblemTypeCloudEvent   ProblemType = "cloud_health_event"
 	ProblemTypeReachability ProblemType = "unreachable"
 	ProblemTypeCycling      ProblemType = "cycling_host"
+	ProblemTypeNoHeartbeat  ProblemType = "no_heartbeat"
 )
 const (
 	SeverityCritical ProblemSeverity = "critical"

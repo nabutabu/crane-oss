@@ -25,11 +25,13 @@ const (
 )
 
 type ActionRecord struct {
-	ID        int
-	HostID    string
-	Type      ActionType
-	Status    ActionStatus
-	Attempts  int
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID         int
+	HostID     string
+	Type       ActionType
+	Status     ActionStatus
+	Attempts   int
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+	Provider   string
+	ProviderID string
 }

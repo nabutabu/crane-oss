@@ -49,13 +49,14 @@ func (store *PostgresActionStore) Next(ctx context.Context) (*ActionRecord, erro
             LIMIT 1
             FOR UPDATE SKIP LOCKED
         )
-        RETURNING id, hostid, attempts, type
+        RETURNING id, hostid, attempts, type, provider
     `
 	err := store.DB.QueryRow(query).Scan(
 		&record.ID,
 		&record.HostID,
 		&record.Attempts,
 		&record.Type,
+		&record.Provider,
 	)
 	if err != nil {
 		return nil, err

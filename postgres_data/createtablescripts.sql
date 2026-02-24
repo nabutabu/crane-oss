@@ -30,7 +30,10 @@ CREATE TABLE public.host (
 	state varchar NOT NULL,
 	health varchar NULL,
 	createdat timestamptz NULL,
-	updatedat timestamptz NULL
+	updatedat timestamptz NULL,
+	provider varchar NULL,
+	providerID varchar NULL,
+	lastSeenHeartbeat timestamptz NULL
 );
 
 -- Problems detected on hosts
