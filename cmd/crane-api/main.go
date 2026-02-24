@@ -138,7 +138,7 @@ func main() {
 
 	bhd := badhost.New(hostCatalog, problemStore, checks, bhd_config)
 
-	manager := activitymanager.NewActivityManager(problemStore, actionStore, problemcache.NewCache(10, time.Hour), time.Minute)
+	manager := activitymanager.NewActivityManager(problemStore, actionStore, problemcache.NewCache(10, time.Hour), time.Minute * 5, time.Minute)
 
 	// Activity Manager - Create actions based on problems seen by BHD
 	go manager.Run(ctx)
