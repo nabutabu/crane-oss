@@ -33,11 +33,13 @@ func EvaluateEscalation(
 	}
 
 	// Apply escalation policy
-	if last30min >= 3 {
-		return EscalationReplace
-	} else if last10min >= 1 {
-		return EscalationDrain
-	} else {
-		return EscalationNone
-	}
+	// if last30min >= 3 {
+	// 	return EscalationReplace
+	// } else if last10min >= 1 {
+	// 	return EscalationDrain
+	// } else {
+	// 	return EscalationNone
+	// }
+
+	return EscalationReplace
 }

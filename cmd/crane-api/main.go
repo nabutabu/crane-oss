@@ -13,6 +13,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/nabutabu/crane-oss/internal/activitymanager"
+	"github.com/nabutabu/crane-oss/internal/activitymanager/problemcache"
 	"github.com/nabutabu/crane-oss/internal/badhost"
 	"github.com/nabutabu/crane-oss/internal/badhost/checks"
 	"github.com/nabutabu/crane-oss/internal/badhost/problem"
@@ -136,7 +138,12 @@ func main() {
 
 	bhd := badhost.New(hostCatalog, problemStore, checks, bhd_config)
 
-	// Bad Host Detector
+	manager := activitymanager.NewActivityManager(problemStore, actionStore, problemcache.NewCache(10, time.Hour), time.Minute)
+
+	// Activity Manager - Create actions based on problems seen by BHD
+	go manager.Run(ctx)
+
+	// Bad Host Detector - Detect problems with existing Hosts in a Zone
 	go bhd.Run(ctx)
 
 	// Worker to put the hosts in appropriate states once detected by BHD
@@ -146,6 +153,7 @@ func main() {
 
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Healthy, %s", r.URL.Path)
+		fmt.Fprintf(w, `{"status": "available"}`)
 	})
 
 	mux.HandleFunc("/v1/db/health", func(w http.ResponseWriter, r *http.Request) {

@@ -148,7 +148,7 @@ func TestSeenRecord(t *testing.T) {
 	key := "test-key"
 
 	// Test seeing non-existent record
-	if cache.SeenRecord(key) {
+	if cache.SeenRecently(key) {
 		t.Error("Should return false for non-existent key")
 	}
 
@@ -156,7 +156,7 @@ func TestSeenRecord(t *testing.T) {
 	cache.Record(key)
 
 	// Test seeing existing record
-	if !cache.SeenRecord(key) {
+	if !cache.SeenRecently(key) {
 		t.Error("Should return true for existing key")
 	}
 
@@ -273,7 +273,7 @@ func TestConcurrentAccess(t *testing.T) {
 			for j := 0; j < operationsPerGoroutine; j++ {
 				key := fmt.Sprintf("key-%d-%d", id, j)
 				cache.Record(key)
-				cache.SeenRecord(key)
+				cache.SeenRecently(key)
 			}
 		}(i)
 	}
