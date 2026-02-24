@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/nabutabu/crane-oss/internal/hostcatalog/service"
 	"github.com/nabutabu/crane-oss/pkg/api"
@@ -62,17 +63,15 @@ func (s *Server) Health(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) recordState(host *api.Host, body []byte) error {
-	// since we received a heartbeat the host should be considered healthy
 	s.catalog.TransitionHealth(context.Background(), host.ID, string(api.HostHealthHealthy))
-
-	// raw state should also probably be recorded, we need a statecatalog for this
+	s.catalog.UpdateLastSeenHeartbeat(context.Background(), host.ID, time.Now())
 
 	return nil
 }
 
 func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 	hostID := r.URL.Query().Get("hostID")
-	log.Printf("/Dominator/HandleState/%s\n",hostID)
+	log.Printf("/Dominator/HandleState/%s\n", hostID)
 
 	if hostID == "" {
 		http.Error(w, "missing token", http.StatusBadRequest)

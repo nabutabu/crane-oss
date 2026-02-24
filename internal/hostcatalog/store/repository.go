@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"log"
+	"time"
 
 	"github.com/nabutabu/crane-oss/pkg/api"
 )
@@ -41,7 +42,7 @@ func (store *PostgresHostStore) Delete(ctx context.Context, id string) error {
 
 func (store *PostgresHostStore) GetByID(ctx context.Context, id string) (*api.Host, error) {
 	query := `
-		SELECT id, role, zone, imageid, state, health, createdat, provider, providerID
+		SELECT id, role, zone, imageid, state, health, createdat, provider, providerID, lastseenheartbeat
 		FROM host
 		WHERE id = $1
 	`
@@ -63,6 +64,7 @@ func (store *PostgresHostStore) GetByID(ctx context.Context, id string) (*api.Ho
 		&h.CreatedAt,
 		&provider,
 		&providerID,
+		&h.LastSeenHeartbeat,
 	)
 	if err != nil {
 		return nil, err
@@ -71,13 +73,13 @@ func (store *PostgresHostStore) GetByID(ctx context.Context, id string) (*api.Ho
 	if provider.Valid {
 		h.Provider = provider.String
 	} else {
-		h.Provider = "" // or leave unset
+		h.Provider = ""
 	}
 
 	if providerID.Valid {
 		h.ProviderID = providerID.String
 	} else {
-		h.ProviderID = "" // or leave unset
+		h.ProviderID = ""
 	}
 
 	h.Role = api.Role{Name: role}
@@ -111,7 +113,7 @@ func (store *PostgresHostStore) UpdateHealth(ctx context.Context, id string, new
 func (store *PostgresHostStore) GetByZone(ctx context.Context, zone string) ([]*api.Host, error) {
 	log.Println("/PostgresHostStore/GetByZone")
 
-	query := `SELECT id, role, zone, imageid, state, health, createdat, provider, providerid FROM host`
+	query := `SELECT id, role, zone, imageid, state, health, createdat, provider, providerid, lastseenheartbeat FROM host`
 	rows, err := store.DB.Query(query)
 	if err != nil {
 		return nil, err
@@ -133,6 +135,7 @@ func (store *PostgresHostStore) GetByZone(ctx context.Context, zone string) ([]*
 			&host.CreatedAt,
 			&host.Provider,
 			&host.ProviderID,
+			&host.LastSeenHeartbeat,
 		)
 		if err != nil {
 			return nil, err
@@ -150,7 +153,7 @@ func (store *PostgresHostStore) GetByZone(ctx context.Context, zone string) ([]*
 func (store *PostgresHostStore) ListHosts(ctx context.Context) ([]*api.Host, error) {
 	log.Println("/PostgresHostStore/ListHosts")
 
-	query := `SELECT id, role, zone, imageid, state, health, createdat, provider, providerid FROM host`
+	query := `SELECT id, role, zone, imageid, state, health, createdat, provider, providerid, lastseenheartbeat FROM host`
 	rows, err := store.DB.Query(query)
 	if err != nil {
 		return nil, err
@@ -172,6 +175,7 @@ func (store *PostgresHostStore) ListHosts(ctx context.Context) ([]*api.Host, err
 			&host.CreatedAt,
 			&host.Provider,
 			&host.ProviderID,
+			&host.LastSeenHeartbeat,
 		)
 		if err != nil {
 			return nil, err
@@ -195,9 +199,18 @@ func (store *PostgresHostStore) UpdateProviderID(ctx context.Context, hostID str
 	return err
 }
 
+func (store *PostgresHostStore) UpdateLastSeenHeartbeat(ctx context.Context, hostID string, lastSeen time.Time) error {
+	log.Println("/PostgresHostStore/UpdateLastSeenHeartbeat")
+	query := "UPDATE host SET lastSeenHeartbeat = $1 WHERE id = $2"
+
+	_, err := store.DB.Exec(query, lastSeen, hostID)
+
+	return err
+}
+
 func (store *PostgresHostStore) GetByToken(ctx context.Context, token string) (*api.Host, error) {
 	log.Println("/PostgresHostStore/")
-	query := "SELECT id, role, zone, imageid, state, health, createdat, provider, providerid FROM host WHERE token = $1"
+	query := "SELECT id, role, zone, imageid, state, health, createdat, provider, providerid, lastseenheartbeat FROM host WHERE token = $1"
 
 	row := store.DB.QueryRowContext(ctx, query, token)
 
@@ -216,6 +229,7 @@ func (store *PostgresHostStore) GetByToken(ctx context.Context, token string) (*
 		&h.CreatedAt,
 		&provider,
 		&providerID,
+		&h.LastSeenHeartbeat,
 	)
 	if err != nil {
 		return nil, err
@@ -224,13 +238,13 @@ func (store *PostgresHostStore) GetByToken(ctx context.Context, token string) (*
 	if provider.Valid {
 		h.Provider = provider.String
 	} else {
-		h.Provider = "" // or leave unset
+		h.Provider = ""
 	}
 
 	if providerID.Valid {
 		h.ProviderID = providerID.String
 	} else {
-		h.ProviderID = "" // or leave unset
+		h.ProviderID = ""
 	}
 
 	h.Role = api.Role{Name: role}

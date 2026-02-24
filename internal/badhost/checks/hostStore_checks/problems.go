@@ -2,6 +2,7 @@ package hoststorechecks
 
 import (
 	"context"
+	"log"
 	"time"
 
 	"github.com/nabutabu/crane-oss/internal/badhost/problem"
@@ -13,20 +14,37 @@ type UnhealthyEC2Instance struct {
 	catalog *service.HostCatalogService
 }
 
-func Name() string {
-	return "host-store-check"
+func (check *UnhealthyEC2Instance) Name() string {
+	return "host.store.check"
 }
 
-func Detect(ctx context.Context, host *api.Host) ([]problem.Problem, error) {
+func (check *UnhealthyEC2Instance) Detect(ctx context.Context, host *api.Host) ([]problem.Problem, error) {
+	log.Println("/hostStore/Detect")
+	var problems []problem.Problem
+
 	if host.Health == api.HostHealthUnhealthy {
-		var p *problem.Problem = &problem.Problem{
+		p := problem.Problem{
 			Host_id:    host.ID,
 			Type:       problem.ProblemTypeSEL,
 			Severity:   problem.SeverityCritical,
 			DetectedAt: time.Now(),
 		}
-
-		return []problem.Problem{*p}, nil
+		problems = append(problems, p)
 	}
+
+	if !host.LastSeenHeartbeat.IsZero() && time.Since(host.LastSeenHeartbeat) > 3*time.Minute {
+		p := problem.Problem{
+			Host_id:    host.ID,
+			Type:       problem.ProblemTypeNoHeartbeat,
+			Severity:   problem.SeverityCritical,
+			DetectedAt: time.Now(),
+		}
+		problems = append(problems, p)
+	}
+
+	if len(problems) > 0 {
+		return problems, nil
+	}
+
 	return nil, nil
 }

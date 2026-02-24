@@ -41,7 +41,7 @@ func (p *Provider) TerminateHost(ctx context.Context, hostID string) error {
 }
 
 func (p *Provider) ProvisionHost(ctx context.Context, role string, id string) (string, error) {
-	log.Println("/ec2/ProvisionHost")
+	log.Println("/aws/ProvisionHost")
 
 	if role == "" {
 		return "", errors.New("role empty")
@@ -52,6 +52,7 @@ func (p *Provider) ProvisionHost(ctx context.Context, role string, id string) (s
 		InstanceType: "t4g.micro",
 		MinCount:     aws.Int32(1),
 		MaxCount:     aws.Int32(1),
+		KeyName:      aws.String("crane_api_provisioned_instances_key"),
 		TagSpecifications: []types.TagSpecification{
 			{
 				ResourceType: types.ResourceTypeInstance,

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log"
 	"slices"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/nabutabu/crane-oss/internal/hostcatalog/store"
@@ -77,11 +78,16 @@ func (service *HostCatalogService) CreateHost(ctx context.Context, provider stri
 		Provider:   provider,
 		Zone:       "us-west-2",
 		State:      api.HostProvisioning,
+		CreatedAt:  time.Now(),
 	})
 }
 
 func (service *HostCatalogService) UpdateHostProviderID(ctx context.Context, hostID string, providerID string) error {
 	return service.store.UpdateProviderID(ctx, hostID, providerID)
+}
+
+func (service *HostCatalogService) UpdateLastSeenHeartbeat(ctx context.Context, hostID string, lastSeen time.Time) error {
+	return service.store.UpdateLastSeenHeartbeat(ctx, hostID, lastSeen)
 }
 
 func (service *HostCatalogService) DeleteHost(ctx context.Context, id string) error {

@@ -34,12 +34,14 @@ func (e *DefaultExecutor) Execute(ctx context.Context, action *Action) error {
 		// create new host, currently hardcoded to only use AWS, role is also being hardcoded
 		hostID, err := e.catalog.CreateHost(ctx, "aws")
 		if err != nil {
+			log.Printf("err %v", err)
 			return err
 		}
 
 		// provision host here
 		provider_id, err := e.provider.ProvisionHost(ctx, "role", hostID)
 		if err != nil {
+			log.Printf("couldn't provision err %v", err)
 			return err
 		}
 
