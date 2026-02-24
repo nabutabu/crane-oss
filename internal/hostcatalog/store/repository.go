@@ -53,6 +53,7 @@ func (store *PostgresHostStore) GetByID(ctx context.Context, id string) (*api.Ho
 	var role string
 	var provider sql.NullString
 	var providerID sql.NullString
+	var lastSeenHeartbeat sql.NullTime
 
 	err := row.Scan(
 		&h.ID,
@@ -64,7 +65,7 @@ func (store *PostgresHostStore) GetByID(ctx context.Context, id string) (*api.Ho
 		&h.CreatedAt,
 		&provider,
 		&providerID,
-		&h.LastSeenHeartbeat,
+		&lastSeenHeartbeat,
 	)
 	if err != nil {
 		return nil, err
@@ -80,6 +81,10 @@ func (store *PostgresHostStore) GetByID(ctx context.Context, id string) (*api.Ho
 		h.ProviderID = providerID.String
 	} else {
 		h.ProviderID = ""
+	}
+
+	if lastSeenHeartbeat.Valid {
+		h.LastSeenHeartbeat = lastSeenHeartbeat.Time
 	}
 
 	h.Role = api.Role{Name: role}
@@ -120,11 +125,13 @@ func (store *PostgresHostStore) GetByZone(ctx context.Context, zone string) ([]*
 	}
 	defer rows.Close()
 
-	
 	var hosts []*api.Host
 	for rows.Next() {
 		var host api.Host
 		var role string
+		var provider sql.NullString
+		var providerID sql.NullString
+		var lastSeenHeartbeat sql.NullTime
 
 		err = rows.Scan(
 			&host.ID,
@@ -134,12 +141,22 @@ func (store *PostgresHostStore) GetByZone(ctx context.Context, zone string) ([]*
 			&host.State,
 			&host.Health,
 			&host.CreatedAt,
-			&host.Provider,
-			&host.ProviderID,
-			&host.LastSeenHeartbeat,
+			&provider,
+			&providerID,
+			&lastSeenHeartbeat,
 		)
 		if err != nil {
 			return nil, err
+		}
+
+		if provider.Valid {
+			host.Provider = provider.String
+		}
+		if providerID.Valid {
+			host.ProviderID = providerID.String
+		}
+		if lastSeenHeartbeat.Valid {
+			host.LastSeenHeartbeat = lastSeenHeartbeat.Time
 		}
 
 		host.Role = api.Role{
@@ -165,6 +182,9 @@ func (store *PostgresHostStore) ListHosts(ctx context.Context) ([]*api.Host, err
 	for rows.Next() {
 		var host api.Host
 		var role string
+		var provider sql.NullString
+		var providerID sql.NullString
+		var lastSeenHeartbeat sql.NullTime
 
 		err = rows.Scan(
 			&host.ID,
@@ -174,12 +194,22 @@ func (store *PostgresHostStore) ListHosts(ctx context.Context) ([]*api.Host, err
 			&host.State,
 			&host.Health,
 			&host.CreatedAt,
-			&host.Provider,
-			&host.ProviderID,
-			&host.LastSeenHeartbeat,
+			&provider,
+			&providerID,
+			&lastSeenHeartbeat,
 		)
 		if err != nil {
 			return nil, err
+		}
+
+		if provider.Valid {
+			host.Provider = provider.String
+		}
+		if providerID.Valid {
+			host.ProviderID = providerID.String
+		}
+		if lastSeenHeartbeat.Valid {
+			host.LastSeenHeartbeat = lastSeenHeartbeat.Time
 		}
 
 		host.Role = api.Role{
@@ -219,6 +249,7 @@ func (store *PostgresHostStore) GetByToken(ctx context.Context, token string) (*
 	var role string
 	var provider sql.NullString
 	var providerID sql.NullString
+	var lastSeenHeartbeat sql.NullTime
 
 	err := row.Scan(
 		&h.ID,
@@ -230,7 +261,7 @@ func (store *PostgresHostStore) GetByToken(ctx context.Context, token string) (*
 		&h.CreatedAt,
 		&provider,
 		&providerID,
-		&h.LastSeenHeartbeat,
+		&lastSeenHeartbeat,
 	)
 	if err != nil {
 		return nil, err
@@ -246,6 +277,10 @@ func (store *PostgresHostStore) GetByToken(ctx context.Context, token string) (*
 		h.ProviderID = providerID.String
 	} else {
 		h.ProviderID = ""
+	}
+
+	if lastSeenHeartbeat.Valid {
+		h.LastSeenHeartbeat = lastSeenHeartbeat.Time
 	}
 
 	h.Role = api.Role{Name: role}
