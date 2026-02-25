@@ -3,6 +3,7 @@ package aws_checks
 import (
 	"context"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -21,7 +22,7 @@ func (c *UnhealthyEC2InstanceCheck) Name() string {
 }
 
 func NewUnhealthyEC2Instance(client *ec2.Client) *UnhealthyEC2InstanceCheck {
-	return &UnhealthyEC2InstanceCheck {
+	return &UnhealthyEC2InstanceCheck{
 		Client: client,
 	}
 }
@@ -36,6 +37,15 @@ func (ec2Instance *UnhealthyEC2InstanceCheck) Detect(ctx context.Context, host *
 
 	out, err := ec2Instance.Client.DescribeInstanceStatus(ctx, input)
 	if err != nil {
+		if strings.Contains(err.Error(), "InvalidInstanceID.NotFound") {
+			p := problem.Problem{
+				Host_id:    host.ID,
+				Type:       problem.ProblemTypeInstanceNotFound,
+				Severity:   problem.SeverityCritical,
+				DetectedAt: time.Now(),
+			}
+			return []problem.Problem{p}, nil
+		}
 		return nil, err
 	}
 	if len(out.InstanceStatuses) == 0 {

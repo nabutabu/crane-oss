@@ -6,13 +6,14 @@ type ProblemType string
 type ProblemSeverity string
 
 const (
-	ProblemTypeSEL          ProblemType = "sel_event"
-	ProblemTypeSMART        ProblemType = "smart_failure"
-	ProblemTypeFirmware     ProblemType = "outdated_firmware"
-	ProblemTypeCloudEvent   ProblemType = "cloud_health_event"
-	ProblemTypeReachability ProblemType = "unreachable"
-	ProblemTypeCycling      ProblemType = "cycling_host"
-	ProblemTypeNoHeartbeat  ProblemType = "no_heartbeat"
+	ProblemTypeSEL              ProblemType = "sel_event"
+	ProblemTypeSMART            ProblemType = "smart_failure"
+	ProblemTypeFirmware         ProblemType = "outdated_firmware"
+	ProblemTypeCloudEvent       ProblemType = "cloud_health_event"
+	ProblemTypeReachability     ProblemType = "unreachable"
+	ProblemTypeCycling          ProblemType = "cycling_host"
+	ProblemTypeNoHeartbeat      ProblemType = "no_heartbeat"
+	ProblemTypeInstanceNotFound ProblemType = "instance_not_found"
 )
 const (
 	SeverityCritical ProblemSeverity = "critical"
