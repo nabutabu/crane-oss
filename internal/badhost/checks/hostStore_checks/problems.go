@@ -10,15 +10,22 @@ import (
 	"github.com/nabutabu/crane-oss/pkg/api"
 )
 
-type UnhealthyEC2Instance struct {
+type UnhealthyHostStoreCheck struct {
 	catalog *service.HostCatalogService
 }
 
-func (check *UnhealthyEC2Instance) Name() string {
+func NewUnhealthyHostStoreCheck(catalog *service.HostCatalogService) *UnhealthyHostStoreCheck {
+	return &UnhealthyHostStoreCheck {
+		catalog: catalog,
+	}
+}
+
+
+func (check *UnhealthyHostStoreCheck) Name() string {
 	return "host.store.check"
 }
 
-func (check *UnhealthyEC2Instance) Detect(ctx context.Context, host *api.Host) ([]problem.Problem, error) {
+func (check *UnhealthyHostStoreCheck) Detect(ctx context.Context, host *api.Host) ([]problem.Problem, error) {
 	log.Println("/hostStore/Detect")
 	var problems []problem.Problem
 

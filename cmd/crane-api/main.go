@@ -51,14 +51,16 @@ func LoadConfigFromFile(path string) (*badhost.Config, error) {
 	}, nil
 }
 
-func BuildChecks(enabled []string) ([]checks.Check, error) {
+func BuildChecks(enabled []string, deps checks.Dependencies) ([]checks.Check, error) {
 	var res []checks.Check
+
 	for _, name := range enabled {
-		c, ok := checks.CheckCatalog[name]
+		factory, ok := checks.CheckCatalog[name]
 		if !ok {
-			return nil, fmt.Errorf("[Error:crane-api]/BuildChecks: Check does not exist: %s", name)
+			return nil, fmt.Errorf("check does not exist: %s", name)
 		}
-		res = append(res, c)
+
+		res = append(res, factory(deps))
 	}
 
 	return res, nil
@@ -113,6 +115,11 @@ func main() {
 
 	ec2Client := ec2.NewFromConfig(cfg)
 
+	deps := checks.Dependencies{
+		EC2Client:   ec2Client,
+		HostCatalog: hostCatalog,
+	}
+
 	provider := awscompute.New(ec2Client)
 
 	executor := execute.NewDefaultExecutor(
@@ -132,14 +139,14 @@ func main() {
 		log.Println(err)
 	}
 
-	checks, err := BuildChecks(bhd_config.Checks)
+	checks, err := BuildChecks(bhd_config.Checks, deps)
 	if err != nil {
 		log.Println(err)
 	}
 
 	bhd := badhost.New(hostCatalog, problemStore, checks, bhd_config)
 
-	manager := activitymanager.NewActivityManager(problemStore, actionStore, problemcache.NewCache(10, time.Hour), time.Minute * 5, time.Minute)
+	manager := activitymanager.NewActivityManager(problemStore, actionStore, problemcache.NewCache(10, time.Hour), time.Minute*5, time.Minute)
 
 	// Activity Manager - Create actions based on problems seen by BHD
 	go manager.Run(ctx)
