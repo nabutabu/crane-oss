@@ -56,10 +56,11 @@ func BuildChecks(enabled []string) ([]checks.Check, error) {
 	for _, name := range enabled {
 		c, ok := checks.CheckCatalog[name]
 		if !ok {
-			return nil, fmt.Errorf("unknown check: %s", name)
+			return nil, fmt.Errorf("[Error:crane-api]/BuildChecks: Check does not exist: %s", name)
 		}
 		res = append(res, c)
 	}
+
 	return res, nil
 }
 

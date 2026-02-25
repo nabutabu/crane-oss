@@ -22,6 +22,7 @@ func New(hostStore *service.HostCatalogService, problemStore problem.ProblemStor
 	return &BadHostDetector{
 		hostStore:    *hostStore,
 		problemStore: problemStore,
+		checks:       checks,
 		cfg:          *cfg,
 	}
 }
@@ -30,7 +31,7 @@ func (detector *BadHostDetector) Run(ctx context.Context) {
 	ticker := time.NewTicker(detector.cfg.ScanInterval)
 	defer ticker.Stop()
 
-	log.Printf("[BHD] starting for zone=%s", detector.cfg.Zone)
+	log.Printf("[BHD] starting settings:\n%v", detector.cfg)
 
 	for {
 		select {
@@ -44,7 +45,7 @@ func (detector *BadHostDetector) Run(ctx context.Context) {
 	}
 }
 
-func (detector *BadHostDetector) ScanZone(ctx context.Context, zone string)  {
+func (detector *BadHostDetector) ScanZone(ctx context.Context, zone string) {
 	// 1. Get all hosts in zone from host catalog
 	hosts, err := detector.hostStore.GetByZone(ctx, zone)
 	if err != nil {
@@ -65,13 +66,13 @@ func (detector *BadHostDetector) ScanZone(ctx context.Context, zone string)  {
 		}
 	}
 
-
 }
 
 func (detector *BadHostDetector) detectProblems(ctx context.Context, host *api.Host) []*problem.Problem {
 	var problems []*problem.Problem
 
 	for _, check := range detector.checks {
+		log.Printf("[Info:BHD]/detectProblems: Running %s on %s", check.Name(), host.ID)
 		ps, err := check.Detect(ctx, host)
 		if err != nil {
 			log.Printf("[Error:BHD]/DetectProblems: %v", err)

@@ -22,10 +22,12 @@ func (w *Worker) Run(ctx context.Context) {
 	ticker := time.NewTicker(time.Minute * 1)
 	defer ticker.Stop()
 
+	log.Printf("[Executor] starting")
+
 	for range ticker.C {
 		record, err := w.store.Next(ctx)
 		if err != nil {
-			log.Printf("failed to fetch next record: %v", err)
+			log.Printf("[Info:Executor]/Run/Next %v", err)
 			return
 		}
 
