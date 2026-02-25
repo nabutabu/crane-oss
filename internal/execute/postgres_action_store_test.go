@@ -12,12 +12,12 @@ import (
 func TestPostgresActionStore_Enqueue(t *testing.T) {
 	tests := []struct {
 		name    string
-		action  *execute.Action
+		action  *execute.ActionRecord
 		wantErr bool
 	}{
 		{
 			name: "success",
-			action: &execute.Action{
+			action: &execute.ActionRecord{
 				HostID: "1",
 				Type:   "restart",
 			},
