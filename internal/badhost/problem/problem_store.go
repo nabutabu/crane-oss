@@ -9,7 +9,7 @@ import (
 type ProblemStore interface {
 	RecordProblem(ctx context.Context, hostID string, problem Problem) error
 	GetUnresolvedProblems(ctx context.Context) ([]Problem, error)
-	GetRecentProblems(ctx context.Context, hostID string, duration time.Duration) ([]Problem, error)
+	GetRecentProblems(ctx context.Context, duration time.Duration) ([]Problem, error)
 }
 type PostgresProblemStore struct {
 	DB *sql.DB
@@ -22,6 +22,11 @@ func New(db *sql.DB) *PostgresProblemStore {
 }
 
 func (store *PostgresProblemStore) RecordProblem(ctx context.Context, hostID string, problem Problem) error {
+	details := "null"
+	if problem.Details != "" {
+		details = problem.Details
+	}
+
 	query := `INSERT INTO host_problems (host_id, problem_type, severity, details, detected_at)
 	VALUES ($1, $2, $3, $4, $5)`
 
@@ -31,7 +36,7 @@ func (store *PostgresProblemStore) RecordProblem(ctx context.Context, hostID str
 		hostID,
 		problem.Type,
 		problem.Severity,
-		problem.Details, // already a string
+		details,
 		time.Now(),
 	)
 
@@ -53,6 +58,7 @@ func (store *PostgresProblemStore) GetUnresolvedProblems(ctx context.Context) ([
 
 	for rows.Next() {
 		var problem Problem
+		var resolvedAt sql.NullTime
 
 		err = rows.Scan(
 			&problem.ID,
@@ -60,11 +66,15 @@ func (store *PostgresProblemStore) GetUnresolvedProblems(ctx context.Context) ([
 			&problem.Type,
 			&problem.Severity,
 			&problem.DetectedAt,
-			&problem.ResolvedAt,
+			&resolvedAt,
 			&problem.Details,
 		)
 		if err != nil {
 			return nil, err
+		}
+
+		if resolvedAt.Valid {
+			problem.ResolvedAt = resolvedAt.Time
 		}
 
 		problems = append(problems, problem)
@@ -73,14 +83,14 @@ func (store *PostgresProblemStore) GetUnresolvedProblems(ctx context.Context) ([
 	return problems, nil
 }
 
-func (store *PostgresProblemStore) GetRecentProblems(ctx context.Context, hostID string, duration time.Duration) ([]Problem, error) {
+func (store *PostgresProblemStore) GetRecentProblems(ctx context.Context, duration time.Duration) ([]Problem, error) {
 	query := `SELECT id, host_id, problem_type, severity, detected_at, resolved_at, details
 	FROM host_problems
-	WHERE host_id = $1 AND detected_at >= $2
+	WHERE detected_at >= $1
 	ORDER BY detected_at DESC`
 
 	var problems []Problem
-	rows, err := store.DB.QueryContext(ctx, query, hostID, time.Now().Add(-duration))
+	rows, err := store.DB.QueryContext(ctx, query, time.Now().Add(-duration))
 	if err != nil {
 		return nil, err
 	}
@@ -88,6 +98,7 @@ func (store *PostgresProblemStore) GetRecentProblems(ctx context.Context, hostID
 
 	for rows.Next() {
 		var problem Problem
+		var resolvedAt sql.NullTime
 
 		err = rows.Scan(
 			&problem.ID,
@@ -95,11 +106,15 @@ func (store *PostgresProblemStore) GetRecentProblems(ctx context.Context, hostID
 			&problem.Type,
 			&problem.Severity,
 			&problem.DetectedAt,
-			&problem.ResolvedAt,
+			&resolvedAt,
 			&problem.Details,
 		)
 		if err != nil {
 			return nil, err
+		}
+
+		if resolvedAt.Valid {
+			problem.ResolvedAt = resolvedAt.Time
 		}
 
 		problems = append(problems, problem)

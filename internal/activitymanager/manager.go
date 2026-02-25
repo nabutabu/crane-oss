@@ -11,20 +11,20 @@ import (
 )
 
 type ActivityManager struct {
-	problemStore problem.ProblemStore
-	actionStore  execute.ActionStore
-	cache        problemcache.SeenProblemCache
-	contextWindow     time.Duration // the context window will use the problems within this window from now
-	ScanInterval	time.Duration // run the activity manager every ScanInterval minutes
+	problemStore  problem.ProblemStore
+	actionStore   execute.ActionStore
+	cache         problemcache.SeenProblemCache
+	contextWindow time.Duration // the context window will use the problems within this window from now
+	ScanInterval  time.Duration // run the activity manager every ScanInterval minutes
 }
 
 func NewActivityManager(pStore problem.ProblemStore, aStore execute.ActionStore, cache problemcache.SeenProblemCache, window time.Duration, interval time.Duration) *ActivityManager {
 	return &ActivityManager{
-		problemStore: pStore,
-		actionStore: aStore,
-		cache: cache,
-		contextWindow: window, 
-		ScanInterval: interval,
+		problemStore:  pStore,
+		actionStore:   aStore,
+		cache:         cache,
+		contextWindow: window,
+		ScanInterval:  interval,
 	}
 }
 
@@ -37,7 +37,7 @@ func (am *ActivityManager) Run(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			log.Println("[BHD] shutting down")
+			log.Println("[ActivityManager] shutting down")
 			return
 
 		case <-ticker.C:
@@ -48,11 +48,13 @@ func (am *ActivityManager) Run(ctx context.Context) {
 
 func (am *ActivityManager) RunHelp(ctx context.Context) {
 	// get problems from ProblemStore
-	problems, err := am.problemStore.GetRecentProblems(ctx, "", am.contextWindow)
+	problems, err := am.problemStore.GetRecentProblems(ctx, am.contextWindow)
 	if err != nil {
 		log.Println(err)
 		return
 	}
+
+	log.Printf("[Info:ActivityManager]/RunHelp: Problems seen: %v", problems)
 
 	// group problems by host
 	hostProblems := make(map[string][]problem.Problem)

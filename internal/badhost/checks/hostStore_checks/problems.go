@@ -15,18 +15,17 @@ type UnhealthyHostStoreCheck struct {
 }
 
 func NewUnhealthyHostStoreCheck(catalog *service.HostCatalogService) *UnhealthyHostStoreCheck {
-	return &UnhealthyHostStoreCheck {
+	return &UnhealthyHostStoreCheck{
 		catalog: catalog,
 	}
 }
-
 
 func (check *UnhealthyHostStoreCheck) Name() string {
 	return "host.store.check"
 }
 
 func (check *UnhealthyHostStoreCheck) Detect(ctx context.Context, host *api.Host) ([]problem.Problem, error) {
-	log.Println("/hostStore/Detect")
+	log.Printf("[INFO:HostStoreChecks]/Detect %s", host.ID)
 	var problems []problem.Problem
 
 	if host.Health == api.HostHealthUnhealthy {
