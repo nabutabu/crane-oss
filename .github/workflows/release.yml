@@ -1,0 +1,88 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g., 1.0.0)'
+        required: true
+        type: string
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.25.3'
+
+      - name: Build subd
+        run: go build -o subd-v${{ github.inputs.version }}-linux-amd64 ./cmd/subd
+
+      - name: Build dominator
+        run: go build -o dominator-v${{ github.inputs.version }}-linux-amd64 ./cmd/dominator
+
+      - name: Build crane-api
+        run: go build -o crane-api-v${{ github.inputs.version }}-linux-amd64 ./cmd/crane-api
+
+      - name: Upload subd
+        uses: actions/upload-artifact@v4
+        with:
+          name: subd
+          path: subd-v${{ github.inputs.version }}-linux-amd64
+
+      - name: Upload dominator
+        uses: actions/upload-artifact@v4
+        with:
+          name: dominator
+          path: dominator-v${{ github.inputs.version }}-linux-amd64
+
+      - name: Upload crane-api
+        uses: actions/upload-artifact@v4
+        with:
+          name: crane-api
+          path: crane-api-v${{ github.inputs.version }}-linux-amd64
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download subd
+        uses: actions/download-artifact@v4
+        with:
+          name: subd
+
+      - name: Download dominator
+        uses: actions/download-artifact@v4
+        with:
+          name: dominator
+
+      - name: Download crane-api
+        uses: actions/download-artifact@v4
+        with:
+          name: crane-api
+
+      - name: Make binaries executable
+        run: |
+          chmod +x subd-*
+          chmod +x dominator-*
+          chmod +x crane-api-*
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ github.inputs.version }}
+          name: Release v${{ github.inputs.version }}
+          draft: false
+          prerelease: false
+          files: |
+            subd-*
+            dominator-*
+            crane-api-*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
