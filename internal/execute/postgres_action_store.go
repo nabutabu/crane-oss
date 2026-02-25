@@ -16,7 +16,7 @@ func NewPostgresActionStore(DB *sql.DB) *PostgresActionStore {
 	}
 }
 
-func (store *PostgresActionStore) Enqueue(ctx context.Context, action *Action) error {
+func (store *PostgresActionStore) Enqueue(ctx context.Context, action *ActionRecord) error {
 	log.Println("/PostgresActionStore/Enqueue")
 
 	query := `

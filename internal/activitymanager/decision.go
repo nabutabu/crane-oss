@@ -7,7 +7,7 @@ import (
 	"github.com/nabutabu/crane-oss/internal/execute"
 )
 
-func Decide(host_id string, problems []problem.Problem) *execute.Action {
+func Decide(host_id string, problems []problem.Problem) *execute.ActionRecord {
 	if len(problems) == 0 {
 		return nil
 	}
@@ -18,14 +18,16 @@ func Decide(host_id string, problems []problem.Problem) *execute.Action {
 	// Map escalation level to action type
 	switch escalation {
 	case EscalationReplace:
-		return &execute.Action{
-			HostID: host_id,
-			Type:   execute.ActionReplaceHost,
+		return &execute.ActionRecord{
+			HostID:   host_id,
+			Type:     execute.ActionReplaceHost,
+			Provider: "aws",
 		}
 	case EscalationDrain:
-		return &execute.Action{
-			HostID: host_id,
-			Type:   execute.ActionDrainHost,
+		return &execute.ActionRecord{
+			HostID:   host_id,
+			Type:     execute.ActionDrainHost,
+			Provider: "aws",
 		}
 	case EscalationNone:
 		return nil
