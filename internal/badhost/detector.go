@@ -57,6 +57,7 @@ func (detector *BadHostDetector) ScanZone(ctx context.Context, zone string) {
 		problems := detector.detectProblems(ctx, host)
 		if len(problems) > 0 {
 			// 3. Record problems in central database
+			log.Printf("[Info:BHD]/ScanZone: Adding %d problems for host %s", len(problems), host.ID)
 			for _, problem := range problems {
 				err = detector.problemStore.RecordProblem(ctx, host.ID, *problem)
 				if err != nil {
