@@ -12,15 +12,21 @@ import (
 	"github.com/nabutabu/crane-oss/pkg/api"
 )
 
-type UnhealthyEC2Instance struct {
+type UnhealthyEC2InstanceCheck struct {
 	Client *ec2.Client
 }
 
-func (c *UnhealthyEC2Instance) Name() string {
+func (c *UnhealthyEC2InstanceCheck) Name() string {
 	return "aws-ec2-unhealthy"
 }
 
-func (ec2Instance *UnhealthyEC2Instance) Detect(ctx context.Context, host *api.Host) ([]problem.Problem, error) {
+func NewUnhealthyEC2Instance(client *ec2.Client) *UnhealthyEC2InstanceCheck {
+	return &UnhealthyEC2InstanceCheck {
+		Client: client,
+	}
+}
+
+func (ec2Instance *UnhealthyEC2InstanceCheck) Detect(ctx context.Context, host *api.Host) ([]problem.Problem, error) {
 	log.Println("/aws/DetectProblems")
 	input := &ec2.DescribeInstanceStatusInput{
 		InstanceIds: []string{host.ProviderID},

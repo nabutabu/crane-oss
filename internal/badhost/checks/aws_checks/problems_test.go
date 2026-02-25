@@ -42,7 +42,7 @@ func TestUnhealthyEC2Instance_Detect_Localstack(t *testing.T) {
 
 	instanceID := *runOut.Instances[0].InstanceId
 
-	detector := &aws_checks.UnhealthyEC2Instance{
+	detector := &aws_checks.UnhealthyEC2InstanceCheck{
 		Client: ec2Client,
 	}
 
