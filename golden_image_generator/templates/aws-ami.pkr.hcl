@@ -25,6 +25,17 @@ variable "aws_secret_key" {
   sensitive   = true
 }
 
+variable "spire_version" {
+  type        = string
+  default     = "1.9.1"
+  description = "SPIRE version to install"
+}
+
+variable "spire_server_ip" {
+  type        = string
+  description = "Private IP of the SPIRE server"
+}
+
 locals {
   hash = data.git-commit.test.hash
 }
@@ -60,6 +71,23 @@ build {
   ]
   provisioner "shell" {
     inline = ["sudo apt-get update", "sudo apt-get install -y curl"]
+  }
+  provisioner "shell" {
+    inline = [
+      "SPIRE_VERSION=${var.spire_version}",
+      "wget -q https://github.com/spiffe/spire/releases/download/v${SPIRE_VERSION}/spire-${SPIRE_VERSION}-linux-arm64-musl.tar.gz",
+      "tar zvxf spire-${SPIRE_VERSION}-linux-arm64-musl.tar.gz",
+      "sudo cp -r spire-${SPIRE_VERSION}/. /opt/spire/",
+      "rm -rf spire-${SPIRE_VERSION}*",
+      "sudo mkdir -p /etc/spire",
+      "sudo cp ${path.root}/spire-agent.conf /etc/spire/agent.conf",
+      "sudo cp ${path.root}/spire-agent.service /etc/systemd/system/spire-agent.service"
+    ]
+  }
+  provisioner "shell" {
+    inline = [
+      "sudo sed -i 's/<SPIRE_SERVER_IP>/${var.spire_server_ip}/g' /etc/spire/agent.conf"
+    ]
   }
   provisioner "shell" {
     script = "${path.root}/setup-k8s.sh"

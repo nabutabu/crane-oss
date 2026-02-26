@@ -1,0 +1,10 @@
+[Unit]
+Description=SPIRE Agent
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/spire-agent run -config /etc/spire/agent.conf
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

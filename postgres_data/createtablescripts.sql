@@ -1,3 +1,7 @@
+-- Databases
+CREATE DATABASE crane;
+CREATE DATABASE spire;
+
 --dbo.actions definition
 
 -- Drop table
@@ -23,7 +27,7 @@ CREATE TABLE public.actions (
 DROP TABLE public.host;
 
 CREATE TABLE public.host (
-	id varchar NOT NULL,
+	id varchar NOT NULL PRIMARY KEY,
 	"role" varchar NULL,
 	"zone" varchar NULL,
 	imageid varchar NULL,
