@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"log"
@@ -10,6 +11,7 @@ import (
 	"github.com/nabutabu/crane-oss/internal/dominator"
 	"github.com/nabutabu/crane-oss/internal/hostcatalog/service"
 	"github.com/nabutabu/crane-oss/internal/hostcatalog/store"
+	"github.com/spiffe/go-spiffe/v2/workloadapi"
 )
 
 func main() {
@@ -18,6 +20,21 @@ func main() {
 	user := getEnv("DB_USER", "postgres")
 	password := getEnv("DB_PASSWORD", "mysecretpassword")
 	dbname := getEnv("DB_NAME", "crane")
+
+	ctx := context.Background()
+
+	source, err := workloadapi.NewX509Source(ctx)
+	if err != nil {
+		log.Fatalf("failed to create X509 source: %v", err)
+	}
+	defer source.Close()
+
+	svid, err := source.GetX509SVID()
+	if err != nil {
+		log.Fatal("Couldnt get X509 %v", err)
+	}
+
+	log.Println("SPIFFE ID:", svid.ID.String())
 
 	// 2. Create the connection string
 	// The sslmode parameter is often set to 'disable' for local development.

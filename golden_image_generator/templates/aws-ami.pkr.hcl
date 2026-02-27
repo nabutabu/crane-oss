@@ -72,16 +72,23 @@ build {
   provisioner "shell" {
     inline = ["sudo apt-get update", "sudo apt-get install -y curl"]
   }
+  provisioner "file" {
+    source = "${path.root}/spire-agent.conf"
+    destination = "/tmp/spire-agent.conf"
+  }
+  provisioner "file" {
+    source = "${path.root}/spire-agent.service"
+    destination = "/tmp/spire-agent.service"
+  }
   provisioner "shell" {
     inline = [
-      "SPIRE_VERSION=${var.spire_version}",
-      "wget -q https://github.com/spiffe/spire/releases/download/v${SPIRE_VERSION}/spire-${SPIRE_VERSION}-linux-arm64-musl.tar.gz",
-      "tar zvxf spire-${SPIRE_VERSION}-linux-arm64-musl.tar.gz",
-      "sudo cp -r spire-${SPIRE_VERSION}/. /opt/spire/",
-      "rm -rf spire-${SPIRE_VERSION}*",
+      "wget -q https://github.com/spiffe/spire/releases/download/v${var.spire_version}/spire-${var.spire_version}-linux-arm64-musl.tar.gz",
+      "tar zvxf spire-${var.spire_version}-linux-arm64-musl.tar.gz",
+      "sudo cp -r spire-${var.spire_version}/. /opt/spire/",
+      "rm -rf spire-${var.spire_version}*",
       "sudo mkdir -p /etc/spire",
-      "sudo cp ${path.root}/spire-agent.conf /etc/spire/agent.conf",
-      "sudo cp ${path.root}/spire-agent.service /etc/systemd/system/spire-agent.service"
+      "sudo cp /tmp/spire-agent.conf /etc/spire/agent.conf",
+      "sudo cp /tmp/spire-agent.service /etc/systemd/system/spire-agent.service"
     ]
   }
   provisioner "shell" {
