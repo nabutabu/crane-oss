@@ -1,5 +1,6 @@
 [Unit]
 Description=subd agent
+After=spire-agent.service
 
 [Service]
 User=root
