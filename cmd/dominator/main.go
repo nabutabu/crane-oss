@@ -55,7 +55,7 @@ func main() {
 
 	server := dominator.NewServer(":44000", db, hostCatalog, resolver)
 
-	if err := server.Start(); err != nil {
+	if err := server.Start(source); err != nil {
 		log.Fatal(err)
 	}
 }
