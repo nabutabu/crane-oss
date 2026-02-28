@@ -2,6 +2,7 @@ package dominator
 
 import (
 	"context"
+	"crypto/tls"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -12,6 +13,9 @@ import (
 
 	"github.com/nabutabu/crane-oss/internal/hostcatalog/service"
 	"github.com/nabutabu/crane-oss/pkg/api"
+	"github.com/spiffe/go-spiffe/v2/spiffeid"
+	"github.com/spiffe/go-spiffe/v2/spiffetls/tlsconfig"
+	"github.com/spiffe/go-spiffe/v2/workloadapi"
 )
 
 type Server struct {
@@ -30,7 +34,7 @@ func NewServer(addr string, db *sql.DB, catalog *service.HostCatalogService, res
 	}
 }
 
-func (s *Server) Start() error {
+func (s *Server) Start(source *workloadapi.X509Source) error {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/v1/heartbeat", s.handleState)
@@ -39,7 +43,21 @@ func (s *Server) Start() error {
 
 	log.Printf("Dominator listening on %s\n", s.addr)
 
-	return http.ListenAndServe(s.addr, mux)
+	allowedID := spiffeid.RequireFromString("spiffe://crane-oss/subd")
+
+	tlsConfig := tlsconfig.MTLSServerConfig(source, source, tlsconfig.AuthorizeOneOf(allowedID))
+	server := &http.Server{
+		Addr:      s.addr,
+		Handler:   mux,
+		TLSConfig: tlsConfig,
+	}
+
+	ln, err := tls.Listen("tcp", s.addr, tlsConfig)
+	if err != nil {
+		log.Fatalf("failed to listen: %v", err)
+	}
+
+	return server.Serve(ln)
 }
 
 func (s *Server) dbHealth(w http.ResponseWriter, r *http.Request) {
