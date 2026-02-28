@@ -85,7 +85,8 @@ services:
     volumes:
       - ./spire/agent:/opt/spire/conf/agent
       - ./spire/agent/data:/opt/spire/data
-      - spire_agent_socket:/tmp/spire-agent/public      
+      - spire_agent_socket:/tmp/spire-agent/public
+      - /var/run/docker.sock:/var/run/docker.sock
 
 volumes:
   postgres_data:
