@@ -99,7 +99,7 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 	// SPIFFE ID is in URI SAN
 	spiffeID := cert.URIs[0].String()
 
-	// spiffe://example.org/subd/i-0abc123def456
+	// spiffe://crane.internal/subd/i-0abc123def456
 	parts := strings.Split(spiffeID, "/")
 	hostID := parts[len(parts)-1]
 
