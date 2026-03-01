@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/nabutabu/crane-oss/internal/hostcatalog/service"
@@ -88,7 +89,20 @@ func (s *Server) recordState(host *api.Host, body []byte) error {
 }
 
 func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
-	hostID := r.URL.Query().Get("hostID")
+	if r.TLS == nil || len(r.TLS.PeerCertificates) == 0 {
+		http.Error(w, "no client cert", http.StatusUnauthorized)
+		return
+	}
+
+	cert := r.TLS.PeerCertificates[0]
+
+	// SPIFFE ID is in URI SAN
+	spiffeID := cert.URIs[0].String()
+
+	// spiffe://example.org/subd/i-0abc123def456
+	parts := strings.Split(spiffeID, "/")
+	hostID := parts[len(parts)-1]
+
 	log.Printf("/Dominator/HandleState/%s\n", hostID)
 
 	if hostID == "" {
@@ -97,7 +111,7 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// get host based on token
-	host, err := s.catalog.GetByID(context.Background(), hostID)
+	host, err := s.catalog.GetByProviderID(context.Background(), hostID)
 	if err != nil {
 		log.Printf("Error in /handleState/GetByID: %s\n", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
