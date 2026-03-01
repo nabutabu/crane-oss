@@ -9,6 +9,9 @@ import (
 	"net/http"
 
 	"github.com/nabutabu/crane-oss/pkg/api"
+	"github.com/spiffe/go-spiffe/v2/spiffeid"
+	"github.com/spiffe/go-spiffe/v2/spiffetls/tlsconfig"
+	"github.com/spiffe/go-spiffe/v2/workloadapi"
 )
 
 const (
@@ -23,11 +26,24 @@ type Client struct {
 	Client *http.Client
 }
 
-func NewClient(url, hostID, token string) *Client {
+func NewClient(url, hostID, token string, source *workloadapi.X509Source) *Client {
+	serverID := spiffeid.RequireFromString("spiffe://crane-oss/dominator")
+	tlsConfig := tlsconfig.MTLSClientConfig(
+		source, // client SVID
+		source, // trust bundle
+		tlsconfig.AuthorizeID(serverID),
+	)
+
+	transport := &http.Transport{
+		TLSClientConfig: tlsConfig,
+	}
+
 	return &Client{
-		URL:    url,
-		Token:  token,
-		Client: &http.Client{},
+		URL:   url,
+		Token: token,
+		Client: &http.Client{
+			Transport: transport,
+		},
 	}
 }
 
@@ -39,12 +55,10 @@ func (client *Client) Heartbeat(currState api.CurrentState) (*api.DesiredState, 
 	}
 
 	// POST to Dominator with current state
-	req, err := http.NewRequest("POST", client.URL+HEARTBEAT+"?hostID="+client.HostID, bytes.NewReader(jsonData))
+	req, err := http.NewRequest("POST", client.URL+HEARTBEAT, bytes.NewReader(jsonData))
 	if err != nil {
 		return nil, err
 	}
-
-	req.Header.Set("Authorization", "Bearer "+client.Token)
 
 	response, err := client.Client.Do(req)
 	if err != nil {
@@ -66,8 +80,6 @@ func (client *Client) Health() error {
 	if err != nil {
 		return err
 	}
-
-	req.Header.Set("Authorization", "Bearer "+client.Token)
 
 	response, err := client.Client.Do(req)
 	if err != nil {
