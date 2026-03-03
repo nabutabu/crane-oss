@@ -2,8 +2,11 @@
 
 ################################################################################
 # Kubernetes Installation Script for AWS EC2
-# This script installs Kubernetes (kubeadm, kubelet, kubectl) on Ubuntu/Debian
+# This script installs Docker, Kind, and Kubernetes (kubeadm, kubelet, kubectl) on Ubuntu/Debian
 # Tested on Ubuntu 20.04/22.04
+# After running this script, you can:
+#   - Run "kind create cluster" to create a local Kubernetes cluster
+#   - Run "kubectl" commands to interact with the cluster
 ################################################################################
 
 set -e  # Exit on any error
@@ -17,17 +20,17 @@ NC='\033[0m' # No Color
 echo -e "${GREEN}Starting Kubernetes installation...${NC}"
 
 # Update system packages
-echo -e "${YELLOW}[1/8] Updating system packages...${NC}"
+echo -e "${YELLOW}[1/10] Updating system packages...${NC}"
 sudo apt-get update
 sudo apt-get upgrade -y
 
 # Disable swap (required for Kubernetes)
-echo -e "${YELLOW}[2/8] Disabling swap...${NC}"
+echo -e "${YELLOW}[2/10] Disabling swap...${NC}"
 sudo swapoff -a
 sudo sed -i '/ swap / s/^\(.*\)$/#\1/g' /etc/fstab
 
 # Load required kernel modules
-echo -e "${YELLOW}[3/8] Loading kernel modules...${NC}"
+echo -e "${YELLOW}[3/10] Loading kernel modules...${NC}"
 cat <<EOF | sudo tee /etc/modules-load.d/k8s.conf
 overlay
 br_netfilter
@@ -37,7 +40,7 @@ sudo modprobe overlay
 sudo modprobe br_netfilter
 
 # Configure sysctl parameters
-echo -e "${YELLOW}[4/8] Configuring sysctl parameters...${NC}"
+echo -e "${YELLOW}[4/10] Configuring sysctl parameters...${NC}"
 cat <<EOF | sudo tee /etc/sysctl.d/k8s.conf
 net.bridge.bridge-nf-call-iptables  = 1
 net.bridge.bridge-nf-call-ip6tables = 1
@@ -47,7 +50,7 @@ EOF
 sudo sysctl --system
 
 # Install containerd
-echo -e "${YELLOW}[5/8] Installing containerd...${NC}"
+echo -e "${YELLOW}[5/10] Installing containerd...${NC}"
 sudo apt-get install -y apt-transport-https ca-certificates curl software-properties-common
 
 # Add Docker's official GPG key and repository (for containerd)
@@ -65,8 +68,29 @@ sudo sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/conf
 sudo systemctl restart containerd
 sudo systemctl enable containerd
 
+# Install Docker
+echo -e "${YELLOW}[5b/10] Installing Docker...${NC}"
+sudo apt-get install -y docker.io
+sudo systemctl start docker
+sudo systemctl enable docker
+sudo usermod -aG docker $USER || true
+
+# Install Kind
+echo -e "${YELLOW}[5c/10] Installing Kind...${NC}"
+if ! command -v kind &> /dev/null; then
+    KIND_VERSION=$(curl -s https://api.github.com/repos/kubernetes-sigs/kind/releases/latest | grep -oP '"tag_name": "\K[^"]+')
+    curl -Lo /tmp/kind "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64"
+    sudo chmod +x /tmp/kind
+    sudo mv /tmp/kind /usr/local/bin/kind
+fi
+
+# Verify Docker and Kind installations
+echo -e "${YELLOW}[5d/10] Verifying installations...${NC}"
+docker --version
+kind version
+
 # Install Kubernetes components
-echo -e "${YELLOW}[6/8] Installing Kubernetes components...${NC}"
+echo -e "${YELLOW}[6/10] Installing Kubernetes components...${NC}"
 
 # Add Kubernetes GPG key and repository
 curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.28/deb/Release.key | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
@@ -80,7 +104,7 @@ sudo apt-mark hold kubelet kubeadm kubectl
 sudo systemctl enable kubelet
 
 # Initialize Kubernetes cluster (optional - uncomment to auto-initialize)
-echo -e "${YELLOW}[7/8] Kubernetes components installed successfully!${NC}"
+echo -e "${YELLOW}[7/10] Kubernetes components installed successfully!${NC}"
 echo -e "${GREEN}To initialize the cluster, run:${NC}"
 echo -e "  sudo kubeadm init --pod-network-cidr=10.244.0.0/16"
 echo ""
@@ -92,7 +116,19 @@ echo ""
 echo -e "${GREEN}Then install a CNI plugin (e.g., Flannel):${NC}"
 echo -e "  kubectl apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml"
 echo ""
-echo -e "${YELLOW}[8/8] Installation complete!${NC}"
+echo -e "${GREEN}For Kind clusters, you can now run:${NC}"
+echo -e "  kind create cluster"
+echo ""
+echo -e "${YELLOW}[10/10] Installation complete!${NC}"
+
+# Create default Kind cluster if it doesn't exist
+echo -e "${YELLOW}Creating default Kind cluster (if not exists)...${NC}"
+if ! kind get clusters 2>/dev/null | grep -q "^kind$"; then
+    kind create cluster
+    echo -e "${GREEN}Default Kind cluster created successfully!${NC}"
+else
+    echo -e "${GREEN}Kind cluster already exists, skipping creation.${NC}"
+fi
 
 # Optional: Uncomment the following lines to auto-initialize the cluster
 # echo -e "${YELLOW}Initializing Kubernetes cluster...${NC}"
