@@ -49,16 +49,9 @@ EOF
 
 sudo sysctl --system
 
-# Install containerd
-echo -e "${YELLOW}[5/10] Installing containerd...${NC}"
-sudo apt-get install -y apt-transport-https ca-certificates curl software-properties-common
-
-# Add Docker's official GPG key and repository (for containerd)
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-
-sudo apt-get update
-sudo apt-get install -y containerd.io
+# Install containerd and Docker
+echo -e "${YELLOW}[5/10] Installing containerd and Docker...${NC}"
+sudo apt-get install -y apt-transport-https ca-certificates curl software-properties-common containerd docker.io
 
 # Configure containerd
 sudo mkdir -p /etc/containerd
@@ -68,29 +61,36 @@ sudo sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/conf
 sudo systemctl restart containerd
 sudo systemctl enable containerd
 
-# Install Docker
-echo -e "${YELLOW}[5b/10] Installing Docker...${NC}"
-sudo apt-get install -y docker.io
+# Start and enable Docker
 sudo systemctl start docker
 sudo systemctl enable docker
 sudo usermod -aG docker $USER || true
 
 # Install Kind
-echo -e "${YELLOW}[5c/10] Installing Kind...${NC}"
+echo -e "${YELLOW}[6/10] Installing Kind...${NC}"
 if ! command -v kind &> /dev/null; then
     KIND_VERSION=$(curl -s https://api.github.com/repos/kubernetes-sigs/kind/releases/latest | grep -oP '"tag_name": "\K[^"]+')
-    curl -Lo /tmp/kind "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64"
+    
+    # Detect system architecture
+    ARCH=$(uname -m)
+    case $ARCH in
+        x86_64) KIND_ARCH="amd64" ;;
+        aarch64|arm64) KIND_ARCH="arm64" ;;
+        *) echo "Unsupported architecture: $ARCH"; exit 1 ;;
+    esac
+    
+    curl -Lo /tmp/kind "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-${KIND_ARCH}"
     sudo chmod +x /tmp/kind
     sudo mv /tmp/kind /usr/local/bin/kind
 fi
 
 # Verify Docker and Kind installations
-echo -e "${YELLOW}[5d/10] Verifying installations...${NC}"
+echo -e "${YELLOW}[7/10] Verifying installations...${NC}"
 docker --version
 kind version
 
 # Install Kubernetes components
-echo -e "${YELLOW}[6/10] Installing Kubernetes components...${NC}"
+echo -e "${YELLOW}[8/10] Installing Kubernetes components...${NC}"
 
 # Add Kubernetes GPG key and repository
 curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.28/deb/Release.key | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
@@ -104,7 +104,7 @@ sudo apt-mark hold kubelet kubeadm kubectl
 sudo systemctl enable kubelet
 
 # Initialize Kubernetes cluster (optional - uncomment to auto-initialize)
-echo -e "${YELLOW}[7/10] Kubernetes components installed successfully!${NC}"
+echo -e "${YELLOW}[9/10] Kubernetes components installed successfully!${NC}"
 echo -e "${GREEN}To initialize the cluster, run:${NC}"
 echo -e "  sudo kubeadm init --pod-network-cidr=10.244.0.0/16"
 echo ""
@@ -123,11 +123,23 @@ echo -e "${YELLOW}[10/10] Installation complete!${NC}"
 
 # Create default Kind cluster if it doesn't exist
 echo -e "${YELLOW}Creating default Kind cluster (if not exists)...${NC}"
-if ! kind get clusters 2>/dev/null | grep -q "^kind$"; then
-    kind create cluster
+if ! sudo kind get clusters 2>/dev/null | grep -q "^kind$"; then
+    sudo kind create cluster
     echo -e "${GREEN}Default Kind cluster created successfully!${NC}"
 else
     echo -e "${GREEN}Kind cluster already exists, skipping creation.${NC}"
+fi
+
+# Export kubeconfig for ubuntu user
+sudo kind export kubeconfig --name kind
+
+# Copy kubeconfig to ubuntu user's home and set permissions
+if [ -f /root/.kube/config ]; then
+    mkdir -p /home/ubuntu/.kube
+    cp /root/.kube/config /home/ubuntu/.kube/config
+    chown -R ubuntu:ubuntu /home/ubuntu/.kube
+    chmod 600 /home/ubuntu/.kube/config
+    echo -e "${GREEN}Kubeconfig copied to /home/ubuntu/.kube/config${NC}"
 fi
 
 # Optional: Uncomment the following lines to auto-initialize the cluster
