@@ -1,11 +1,13 @@
 [Unit]
 Description=subd agent
 After=spire-agent.service
+Requires=spire-agent.service
 
 [Service]
 User=root
 ExecStart=/usr/local/bin/subd
 Restart=on-failure
+RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
