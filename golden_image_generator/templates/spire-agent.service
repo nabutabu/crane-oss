@@ -3,7 +3,7 @@ Description=SPIRE Agent
 After=network.target
 
 [Service]
-ExecStart=/usr/bin/spire-agent run -config /etc/spire/agent.conf
+ExecStart=/opt/spire/bin/spire-agent run -config /etc/spire/agent.conf
 Restart=always
 
 [Install]
