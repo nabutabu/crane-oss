@@ -122,8 +122,10 @@ build {
   }
   provisioner "shell" {
     inline = [
-      "sudo apt-get clean",
-      "sudo rm -rf /var/lib/apt/lists/*"
+      "sudo cp /tmp/spire-agent.conf /etc/spire/agent.conf",
+      "sudo cp /tmp/spire-agent.service /etc/systemd/system/spire-agent.service",
+      "sudo systemctl enable spire-agent",
+      "sudo systemctl start spire-agent"
     ]
   }
 }
