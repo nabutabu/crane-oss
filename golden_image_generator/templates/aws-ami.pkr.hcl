@@ -86,6 +86,9 @@ build {
       "tar zvxf spire-${var.spire_version}-linux-arm64-musl.tar.gz",
       "sudo cp -r spire-${var.spire_version}/. /opt/spire/",
       "rm -rf spire-${var.spire_version}*",
+      "sudo mkdir -p /opt/spire/data",
+      "sudo chown root:root /opt/spire/data",
+      "sudo chmod 700 /opt/spire/data",
       "sudo mkdir -p /etc/spire",
       "sudo cp /tmp/spire-agent.conf /etc/spire/agent.conf",
       "sudo cp /tmp/spire-agent.service /etc/systemd/system/spire-agent.service"
