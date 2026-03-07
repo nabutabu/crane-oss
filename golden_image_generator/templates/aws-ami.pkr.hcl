@@ -118,7 +118,7 @@ build {
     inline = [
       "sudo mv /tmp/subd /usr/local/bin/subd",
       "sudo chmod +x /usr/local/bin/subd",
-      "sudo mv /tmp/appsettings.json /home/ubuntu/appsettings.json",
+      "sudo mv /tmp/appsettings.json /usr/local/appsettings.json",
       "sudo mv /tmp/subd.service /etc/systemd/system/subd.service",
       "sudo systemctl enable subd"
     ]
