@@ -1,0 +1,163 @@
+# How to Setup SPIRE Server
+
+## Prerequisites
+
+1. Get container image `ghcr.io/spiffe/spire-server:1.8.5`
+2. Setup `kind-config.yaml`
+3. Setup `service.yaml`
+4. Setup `statefulset.yaml`
+5. Setup `spire-db-secret.yaml`
+6. Create an IAM user with `DescribeInstances` and KMS permissions
+7. Setup `server.conf`
+8. Setup aws-secrets.yaml which looks like the following:
+```yaml
+apiVersion: v1
+data:
+  AWS_ACCESS_KEY_ID: <access_key>
+  AWS_SECRET_ACCESS_KEY: <secret_key>
+kind: Secret
+metadata:
+  creationTimestamp: null
+  name: aws-credentials
+  namespace: spire-system
+```
+I created an IAM user with the following permissions for the SPIRE server to be able to describe EC2 instances :
+
+```json
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": [
+                "ec2:DescribeInstances",
+                "iam:GetInstanceProfile"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Effect": "Allow",
+            "Action": [
+                "kms:Decrypt",
+                "kms:Encrypt",
+                "kms:GenerateDataKey"
+            ],
+            "Resource": "*"
+        }
+    ]
+}
+```
+AMI crane-golden-linux-aws-curl-2026-03-11-0556
+## Setup Commands
+
+Run the following commands to setup SPIRE server:
+
+```shell
+kind delete cluster
+kind create cluster --config kind-config.yaml
+kubectl create namespace spire-system
+kubectl apply -f spire-db-secret.yaml
+kubectl apply -f service.yaml
+kubectl -n spire-system create configmap spire-server-config --from-file=server.conf
+kubectl apply -f statefulset.yaml
+kubectl create secret generic aws-credentials \
+  -n spire-system \
+  --from-literal=AWS_ACCESS_KEY_ID=your-access-key \
+  --from-literal=AWS_SECRET_ACCESS_KEY=your-secret-key \
+
+kubectl get pods -n spire-system -w
+```
+
+> Use the access key and secret key of the IAM user created in step 6.
+
+## FAQ
+
+### Connection Refused Error
+
+```
+kubectl create namespace spire-system
+The connection to the server localhost:8080 was refused - did you specify the right host or port?
+```
+
+**Solution:** Use `sudo`
+
+### Restart SPIRE Server
+
+```shell
+kubectl rollout restart statefulset spire-server -n spire-system
+```
+
+### Kind Cluster Port Issues
+
+If the kind cluster is not on the correct port, check using the following commands:
+
+```shell
+$ kind get clusters
+kind
+
+$ sudo kubectl get pods -n spire-system
+NAME             READY   STATUS    RESTARTS       AGE
+spire-server-0   1/1     Running   3 (109s ago)   9m34s
+
+$ sudo docker ps
+CONTAINER ID   IMAGE                  COMMAND                  CREATED        STATUS          PORTS                       NAMES
+c37a2c0e5765   kindest/node:v1.35.0   "/usr/local/bin/entr…"   24 hours ago   Up 55 minutes   127.0.0.1:43577->6443/tcp   kind-control-plane
+```
+
+Then do the following:
+
+```shell
+$ kind export kubeconfig
+Set kubectl context to "kind-kind"
+
+$ kubectl get nodes
+NAME                 STATUS   ROLES           AGE    VERSION
+kind-control-plane   Ready    control-plane   106s   v1.35.0
+
+$ kubectl create namespace spire-system
+Error from server (AlreadyExists): namespaces "spire-system" already exists
+
+$ kubectl apply -f spire-db-secret.yaml
+secret/spire-db-secret created
+
+$ kubectl -n spire-system create configmap spire-server-config --from-file=server.conf
+configmap/spire-server-config created
+
+$ kubectl apply -f statefulset.yaml
+statefulset.apps/spire-server created
+
+$ kubectl apply -f service.yaml
+service/spire-server created
+
+$ sudo docker ps
+CONTAINER ID   IMAGE                  COMMAND                  CREATED         STATUS         PORTS                                                NAMES
+307280f9284c   kindest/node:v1.35.0   "/usr/local/bin/entr…"   3 minutes ago   Up 3 minutes   127.0.0.1:41743->6443/tcp, 0.0.0.0:8081->31343/tcp   kind-control-plane
+```
+
+### SQL Connection issues
+
+```
+$ kubectl logs -n spire-system spire-server-0 --tail=20
+time="2026-03-11T05:17:53Z" level=warning msg="Current umask 0022 is too permissive; setting umask 0027"
+time="2026-03-11T05:17:53Z" level=info msg=Configured admin_ids="[]" data_dir=/opt/spire/data
+time="2026-03-11T05:17:53Z" level=info msg="Opening SQL database" db_type=postgres subsystem_name=sql
+time="2026-03-11T05:20:07Z" level=error msg="Fatal run error" error="datastore-sql: dial tcp 172.31.65.123:5432: connect: connection timed out"
+time="2026-03-11T05:20:07Z" level=error msg="Server crashed" error="datastore-sql: dial tcp 172.31.65.123:5432: connect: connection timed out"
+```
+If you see something like the above in the logs, it means that the SPIRE server is not able to connect to the database. Go to AWS RDS console and ensure that an EC2 connection is setup between the instance and database.
+
+
+If a service is missing
+```
+ubuntu@ip-172-31-60-104:~$ kubectl get svc -n spire-system
+No resources found in spire-system namespace.
+ubuntu@ip-172-31-60-104:~$ kubectl get endpoints -n spire-system
+Warning: v1 Endpoints is deprecated in v1.33+; use discovery.k8s.io/v1 EndpointSlice
+No resources found in spire-system namespace.
+```
+
+healthcheck
+```
+kubectl exec -n spire-system spire-server-0 -- \
+  /opt/spire/bin/spire-server healthcheck
+```
