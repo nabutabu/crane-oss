@@ -11,6 +11,7 @@ packer validate -var-file=aws-credentials.auto.pkrvars.hcl ./templates/aws-ami.p
 ```
 where the file `aws-credentials.auto.pkrvars.hcl` contains your AWS access key and secret key like this:
 ```
-aws_access_key = "..."
-aws_secret_key = "..."
+aws_access_key  = "..."
+aws_secret_key  = "..."
+spire_server_ip = "..."
 ```

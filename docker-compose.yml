@@ -36,8 +36,11 @@ services:
       - DB_USER=postgres
       - DB_PASSWORD=mysecretpassword
       - DB_NAME=crane
+      - SPIFFE_ENDPOINT_SOCKET=unix:///tmp/spire-agent/public/api.sock
     volumes:
       - ./policy:/app/policy
+      - spire_agent_socket:/tmp/spire-agent/public
+
 
   crane-api:
     build:
@@ -59,5 +62,32 @@ services:
       - db
       - localstack
 
+  spire-server:
+    image: ghcr.io/spiffe/spire-server:1.9.3
+    container_name: crane-spire-server
+    command: ["-config", "/opt/spire/conf/server/server.conf"]
+    ports:
+      - "8081:8081"
+    volumes:
+      - ./spire/server:/opt/spire/conf/server
+      - ./spire/server/data:/opt/spire/data
+    depends_on:
+      - db
+
+  spire-agent:
+    image: ghcr.io/spiffe/spire-agent:1.9.3
+    container_name: crane-spire-agent
+    entrypoint: ["/opt/spire/bin/spire-agent"]
+    pid: host
+    command: ["run", "-config", "/opt/spire/conf/agent/agent.conf", "-joinToken", "<join_token>"]
+    depends_on:
+      - spire-server
+    volumes:
+      - ./spire/agent:/opt/spire/conf/agent
+      - ./spire/agent/data:/opt/spire/data
+      - spire_agent_socket:/tmp/spire-agent/public
+      - /var/run/docker.sock:/var/run/docker.sock
+
 volumes:
   postgres_data:
+  spire_agent_socket:

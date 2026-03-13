@@ -91,6 +91,57 @@ func (store *PostgresHostStore) GetByID(ctx context.Context, id string) (*api.Ho
 	return &h, nil
 }
 
+func (store *PostgresHostStore) GetByProviderID(ctx context.Context, id string) (*api.Host, error) {
+	query := `
+		SELECT id, role, zone, imageid, state, health, createdat, provider, providerID, lastseenheartbeat
+		FROM host
+		WHERE providerID = $1
+	`
+
+	row := store.DB.QueryRowContext(ctx, query, id)
+
+	var h api.Host
+	var role string
+	var provider sql.NullString
+	var providerID sql.NullString
+	var lastSeenHeartbeat sql.NullTime
+
+	err := row.Scan(
+		&h.ID,
+		&role,
+		&h.Zone,
+		&h.ImageID,
+		&h.State,
+		&h.Health,
+		&h.CreatedAt,
+		&provider,
+		&providerID,
+		&lastSeenHeartbeat,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	if provider.Valid {
+		h.Provider = provider.String
+	} else {
+		h.Provider = ""
+	}
+
+	if providerID.Valid {
+		h.ProviderID = providerID.String
+	} else {
+		h.ProviderID = ""
+	}
+
+	if lastSeenHeartbeat.Valid {
+		h.LastSeenHeartbeat = lastSeenHeartbeat.Time
+	}
+
+	h.Role = api.Role{Name: role}
+	return &h, nil
+}
+
 func (store *PostgresHostStore) UpdateState(ctx context.Context, id string, newState api.HostState) error {
 	log.Println("/PostgresHostStore/UpdateState")
 
