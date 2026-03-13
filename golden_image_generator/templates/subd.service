@@ -4,6 +4,8 @@ After=spire-agent.service
 Requires=spire-agent.service
 
 [Service]
+Environment="SPIFFE_ENDPOINT_SOCKET=unix:///tmp/spire-agent/public/api.sock"
+WorkingDirectory=/usr/local/bin
 User=root
 ExecStart=/usr/local/bin/subd
 Restart=on-failure
