@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"os"
 	"time"
 
 	"github.com/nabutabu/crane-oss/internal/subd"
+	"github.com/spiffe/go-spiffe/v2/workloadapi"
 )
 
 const (
@@ -38,8 +40,19 @@ func LoadConfig() Configuration {
 
 func main() {
 	config := LoadConfig()
+	ctx := context.Background()
 
-	runner := subd.NewRunner(subd.NewClient(config.DominatorURL, config.HostID, config.Token), subd.NewServicesCollector(), subd.NewPackagesCollecetor(), time.Second*10)
+	source, err := workloadapi.NewX509Source(ctx)
+	if err != nil {
+		log.Fatalf("failed to create X509Source: %v", err)
+	}
+	defer source.Close()
+
+	runner := subd.NewRunner(
+		subd.NewClient(config.DominatorURL, config.HostID, config.Token, source),
+		subd.NewServicesCollector(),
+		subd.NewPackagesCollecetor(),
+		time.Second*10)
 
 	runner.Run()
 }

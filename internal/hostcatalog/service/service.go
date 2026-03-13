@@ -70,6 +70,10 @@ func (service *HostCatalogService) GetByID(ctx context.Context, id string) (*api
 	return service.store.GetByID(ctx, id)
 }
 
+func (service *HostCatalogService) GetByProviderID(ctx context.Context, id string) (*api.Host, error) {
+	return service.store.GetByProviderID(ctx, id)
+}
+
 func (service *HostCatalogService) CreateHost(ctx context.Context, provider string) (string, error) {
 	id := uuid.NewString()
 	return id, service.store.Create(ctx, &api.Host{

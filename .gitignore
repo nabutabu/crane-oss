@@ -1,1 +1,5 @@
 *.auto.pkrvars.hcl
+./spire/data/*
+spire/data/keys/
+spire/agent/data/
+spire/server/data/
