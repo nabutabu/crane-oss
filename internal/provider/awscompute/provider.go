@@ -12,26 +12,56 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
+	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2"
 	elbv2types "github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2/types"
+	"github.com/aws/aws-sdk-go-v2/service/rds"
+	rdstypes "github.com/aws/aws-sdk-go-v2/service/rds/types"
 	"github.com/aws/smithy-go"
 	"github.com/nabutabu/crane-oss/internal/provider"
 )
 
 type Provider struct {
-	client *ec2.Client
+	client    *ec2.Client
+	elbClient *elasticloadbalancingv2.Client
+}
+
+func New(client *ec2.Client) *Provider {
+	return &Provider{
+		client: client,
+	}
+}
+
+func NewWithELB(client *ec2.Client, elbClient *elasticloadbalancingv2.Client) *Provider {
+	return &Provider{
+		client:    client,
+		elbClient: elbClient,
+	}
 }
 
 const (
 	spirePort = 8081
 	lbName    = "spire-server-nlb"
 	tgName    = "spire-server-tg"
+
+	dbName          = "spire"
+	dbUser          = "spire_admin"
+	dbPort          = 5432
+	dbInstanceID    = "spire-server-db"
+	dbSubnetGroup   = "spire-db-subnet-group"
+	dbSGName        = "spire-rds-sg"
+	secretName      = "spire/db/credentials"
+	dbInstanceClass = "db.t3.medium" // upgrade to db.r6g.large for production
 )
 
-func New(client *ec2.Client) *Provider {
-	return &Provider{
-		client: client,
-	}
+// DBConnectionInfo is what callers need to build the SPIRE server config.
+type DBConnectionInfo struct {
+	Endpoint  string
+	Port      int32
+	DBName    string
+	Username  string
+	SecretARN string // retrieve password from here at runtime
+	SGID      string // RDS security group — attach to any future peered VPCs
 }
 
 func (p *Provider) GetProviderName() string {
@@ -95,11 +125,16 @@ func (p *Provider) ProvisionHost(ctx context.Context, role string, id string) (s
 }
 
 func (p *Provider) ProvisionLB(ctx context.Context, VPCID string, subnetIDs []string) (string, error) {
-	awsCfg, err := config.LoadDefaultConfig(ctx)
-	if err != nil {
-		return "", err
+	var elb *elasticloadbalancingv2.Client
+	if p.elbClient != nil {
+		elb = p.elbClient
+	} else {
+		awsCfg, err := config.LoadDefaultConfig(ctx)
+		if err != nil {
+			return "", err
+		}
+		elb = elasticloadbalancingv2.NewFromConfig(awsCfg)
 	}
-	elb := elasticloadbalancingv2.NewFromConfig(awsCfg)
 
 	tgOut, err := elb.CreateTargetGroup(ctx, &elasticloadbalancingv2.CreateTargetGroupInput{
 		Name:     aws.String(tgName),
@@ -180,6 +215,182 @@ func (p *Provider) ProvisionLB(ctx context.Context, VPCID string, subnetIDs []st
 	log.Printf("listener created: TCP:%d → %s", spirePort, tgARN)
 
 	return *lb.DNSName, nil
+}
+
+func (p *Provider) ProvisionSpireDB(ctx context.Context, VPCID string, subdnetIDs []string, ec2SecurityGroupID string) (DBConnectionInfo, string, error) {
+	awsCfg, err := config.LoadDefaultConfig(ctx)
+	if err != nil {
+		return DBConnectionInfo{}, "", fmt.Errorf("load AWS config: %w", err)
+	}
+
+	ec2Client := ec2.NewFromConfig(awsCfg)
+	rdsClient := rds.NewFromConfig(awsCfg)
+
+	sgOut, err := ec2Client.CreateSecurityGroup(ctx, &ec2.CreateSecurityGroupInput{
+		GroupName:   aws.String(dbSGName),
+		Description: aws.String("SPIRE server RDS — inbound 5432 from EC2 SG only"),
+		VpcId:       aws.String(VPCID),
+		TagSpecifications: []ec2types.TagSpecification{
+			{
+				ResourceType: ec2types.ResourceTypeSecurityGroup,
+				Tags:         []ec2types.Tag{{Key: aws.String("Purpose"), Value: aws.String("spire-rds")}},
+			},
+		},
+	})
+	if err != nil {
+		return DBConnectionInfo{}, "", fmt.Errorf("create RDS security group: %w", err)
+	}
+	rdsSGID := *sgOut.GroupId
+	log.Printf("RDS security group created: %s", rdsSGID)
+
+	// Allow inbound PostgreSQL from the EC2 security group only.
+	// UserIdGroupPairs lets us reference a SG rather than a CIDR, so the rule
+	// stays correct even as EC2 instance IPs change.
+	_, err = ec2Client.AuthorizeSecurityGroupIngress(ctx, &ec2.AuthorizeSecurityGroupIngressInput{
+		GroupId: aws.String(rdsSGID),
+		IpPermissions: []ec2types.IpPermission{
+			{
+				IpProtocol: aws.String("tcp"),
+				FromPort:   aws.Int32(dbPort),
+				ToPort:     aws.Int32(dbPort),
+				UserIdGroupPairs: []ec2types.UserIdGroupPair{
+					{GroupId: aws.String(ec2SecurityGroupID)},
+				},
+			},
+		},
+	})
+	if err != nil {
+		return DBConnectionInfo{}, "", fmt.Errorf("authorize RDS ingress: %w", err)
+	}
+
+	// ── 4. RDS PostgreSQL Instance ─────────────────────────────────────────────
+	// Key decisions:
+	//   - PostgreSQL 15: SPIRE's sql datastore plugin supports PG 9.6+
+	//   - StorageEncrypted: true — encrypts at rest with the default KMS key
+	//     (swap to a CMK ARN via KmsKeyId for stricter key management)
+	//   - DeletionProtection: true — prevents accidental `terraform destroy`
+	//     style mistakes; set false if you need to tear down in CI
+	//   - PerformanceInsightsEnabled: true — free for t3 instances, invaluable
+	//     for diagnosing SVID rotation storms hitting the DB
+	dbOut, err := rdsClient.CreateDBInstance(ctx, &rds.CreateDBInstanceInput{
+		DBInstanceIdentifier: aws.String(dbInstanceID),
+		DBInstanceClass:      aws.String(dbInstanceClass),
+		Engine:               aws.String("postgres"),
+		EngineVersion:        aws.String("15.4"),
+
+		DBName:                   aws.String(dbName),
+		MasterUsername:           aws.String(dbUser),
+		ManageMasterUserPassword: aws.Bool(true),
+
+		AllocatedStorage:    aws.Int32(20),  // GB; autoscaling handles growth
+		MaxAllocatedStorage: aws.Int32(100), // autoscaling ceiling
+		StorageType:         aws.String("gp3"),
+		StorageEncrypted:    aws.Bool(true),
+
+		DBSubnetGroupName:   aws.String(dbSubnetGroup),
+		VpcSecurityGroupIds: []string{rdsSGID},
+
+		// Multi-AZ: synchronous replication to a standby in another AZ.
+		// Failover is automatic (~60-120 s) with no data loss.
+		// SPIRE agents reconnect automatically via the CNAME that RDS flips.
+		MultiAZ:            aws.Bool(false),
+		PubliclyAccessible: aws.Bool(false), // never expose RDS to the internet
+
+		BackupRetentionPeriod:      aws.Int32(7), // days
+		PreferredBackupWindow:      aws.String("03:00-04:00"),
+		PreferredMaintenanceWindow: aws.String("sun:05:00-sun:06:00"),
+
+		DeletionProtection:        aws.Bool(true),
+		EnablePerformanceInsights: aws.Bool(true),
+
+		// Parameter group defaults are fine for SPIRE, but you may want to tune:
+		//   max_connections    — SPIRE opens one connection per server instance
+		//   idle_in_transaction_session_timeout — catch stuck transactions
+		// Create a custom parameter group and reference it here if needed.
+
+		Tags: []rdstypes.Tag{
+			{Key: aws.String("Purpose"), Value: aws.String("spire-server-datastore")},
+			{Key: aws.String("ManagedBy"), Value: aws.String("go-provisioner")},
+		},
+	})
+	if err != nil {
+		return DBConnectionInfo{}, "", fmt.Errorf("create RDS instance: %w", err)
+	}
+	log.Printf("RDS instance creation started: %s", *dbOut.DBInstance.DBInstanceIdentifier)
+
+	// ── 5. Wait for available ──────────────────────────────────────────────────
+	// RDS PostgreSQL takes ~5-10 minutes to become available.
+	endpoint, secretARN, err := waitForRDSAvailable(ctx, rdsClient, dbInstanceID)
+	if err != nil {
+		return DBConnectionInfo{}, "", fmt.Errorf("RDS did not become available: %w", err)
+	}
+	log.Printf("RDS available at %s:%d", endpoint, dbPort)
+
+	connInfo := DBConnectionInfo{
+		Endpoint:  endpoint,
+		Port:      dbPort,
+		DBName:    dbName,
+		Username:  dbUser,
+		SecretARN: secretARN,
+		SGID:      rdsSGID,
+	}
+
+	spireConfig := buildSpireDatastoreConfig(connInfo)
+	return connInfo, spireConfig, nil
+}
+
+// waitForRDSAvailable polls DescribeDBInstances until status == "available".
+func waitForRDSAvailable(ctx context.Context, client *rds.Client, instanceID string) (string, string, error) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	deadline := time.Now().Add(20 * time.Minute)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return "", "", ctx.Err()
+		case t := <-ticker.C:
+			if t.After(deadline) {
+				return "", "", fmt.Errorf("timed out after 20 minutes")
+			}
+			out, err := client.DescribeDBInstances(ctx, &rds.DescribeDBInstancesInput{
+				DBInstanceIdentifier: aws.String(instanceID),
+			})
+			if err != nil {
+				return "", "", err
+			}
+			db := out.DBInstances[0]
+			log.Printf("RDS status: %s", *db.DBInstanceStatus)
+			if *db.DBInstanceStatus == "available" && db.Endpoint != nil {
+				var secretARN string
+				if db.MasterUserSecret != nil && db.MasterUserSecret.SecretArn != nil {
+					secretARN = *db.MasterUserSecret.SecretArn
+				}
+				return *db.Endpoint.Address, secretARN, nil
+			}
+		}
+	}
+}
+
+// buildSpireDatastoreConfig generates the HCL stanza to paste into
+// your spire-server.conf.  The password placeholder is intentional —
+// replace it at deploy time by fetching from Secrets Manager.
+func buildSpireDatastoreConfig(conn DBConnectionInfo) string {
+	return fmt.Sprintf(`
+# SPIRE server datastore configuration
+# Paste this into your server.conf under the plugins block.
+#
+# At deploy time, resolve %%SECRET_PASSWORD%% by calling:
+#   aws secretsmanager get-secret-value --secret-id %s \
+#       --query SecretString --output text | jq -r .password
+#
+DataStore "sql" {
+    plugin_data {
+        database_type = "postgres"
+        connection_string = "host=%s port=%d user=%s password=%%SECRET_PASSWORD%% dbname=%s sslmode=require"
+    }
+}
+`, conn.SecretARN, conn.Endpoint, conn.Port, conn.Username, conn.DBName)
 }
 
 // waitForNLBActive polls until the NLB state is 'active' or the context expires.
