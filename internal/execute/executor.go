@@ -76,6 +76,36 @@ func (e *DefaultExecutor) Execute(ctx context.Context, action *Action) error {
 			return err
 		}
 
+	case ActionCreateLB:
+		log.Println("action create Load Balancer")
+
+		vpcID := "vpc-0fe5ab51bdf710362"
+		subnetIDs := []string{"subnet-0f73ec402ea914eb5"}
+
+		_, err := e.provider.ProvisionLB(ctx, vpcID, subnetIDs, api.LBConfig{
+			Name:                    "spire-server-test-db",
+			Port:                    8081,
+			Internal:                true,
+			Purpose:                 "Spire server",
+			DeregistrationDelaySecs: 30,
+		})
+
+		if err != nil {
+			log.Fatal(err)
+		}
+
+	case ActionCreateDB:
+		log.Println("action create DB")
+
+		vpcID := "vpc-0fe5ab51bdf710362"
+		subnetIDs := []string{"subnet-0809d7a67e415e07e"}
+
+		connInfo, _, err := e.provider.ProvisionSpireDB(ctx, vpcID, subnetIDs, "sg-0a365ae1dce045677")
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		log.Printf("[Executor] connection info for new DB:\n %v\n", connInfo)
 	}
 
 	return nil
