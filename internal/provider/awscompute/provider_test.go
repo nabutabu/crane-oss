@@ -14,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2"
 	elbv2types "github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2/types"
 	"github.com/nabutabu/crane-oss/internal/provider/awscompute"
+	"github.com/nabutabu/crane-oss/pkg/api"
 )
 
 func newLocalstackEC2Client(t *testing.T) *ec2.Client {
@@ -262,7 +263,10 @@ func TestProvider_ProvisionLB(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			p := awscompute.NewWithELB(ec2Client, elbClient)
 
-			dnsName, gotErr := p.ProvisionLB(context.Background(), tt.vpcID, tt.subnetIDs)
+			dnsName, gotErr := p.ProvisionLB(context.Background(), tt.vpcID, tt.subnetIDs, api.LBConfig{
+				Name: "spire-server-nlb",
+				Port: 8081,
+			})
 			if gotErr != nil {
 				if !tt.wantErr {
 					t.Errorf("ProvisionLB() failed: %v", gotErr)

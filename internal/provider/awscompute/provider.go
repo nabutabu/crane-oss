@@ -2,8 +2,10 @@ package awscompute
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
+	"os"
 	"time"
 
 	"log"
@@ -19,6 +21,7 @@ import (
 	rdstypes "github.com/aws/aws-sdk-go-v2/service/rds/types"
 	"github.com/aws/smithy-go"
 	"github.com/nabutabu/crane-oss/internal/provider"
+	"github.com/nabutabu/crane-oss/pkg/api"
 )
 
 type Provider struct {
@@ -45,24 +48,14 @@ const (
 	tgName    = "spire-server-tg"
 
 	dbName          = "spire"
-	dbUser          = "spire_admin"
+	dbUser          = "postgres"
 	dbPort          = 5432
 	dbInstanceID    = "spire-server-db"
-	dbSubnetGroup   = "spire-db-subnet-group"
+	dbSubnetGroup   = "rds-ec2-db-subnet-group-2"
 	dbSGName        = "spire-rds-sg"
 	secretName      = "spire/db/credentials"
-	dbInstanceClass = "db.t3.medium" // upgrade to db.r6g.large for production
+	dbInstanceClass = "db.t4g.micro" // upgrade to db.r6g.large for production
 )
-
-// DBConnectionInfo is what callers need to build the SPIRE server config.
-type DBConnectionInfo struct {
-	Endpoint  string
-	Port      int32
-	DBName    string
-	Username  string
-	SecretARN string // retrieve password from here at runtime
-	SGID      string // RDS security group — attach to any future peered VPCs
-}
 
 func (p *Provider) GetProviderName() string {
 	return "aws"
@@ -81,6 +74,66 @@ func (p *Provider) TerminateHost(ctx context.Context, hostID string) error {
 	return err
 }
 
+func buildUserData(templatePath string, conn api.DBConnectionInfo) (string, error) {
+	raw, err := os.ReadFile(templatePath)
+	if err != nil {
+		return "", fmt.Errorf("read cloud-init template: %w", err)
+	}
+
+	// Any substitutions that are cleaner to do here in Go rather than via
+	// the tag-lookup dance inside the bash runcmd can be added here.
+	// Currently the DB endpoint and secret ARN are passed as tags and read
+	// by the script itself via IMDS, so raw is used unchanged — but this
+	// is the right place to expand that if needed.
+	rendered := string(raw)
+
+	encoded := base64.StdEncoding.EncodeToString([]byte(rendered))
+	return encoded, nil
+}
+
+func (p *Provider) ProvisionSpireHost(ctx context.Context, id string, connInfo api.DBConnectionInfo) (string, error) {
+	log.Println("/aws/ProvisionHost")
+
+	userData, err := buildUserData("cloud-init.yaml", connInfo)
+	if err != nil {
+		return "", fmt.Errorf("build user data: %w", err)
+	}
+
+	out, err := p.client.RunInstances(ctx, &ec2.RunInstancesInput{
+		ImageId:      aws.String("ami-01556d821c687af3b"),
+		InstanceType: "t4g.micro",
+		MinCount:     aws.Int32(1),
+		MaxCount:     aws.Int32(1),
+		KeyName:      aws.String("crane_api_provisioned_instances_key"),
+		UserData:     aws.String(userData),
+		TagSpecifications: []types.TagSpecification{
+			{
+				ResourceType: types.ResourceTypeInstance,
+				Tags: []types.Tag{
+					{Key: aws.String("Role"), Value: aws.String("spire-server")},
+					{Key: aws.String("HostID"), Value: aws.String(id)},
+					// These two tags are read by the cloud-init script at boot
+					// to fetch DB credentials and build server.conf
+					{Key: aws.String("SpireDBEndpoint"), Value: aws.String(connInfo.Endpoint)},
+					{Key: aws.String("SpireDBSecretArn"), Value: aws.String(connInfo.SecretARN)},
+				},
+			},
+		},
+	})
+	if err != nil {
+		if isDryRunSuccess(err) {
+			return "sample-id", nil
+		}
+		return "", err
+	}
+
+	if len(out.Instances) == 0 {
+		return "", errors.New("no instance created")
+	}
+
+	return *out.Instances[0].InstanceId, nil
+}
+
 func (p *Provider) ProvisionHost(ctx context.Context, role string, id string) (string, error) {
 	log.Println("/aws/ProvisionHost")
 
@@ -89,7 +142,7 @@ func (p *Provider) ProvisionHost(ctx context.Context, role string, id string) (s
 	}
 
 	out, err := p.client.RunInstances(ctx, &ec2.RunInstancesInput{
-		ImageId:      aws.String("ami-01556d821c687af3b"), // placeholder
+		ImageId:      aws.String("ami-01556d821c687af3b"),
 		InstanceType: "t4g.micro",
 		MinCount:     aws.Int32(1),
 		MaxCount:     aws.Int32(1),
@@ -124,7 +177,7 @@ func (p *Provider) ProvisionHost(ctx context.Context, role string, id string) (s
 	return *out.Instances[0].InstanceId, nil
 }
 
-func (p *Provider) ProvisionLB(ctx context.Context, VPCID string, subnetIDs []string) (string, error) {
+func (p *Provider) ProvisionLB(ctx context.Context, VPCID string, subnetIDs []string, cfg api.LBConfig) (string, error) {
 	var elb *elasticloadbalancingv2.Client
 	if p.elbClient != nil {
 		elb = p.elbClient
@@ -137,30 +190,19 @@ func (p *Provider) ProvisionLB(ctx context.Context, VPCID string, subnetIDs []st
 	}
 
 	tgOut, err := elb.CreateTargetGroup(ctx, &elasticloadbalancingv2.CreateTargetGroupInput{
-		Name:     aws.String(tgName),
-		Protocol: elbv2types.ProtocolEnumTcp,
-		Port:     aws.Int32(spirePort),
-		VpcId:    aws.String(VPCID),
-
-		// Instance targets: the NLB routes TCP directly to the EC2 ENI.
-		// Use TargetTypeIp if you're targeting pod IPs in EKS instead.
-		TargetType: elbv2types.TargetTypeEnumInstance,
-
-		// Health check: TCP SYN/ACK on port 8081.
-		// SPIRE's gRPC listener will respond to the SYN even before the
-		// mTLS handshake, so this is a reliable liveness signal.
+		Name:                       aws.String(cfg.Name + "-tg"),
+		Protocol:                   elbv2types.ProtocolEnumTcp,
+		Port:                       aws.Int32(cfg.Port),
+		VpcId:                      aws.String(VPCID),
+		TargetType:                 elbv2types.TargetTypeEnumInstance,
 		HealthCheckProtocol:        elbv2types.ProtocolEnumTcp,
-		HealthCheckPort:            aws.String(fmt.Sprintf("%d", 8081)),
+		HealthCheckPort:            aws.String(fmt.Sprintf("%d", cfg.Port)),
 		HealthCheckIntervalSeconds: aws.Int32(10),
-		HealthyThresholdCount:      aws.Int32(2), // 2 consecutive successes = healthy
-		UnhealthyThresholdCount:    aws.Int32(2), // 2 consecutive failures = drain
-
-		// Deregistration delay: how long to keep draining in-flight connections
-		// before removing a target. 30 s is reasonable for SPIRE's long-lived
-		// gRPC streams (default is 300 s, which is too slow for failover).
+		HealthyThresholdCount:      aws.Int32(2),
+		UnhealthyThresholdCount:    aws.Int32(2),
 		Tags: []elbv2types.Tag{
-			{Key: aws.String("DeregistrationDelay.TimeoutSeconds"), Value: aws.String("30")},
-			{Key: aws.String("Purpose"), Value: aws.String("spire-server-mtls")},
+			{Key: aws.String("DeregistrationDelay.TimeoutSeconds"), Value: aws.String(fmt.Sprintf("%d", cfg.DeregistrationDelaySecs))},
+			{Key: aws.String("Purpose"), Value: aws.String(cfg.Purpose)},
 		},
 	})
 	if err != nil {
@@ -169,18 +211,18 @@ func (p *Provider) ProvisionLB(ctx context.Context, VPCID string, subnetIDs []st
 	tgARN := *tgOut.TargetGroups[0].TargetGroupArn
 	log.Printf("target group created: %s", tgARN)
 
-	subnets := make([]string, len(subnetIDs))
-	copy(subnets, subnetIDs)
+	scheme := elbv2types.LoadBalancerSchemeEnumInternetFacing
+	if cfg.Internal {
+		scheme = elbv2types.LoadBalancerSchemeEnumInternal
+	}
 
 	lbOut, err := elb.CreateLoadBalancer(ctx, &elasticloadbalancingv2.CreateLoadBalancerInput{
-		Name:   aws.String(lbName),
-		Type:   elbv2types.LoadBalancerTypeEnumNetwork,
-		Scheme: elbv2types.LoadBalancerSchemeEnumInternetFacing,
-		// For internal traffic only (service mesh), swap to:
-		// Scheme: elbv2types.LoadBalancerSchemeEnumInternal,
-		Subnets: subnets,
+		Name:    aws.String(cfg.Name + "-nlb"),
+		Type:    elbv2types.LoadBalancerTypeEnumNetwork,
+		Scheme:  scheme,
+		Subnets: subnetIDs,
 		Tags: []elbv2types.Tag{
-			{Key: aws.String("Purpose"), Value: aws.String("spire-server-frontend")},
+			{Key: aws.String("Purpose"), Value: aws.String(cfg.Purpose)},
 		},
 	})
 	if err != nil {
@@ -190,10 +232,6 @@ func (p *Provider) ProvisionLB(ctx context.Context, VPCID string, subnetIDs []st
 	lbARN := *lb.LoadBalancerArn
 	log.Printf("NLB provisioned: %s (%s)", *lb.DNSName, lbARN)
 
-	// ── 4. Wait for NLB to become active ──────────────────────────────────────
-	// NLBs typically take 1–3 minutes to move from 'provisioning' to 'active'.
-	// The listener creation below will succeed immediately, but traffic won't
-	// flow until the NLB nodes are active in each AZ.
 	if err = waitForNLBActive(ctx, elb, lbARN); err != nil {
 		return "", fmt.Errorf("NLB did not become active: %w", err)
 	}
@@ -201,7 +239,7 @@ func (p *Provider) ProvisionLB(ctx context.Context, VPCID string, subnetIDs []st
 	_, err = elb.CreateListener(ctx, &elasticloadbalancingv2.CreateListenerInput{
 		LoadBalancerArn: aws.String(lbARN),
 		Protocol:        elbv2types.ProtocolEnumTcp,
-		Port:            aws.Int32(spirePort),
+		Port:            aws.Int32(cfg.Port),
 		DefaultActions: []elbv2types.Action{
 			{
 				Type:           elbv2types.ActionTypeEnumForward,
@@ -212,15 +250,16 @@ func (p *Provider) ProvisionLB(ctx context.Context, VPCID string, subnetIDs []st
 	if err != nil {
 		return "", fmt.Errorf("create listener: %w", err)
 	}
-	log.Printf("listener created: TCP:%d → %s", spirePort, tgARN)
+	log.Printf("listener created: TCP:%d → %s", cfg.Port, tgARN)
 
 	return *lb.DNSName, nil
 }
 
-func (p *Provider) ProvisionSpireDB(ctx context.Context, VPCID string, subdnetIDs []string, ec2SecurityGroupID string) (DBConnectionInfo, string, error) {
+func (p *Provider) ProvisionSpireDB(ctx context.Context, VPCID string, subdnetIDs []string, ec2SecurityGroupID string) (api.DBConnectionInfo, string, error) {
+	log.Println("[AWSCompute]/ProvisionSpireDB")
 	awsCfg, err := config.LoadDefaultConfig(ctx)
 	if err != nil {
-		return DBConnectionInfo{}, "", fmt.Errorf("load AWS config: %w", err)
+		return api.DBConnectionInfo{}, "", fmt.Errorf("load AWS config: %w", err)
 	}
 
 	ec2Client := ec2.NewFromConfig(awsCfg)
@@ -228,7 +267,7 @@ func (p *Provider) ProvisionSpireDB(ctx context.Context, VPCID string, subdnetID
 
 	sgOut, err := ec2Client.CreateSecurityGroup(ctx, &ec2.CreateSecurityGroupInput{
 		GroupName:   aws.String(dbSGName),
-		Description: aws.String("SPIRE server RDS — inbound 5432 from EC2 SG only"),
+		Description: aws.String("SPIRE server RDS inbound 5432 from EC2 SG only"),
 		VpcId:       aws.String(VPCID),
 		TagSpecifications: []ec2types.TagSpecification{
 			{
@@ -238,7 +277,7 @@ func (p *Provider) ProvisionSpireDB(ctx context.Context, VPCID string, subdnetID
 		},
 	})
 	if err != nil {
-		return DBConnectionInfo{}, "", fmt.Errorf("create RDS security group: %w", err)
+		return api.DBConnectionInfo{}, "", fmt.Errorf("create RDS security group: %w", err)
 	}
 	rdsSGID := *sgOut.GroupId
 	log.Printf("RDS security group created: %s", rdsSGID)
@@ -260,7 +299,7 @@ func (p *Provider) ProvisionSpireDB(ctx context.Context, VPCID string, subdnetID
 		},
 	})
 	if err != nil {
-		return DBConnectionInfo{}, "", fmt.Errorf("authorize RDS ingress: %w", err)
+		return api.DBConnectionInfo{}, "", fmt.Errorf("authorize RDS ingress: %w", err)
 	}
 
 	// ── 4. RDS PostgreSQL Instance ─────────────────────────────────────────────
@@ -274,39 +313,48 @@ func (p *Provider) ProvisionSpireDB(ctx context.Context, VPCID string, subdnetID
 	//     for diagnosing SVID rotation storms hitting the DB
 	dbOut, err := rdsClient.CreateDBInstance(ctx, &rds.CreateDBInstanceInput{
 		DBInstanceIdentifier: aws.String(dbInstanceID),
-		DBInstanceClass:      aws.String(dbInstanceClass),
-		Engine:               aws.String("postgres"),
-		EngineVersion:        aws.String("15.4"),
+
+		// FREE TIER: must be db.t3.micro (750 hrs/month free)
+		// Previous db.t4g.micro is a paid instance class
+		DBInstanceClass: aws.String("db.t4g.micro"),
+
+		Engine: aws.String("postgres"),
 
 		DBName:                   aws.String(dbName),
 		MasterUsername:           aws.String(dbUser),
 		ManageMasterUserPassword: aws.Bool(true),
+		// ^^^ NOTE: Secrets Manager charges ~$0.40/month per secret — not free.
+		// If you need strict free tier, revert to MasterUserPassword with a
+		// generated string and manage the secret yourself outside of RDS.
 
-		AllocatedStorage:    aws.Int32(20),  // GB; autoscaling handles growth
-		MaxAllocatedStorage: aws.Int32(100), // autoscaling ceiling
-		StorageType:         aws.String("gp3"),
-		StorageEncrypted:    aws.Bool(true),
+		// FREE TIER: 20 GB of gp2 storage included.
+		// gp3 is NOT free tier eligible — must use gp2.
+		AllocatedStorage: aws.Int32(20),
+		StorageType:      aws.String("gp2"),
+		// MaxAllocatedStorage REMOVED — storage autoscaling is not free tier.
+		// It silently provisions extra storage and bills you for it.
 
-		DBSubnetGroupName:   aws.String(dbSubnetGroup),
+		// FREE TIER: encryption at rest requires KMS which costs $1/month
+		// per key. Must be disabled for free tier.
+		StorageEncrypted: aws.Bool(false),
+
 		VpcSecurityGroupIds: []string{rdsSGID},
 
-		// Multi-AZ: synchronous replication to a standby in another AZ.
-		// Failover is automatic (~60-120 s) with no data loss.
-		// SPIRE agents reconnect automatically via the CNAME that RDS flips.
 		MultiAZ:            aws.Bool(false),
-		PubliclyAccessible: aws.Bool(false), // never expose RDS to the internet
+		PubliclyAccessible: aws.Bool(false),
 
-		BackupRetentionPeriod:      aws.Int32(7), // days
-		PreferredBackupWindow:      aws.String("03:00-04:00"),
+		// Free tier includes 20 GB of backup storage. Setting retention to 0
+		// disables automated backups entirely and avoids any surprise if your
+		// DB snapshot storage grows beyond that 20 GB ceiling.
+		BackupRetentionPeriod:      aws.Int32(0),
 		PreferredMaintenanceWindow: aws.String("sun:05:00-sun:06:00"),
 
-		DeletionProtection:        aws.Bool(true),
-		EnablePerformanceInsights: aws.Bool(true),
+		// Performance Insights is actually free for db.t3.micro, but
+		// explicitly disabling it keeps the intent clear.
+		EnablePerformanceInsights: aws.Bool(false),
 
-		// Parameter group defaults are fine for SPIRE, but you may want to tune:
-		//   max_connections    — SPIRE opens one connection per server instance
-		//   idle_in_transaction_session_timeout — catch stuck transactions
-		// Create a custom parameter group and reference it here if needed.
+		// DeletionProtection has no cost — keeping it on is still good practice.
+		DeletionProtection: aws.Bool(true),
 
 		Tags: []rdstypes.Tag{
 			{Key: aws.String("Purpose"), Value: aws.String("spire-server-datastore")},
@@ -314,7 +362,7 @@ func (p *Provider) ProvisionSpireDB(ctx context.Context, VPCID string, subdnetID
 		},
 	})
 	if err != nil {
-		return DBConnectionInfo{}, "", fmt.Errorf("create RDS instance: %w", err)
+		return api.DBConnectionInfo{}, "", fmt.Errorf("create RDS instance: %w", err)
 	}
 	log.Printf("RDS instance creation started: %s", *dbOut.DBInstance.DBInstanceIdentifier)
 
@@ -322,11 +370,11 @@ func (p *Provider) ProvisionSpireDB(ctx context.Context, VPCID string, subdnetID
 	// RDS PostgreSQL takes ~5-10 minutes to become available.
 	endpoint, secretARN, err := waitForRDSAvailable(ctx, rdsClient, dbInstanceID)
 	if err != nil {
-		return DBConnectionInfo{}, "", fmt.Errorf("RDS did not become available: %w", err)
+		return api.DBConnectionInfo{}, "", fmt.Errorf("RDS did not become available: %w", err)
 	}
 	log.Printf("RDS available at %s:%d", endpoint, dbPort)
 
-	connInfo := DBConnectionInfo{
+	connInfo := api.DBConnectionInfo{
 		Endpoint:  endpoint,
 		Port:      dbPort,
 		DBName:    dbName,
@@ -375,7 +423,7 @@ func waitForRDSAvailable(ctx context.Context, client *rds.Client, instanceID str
 // buildSpireDatastoreConfig generates the HCL stanza to paste into
 // your spire-server.conf.  The password placeholder is intentional —
 // replace it at deploy time by fetching from Secrets Manager.
-func buildSpireDatastoreConfig(conn DBConnectionInfo) string {
+func buildSpireDatastoreConfig(conn api.DBConnectionInfo) string {
 	return fmt.Sprintf(`
 # SPIRE server datastore configuration
 # Paste this into your server.conf under the plugins block.
