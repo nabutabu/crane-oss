@@ -12,6 +12,8 @@ const (
 	ActionCreateLB ActionType = "create_LB"
 
 	ActionCreateDB ActionType = "create_DB"
+
+	ActionCreateSpireInstance ActionType = "create_host_spire"
 )
 
 type Action struct {

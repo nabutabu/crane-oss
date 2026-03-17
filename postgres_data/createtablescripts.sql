@@ -37,7 +37,13 @@ CREATE TABLE public.host (
 	updatedat timestamptz NULL,
 	provider varchar NULL,
 	providerID varchar NULL,
-	lastSeenHeartbeat timestamptz NULL
+	lastSeenHeartbeat timestamptz NULL,
+	endpoint varchar NULL,
+	port int4 NULL,
+	dbname varchar NULL,
+	username varchar NULL,
+	secretarn varchar NULL,
+	rdssgid varchar NULL
 );
 
 -- Problems detected on hosts
