@@ -55,6 +55,8 @@ const (
 	dbSGName        = "spire-rds-sg"
 	secretName      = "spire/db/credentials"
 	dbInstanceClass = "db.t4g.micro" // upgrade to db.r6g.large for production
+
+	spireServerSG = "sg-0a365ae1dce045677"
 )
 
 func (p *Provider) GetProviderName() string {
@@ -100,12 +102,13 @@ func (p *Provider) ProvisionSpireHost(ctx context.Context, id string, connInfo a
 	}
 
 	out, err := p.client.RunInstances(ctx, &ec2.RunInstancesInput{
-		ImageId:      aws.String("ami-01556d821c687af3b"),
-		InstanceType: "t4g.micro",
-		MinCount:     aws.Int32(1),
-		MaxCount:     aws.Int32(1),
-		KeyName:      aws.String("crane_api_provisioned_instances_key"),
-		UserData:     aws.String(userData),
+		ImageId:          aws.String("ami-01556d821c687af3b"),
+		InstanceType:     "t4g.small",
+		MinCount:         aws.Int32(1),
+		MaxCount:         aws.Int32(1),
+		KeyName:          aws.String("dominatorDeployedEC2Key"),
+		UserData:         aws.String(userData),
+		SecurityGroupIds: []string{spireServerSG},
 		TagSpecifications: []types.TagSpecification{
 			{
 				ResourceType: types.ResourceTypeInstance,
@@ -473,6 +476,82 @@ func waitForNLBActive(ctx context.Context, elb *elasticloadbalancingv2.Client, l
 func (p *Provider) DrainHost(ctx context.Context, hostID string) error {
 	// TODO: integrate with LB / ASG later
 	return nil
+}
+
+func (p *Provider) RegisterTargets(ctx context.Context, targetGroupName string, instanceID string, port int32) error {
+	log.Printf("/aws/RegisterTargets: instance=%s to targetGroup=%s", instanceID, targetGroupName)
+
+	awsCfg, err := config.LoadDefaultConfig(ctx)
+	if err != nil {
+		return fmt.Errorf("load AWS config: %w", err)
+	}
+
+	ec2Client := ec2.NewFromConfig(awsCfg)
+	elb := elasticloadbalancingv2.NewFromConfig(awsCfg)
+
+	log.Printf("Waiting for EC2 instance %s to be in running state...", instanceID)
+	err = waitForInstanceRunning(ctx, ec2Client, instanceID)
+	if err != nil {
+		return fmt.Errorf("instance not running: %w", err)
+	}
+	log.Printf("EC2 instance %s is now running", instanceID)
+
+	descOut, err := elb.DescribeTargetGroups(ctx, &elasticloadbalancingv2.DescribeTargetGroupsInput{
+		Names: []string{targetGroupName},
+	})
+	if err != nil {
+		return fmt.Errorf("describe target group: %w", err)
+	}
+	if len(descOut.TargetGroups) == 0 {
+		return fmt.Errorf("target group '%s' not found", targetGroupName)
+	}
+	tgArn := *descOut.TargetGroups[0].TargetGroupArn
+
+	_, err = elb.RegisterTargets(ctx, &elasticloadbalancingv2.RegisterTargetsInput{
+		TargetGroupArn: aws.String(tgArn),
+		Targets: []elbv2types.TargetDescription{
+			{Id: aws.String(instanceID), Port: aws.Int32(port)},
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("register targets: %w", err)
+	}
+
+	log.Printf("Successfully registered instance %s to target group %s", instanceID, targetGroupName)
+	return nil
+}
+
+func waitForInstanceRunning(ctx context.Context, client *ec2.Client, instanceID string) error {
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+	deadline := time.Now().Add(3 * time.Minute)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case t := <-ticker.C:
+			if t.After(deadline) {
+				return fmt.Errorf("timed out after 3 minutes waiting for instance to be running")
+			}
+			out, err := client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
+				InstanceIds: []string{instanceID},
+			})
+			if err != nil {
+				log.Printf("Error describing instance %s: %v", instanceID, err)
+				continue
+			}
+			if len(out.Reservations) == 0 || len(out.Reservations[0].Instances) == 0 {
+				log.Printf("Instance %s not found", instanceID)
+				continue
+			}
+			state := out.Reservations[0].Instances[0].State.Name
+			log.Printf("Instance %s state: %s", instanceID, state)
+			if state == ec2types.InstanceStateNameRunning {
+				return nil
+			}
+		}
+	}
 }
 
 func isDryRunSuccess(err error) bool {

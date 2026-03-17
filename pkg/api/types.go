@@ -66,6 +66,12 @@ type Host struct {
 	Health            HostHealth
 	CreatedAt         time.Time
 	LastSeenHeartbeat time.Time
+	Endpoint          string
+	Port              int32
+	DBName            string
+	Username          string
+	SecretARN         string
+	RDSSGID           string
 }
 
 type DesiredState struct {
