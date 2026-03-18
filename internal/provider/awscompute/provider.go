@@ -102,7 +102,7 @@ func (p *Provider) ProvisionSpireHost(ctx context.Context, id string, connInfo a
 	}
 
 	out, err := p.client.RunInstances(ctx, &ec2.RunInstancesInput{
-		ImageId:          aws.String("ami-01556d821c687af3b"),
+		ImageId:          aws.String("ami-0e91fdbdf2e87a2fc"),
 		InstanceType:     "t4g.small",
 		MinCount:         aws.Int32(1),
 		MaxCount:         aws.Int32(1),
@@ -148,7 +148,7 @@ func (p *Provider) ProvisionHost(ctx context.Context, role string, id string) (s
 	}
 
 	out, err := p.client.RunInstances(ctx, &ec2.RunInstancesInput{
-		ImageId:      aws.String("ami-01556d821c687af3b"),
+		ImageId:      aws.String("ami-0e91fdbdf2e87a2fc"),
 		InstanceType: "t4g.micro",
 		MinCount:     aws.Int32(1),
 		MaxCount:     aws.Int32(1),
