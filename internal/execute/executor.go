@@ -156,7 +156,7 @@ func (e *DefaultExecutor) Execute(ctx context.Context, action *Action) error {
 
 		_, err = e.provider.ProvisionLB(ctx, vpcID, subnetIDs, api.LBConfig{
 			Name:                    "spire-server-test-db",
-			Port:                    8081,
+			Port:                    30000,
 			Internal:                true,
 			Purpose:                 "Spire server",
 			DeregistrationDelaySecs: 30,
@@ -170,7 +170,7 @@ func (e *DefaultExecutor) Execute(ctx context.Context, action *Action) error {
 		}
 
 		// register instance with load balancer target group
-		err = e.provider.RegisterTargets(ctx, "spire-server-test-db-tg", provider_id, 8081)
+		err = e.provider.RegisterTargets(ctx, "spire-server-test-db-tg", provider_id, 30000)
 		if err != nil {
 			log.Printf("failed to register targets: %v", err)
 			return err
