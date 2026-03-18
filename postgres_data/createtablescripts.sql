@@ -9,12 +9,12 @@ CREATE DATABASE spire;
 DROP TABLE public.actions;
 
 CREATE TABLE public.actions (
+	id serial4 NOT NULL,
 	hostid varchar NOT NULL,
 	status varchar NOT NULL,
 	attempts int4 NULL,
 	createdat timestamptz NULL,
 	"type" varchar NOT NULL,
-	id int4 NOT NULL,
 	updatedat timestamptz NULL,
 	provider varchar NULL,
 	providerID varchar NULL
