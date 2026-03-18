@@ -84,7 +84,7 @@ func (e *DefaultExecutor) Execute(ctx context.Context, action *Action) error {
 
 		_, err := e.provider.ProvisionLB(ctx, vpcID, subnetIDs, api.LBConfig{
 			Name:                    "spire-server-test-db",
-			Port:                    8081,
+			Port:                    30000,
 			Internal:                true,
 			Purpose:                 "Spire server",
 			DeregistrationDelaySecs: 30,
