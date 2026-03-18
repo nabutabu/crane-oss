@@ -109,6 +109,9 @@ func (p *Provider) ProvisionSpireHost(ctx context.Context, id string, connInfo a
 		KeyName:          aws.String("dominatorDeployedEC2Key"),
 		UserData:         aws.String(userData),
 		SecurityGroupIds: []string{spireServerSG},
+		IamInstanceProfile: &types.IamInstanceProfileSpecification{
+			Name: aws.String("Spire-server-instance-role"),
+		},
 		TagSpecifications: []types.TagSpecification{
 			{
 				ResourceType: types.ResourceTypeInstance,
