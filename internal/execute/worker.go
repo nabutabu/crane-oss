@@ -28,7 +28,7 @@ func (w *Worker) Run(ctx context.Context) {
 		record, err := w.store.Next(ctx)
 		if err != nil {
 			log.Printf("[Info:Executor]/Run/Next %v", err)
-			return
+			continue
 		}
 
 		log.Println("calling execute")

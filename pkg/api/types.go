@@ -66,6 +66,12 @@ type Host struct {
 	Health            HostHealth
 	CreatedAt         time.Time
 	LastSeenHeartbeat time.Time
+	Endpoint          string
+	Port              int32
+	DBName            string
+	Username          string
+	SecretARN         string
+	RDSSGID           string
 }
 
 type DesiredState struct {
@@ -115,3 +121,34 @@ const (
 	InstallPackage   PackageActionType = "install"
 	UninstallPackage PackageActionType = "uninstall"
 )
+
+type LBConfig struct {
+	// Name is used for both the NLB and target group names — must be unique
+	// per service and ≤32 chars (AWS limit).
+	Name string
+
+	// Port the service listens on inside the EC2 instance (e.g. 8081 for
+	// SPIRE, 9090 for Prometheus, etc.)
+	Port int32
+
+	// Internal keeps the NLB off the public internet. Set true for
+	// service-to-service traffic, false for publicly reachable endpoints.
+	Internal bool
+
+	// Purpose is stamped onto AWS tags for cost allocation and filtering.
+	Purpose string
+
+	// DeregistrationDelaySecs controls how long the NLB drains connections
+	// before removing a target. Default 30s; increase for long-lived streams.
+	DeregistrationDelaySecs int32
+}
+
+// DBConnectionInfo is what callers need to build the SPIRE server config.
+type DBConnectionInfo struct {
+	Endpoint  string
+	Port      int32
+	DBName    string
+	Username  string
+	SecretARN string // retrieve password from here at runtime
+	SGID      string // RDS security group — attach to any future peered VPCs
+}

@@ -8,6 +8,12 @@ const (
 	ActionCreateHost  ActionType = "create_host"
 	ActionDrainHost   ActionType = "drain_host"
 	ActionReplaceHost ActionType = "replace_host"
+
+	ActionCreateLB ActionType = "create_LB"
+
+	ActionCreateDB ActionType = "create_DB"
+
+	ActionCreateSpireInstance ActionType = "create_host_spire"
 )
 
 type Action struct {
@@ -27,6 +33,8 @@ const (
 type ActionRecord struct {
 	ID         int
 	HostID     string
+	LBID       string
+	DBID       string
 	Type       ActionType
 	Status     ActionStatus
 	Attempts   int

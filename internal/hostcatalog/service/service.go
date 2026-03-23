@@ -109,3 +109,7 @@ func (service *HostCatalogService) GetByToken(ctx context.Context, token string)
 func (service *HostCatalogService) UpdateState(ctx context.Context, id string, newState string) error {
 	return service.store.UpdateState(ctx, id, api.HostState(newState))
 }
+
+func (service *HostCatalogService) UpdateDBConnectionInfo(ctx context.Context, hostID string, connInfo api.DBConnectionInfo) error {
+	return service.store.UpdateDBConnectionInfo(ctx, hostID, connInfo.Endpoint, connInfo.Port, connInfo.DBName, connInfo.Username, connInfo.SecretARN, connInfo.SGID)
+}
