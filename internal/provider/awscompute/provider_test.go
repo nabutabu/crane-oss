@@ -2,6 +2,8 @@ package awscompute_test
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -9,7 +11,10 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
+	"github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2"
+	elbv2types "github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2/types"
 	"github.com/nabutabu/crane-oss/internal/provider/awscompute"
+	"github.com/nabutabu/crane-oss/pkg/api"
 )
 
 func newLocalstackEC2Client(t *testing.T) *ec2.Client {
@@ -41,6 +46,64 @@ func newLocalstackEC2Client(t *testing.T) *ec2.Client {
 	}
 
 	return ec2.NewFromConfig(cfg)
+}
+
+func newLocalstackELBv2Client(t *testing.T) *elasticloadbalancingv2.Client {
+	t.Helper()
+
+	cfg, err := config.LoadDefaultConfig(
+		context.Background(),
+		config.WithRegion("us-east-1"),
+		config.WithCredentialsProvider(
+			credentials.NewStaticCredentialsProvider("test", "test", ""),
+		),
+		config.WithEndpointResolverWithOptions(
+			aws.EndpointResolverWithOptionsFunc(
+				func(service, region string, options ...interface{}) (aws.Endpoint, error) {
+					if service == elasticloadbalancingv2.ServiceID {
+						return aws.Endpoint{
+							URL:               "http://localhost:4566",
+							SigningRegion:     "us-east-1",
+							HostnameImmutable: true,
+						}, nil
+					}
+					return aws.Endpoint{}, &aws.EndpointNotFoundError{}
+				},
+			),
+		),
+	)
+	if err != nil {
+		t.Fatalf("failed to load AWS config: %v", err)
+	}
+
+	return elasticloadbalancingv2.NewFromConfig(cfg)
+}
+
+func createTestVPCAndSubnets(t *testing.T, ec2Client *ec2.Client) (string, []string) {
+	t.Helper()
+
+	vpcOut, err := ec2Client.CreateVpc(context.Background(), &ec2.CreateVpcInput{
+		CidrBlock: aws.String("10.0.0.0/16"),
+	})
+	if err != nil {
+		t.Fatalf("failed to create VPC: %v", err)
+	}
+	vpcID := *vpcOut.Vpc.VpcId
+
+	subnetIDs := make([]string, 2)
+	for i := 0; i < 2; i++ {
+		subnetOut, err := ec2Client.CreateSubnet(context.Background(), &ec2.CreateSubnetInput{
+			VpcId:            aws.String(vpcID),
+			CidrBlock:        aws.String(fmt.Sprintf("10.0.%d.0/24", i)),
+			AvailabilityZone: aws.String(fmt.Sprintf("us-east-1%c", 'a'+i)),
+		})
+		if err != nil {
+			t.Fatalf("failed to create subnet %d: %v", i, err)
+		}
+		subnetIDs[i] = *subnetOut.Subnet.SubnetId
+	}
+
+	return vpcID, subnetIDs
 }
 
 func createTestInstance(t *testing.T, client *ec2.Client) string {
@@ -156,6 +219,84 @@ func TestProvider_ProvisionHost(t *testing.T) {
 
 			if len(out.Reservations) == 0 || len(out.Reservations[0].Instances) == 0 {
 				t.Fatalf("instance %s not found after provisioning", got)
+			}
+		})
+	}
+}
+
+func TestProvider_ProvisionLB(t *testing.T) {
+	ec2Client := newLocalstackEC2Client(t)
+	elbClient := newLocalstackELBv2Client(t)
+
+	vpcID, subnetIDs := createTestVPCAndSubnets(t, ec2Client)
+
+	tests := []struct {
+		name        string
+		vpcID       string
+		subnetIDs   []string
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name:      "provision NLB with valid VPC and subnets",
+			vpcID:     vpcID,
+			subnetIDs: subnetIDs,
+			wantErr:   false,
+		},
+		{
+			name:        "provision NLB with empty VPCID",
+			vpcID:       "",
+			subnetIDs:   subnetIDs,
+			wantErr:     true,
+			errContains: "create target group",
+		},
+		{
+			name:        "provision NLB with empty subnetIDs",
+			vpcID:       vpcID,
+			subnetIDs:   []string{},
+			wantErr:     true,
+			errContains: "create NLB",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := awscompute.NewWithELB(ec2Client, elbClient)
+
+			dnsName, gotErr := p.ProvisionLB(context.Background(), tt.vpcID, tt.subnetIDs, api.LBConfig{
+				Name: "spire-server-nlb",
+				Port: 8081,
+			})
+			if gotErr != nil {
+				if !tt.wantErr {
+					t.Errorf("ProvisionLB() failed: %v", gotErr)
+				}
+				if tt.errContains != "" && !strings.Contains(gotErr.Error(), tt.errContains) {
+					t.Errorf("ProvisionLB() error = %v, want to contain %v", gotErr, tt.errContains)
+				}
+				return
+			}
+			if tt.wantErr {
+				t.Fatal("ProvisionLB() succeeded unexpectedly")
+			}
+
+			if dnsName == "" {
+				t.Fatal("ProvisionLB() returned empty DNS name")
+			}
+
+			out, err := elbClient.DescribeLoadBalancers(context.Background(), &elasticloadbalancingv2.DescribeLoadBalancersInput{
+				Names: []string{"spire-server-nlb"},
+			})
+			if err != nil {
+				t.Fatalf("failed to describe NLB: %v", err)
+			}
+			if len(out.LoadBalancers) == 0 {
+				t.Fatal("NLB not found after provisioning")
+			}
+
+			lb := out.LoadBalancers[0]
+			if lb.Type != elbv2types.LoadBalancerTypeEnumNetwork {
+				t.Errorf("NLB type = %v, want network", lb.Type)
 			}
 		})
 	}

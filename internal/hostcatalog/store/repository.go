@@ -290,6 +290,15 @@ func (store *PostgresHostStore) UpdateLastSeenHeartbeat(ctx context.Context, hos
 	return err
 }
 
+func (store *PostgresHostStore) UpdateDBConnectionInfo(ctx context.Context, hostID string, endpoint string, port int32, dbname string, username string, secretarn string, rdssgid string) error {
+	log.Println("/PostgresHostStore/UpdateDBConnectionInfo")
+	query := "UPDATE host SET endpoint = $1, port = $2, dbname = $3, username = $4, secretarn = $5, rdssgid = $6 WHERE id = $7"
+
+	_, err := store.DB.Exec(query, endpoint, port, dbname, username, secretarn, rdssgid, hostID)
+
+	return err
+}
+
 func (store *PostgresHostStore) GetByToken(ctx context.Context, token string) (*api.Host, error) {
 	log.Println("/PostgresHostStore/")
 	query := "SELECT id, role, zone, imageid, state, health, createdat, provider, providerid, lastseenheartbeat FROM host WHERE token = $1"

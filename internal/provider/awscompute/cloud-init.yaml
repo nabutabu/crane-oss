@@ -1,0 +1,335 @@
+#cloud-config
+write_files:
+
+  - path: /etc/modules-load.d/k8s.conf
+    content: |
+      overlay
+      br_netfilter
+
+  - path: /etc/sysctl.d/k8s.conf
+    content: |
+      net.bridge.bridge-nf-call-iptables  = 1
+      net.bridge.bridge-nf-call-ip6tables = 1
+      net.ipv4.ip_forward                 = 1
+
+  - path: /etc/containerd/config.toml
+    content: |
+      version = 2
+      [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc]
+        runtime_type = "io.containerd.runc.v2"
+        [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc.options]
+          SystemdCgroup = true
+
+  - path: /tmp/kubeadm-config.yaml
+    content: |
+      apiVersion: kubeadm.k8s.io/v1beta3
+      kind: ClusterConfiguration
+      kubernetesVersion: "1.30.0"
+      networking:
+        podSubnet: "10.244.0.0/16"
+      ---
+      apiVersion: kubelet.config.k8s.io/v1beta1
+      kind: KubeletConfiguration
+      cgroupDriver: systemd
+
+  - path: /tmp/generate-spire-configmap.py
+    permissions: '0700'
+    content: |
+      import os, sys
+
+      endpoint = os.environ['DB_ENDPOINT']
+      password = os.environ['DB_PASSWORD']
+      user = os.environ['DB_USER']
+
+      config = """apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: spire-server-config
+        namespace: spire
+      data:
+        server.conf: |
+          server {{
+            bind_address = "0.0.0.0"
+            bind_port    = "8081"
+            trust_domain = "crane.internal"
+            data_dir     = "/run/spire/data"
+            log_level    = "INFO"
+          }}
+          plugins {{
+            DataStore "sql" {{
+              plugin_data {{
+                database_type     = "postgres"
+                connection_string = "host={endpoint} port=5432 user={user} password={password} dbname=spire sslmode=require"
+              }}
+            }}
+            KeyManager "disk" {{
+              plugin_data {{
+                keys_path = "/run/spire/data/keys.json"
+              }}
+            }}
+            NodeAttestor "aws_iid" {{
+              plugin_data {{
+                account_ids_allowed = ["912753427274"]
+              }}
+            }}
+          }}
+          health_checks {{
+            listener_enabled = true
+            bind_address     = "0.0.0.0"
+            bind_port        = "8080"
+            live_path        = "/live"
+            ready_path       = "/ready"
+          }}
+      """.format(endpoint=endpoint, password=password, user=user)
+
+      with open("/tmp/spire-configmap.yaml", "w") as f:
+          f.write(config)
+
+      print("ConfigMap written to /tmp/spire-configmap.yaml")
+      print("  endpoint:", endpoint)
+      print("  user:    ", user)
+
+  - path: /tmp/fetch-and-deploy-spire.sh
+    permissions: '0700'
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+      export KUBECONFIG=/etc/kubernetes/admin.conf
+
+      TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
+        -H "X-aws-ec2-metadata-token-ttl-seconds: 60")
+      REGION=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" \
+        http://169.254.169.254/latest/meta-data/placement/region)
+      INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" \
+        http://169.254.169.254/latest/meta-data/instance-id)
+
+      SECRET_ARN=$(aws ec2 describe-tags \
+        --region "$REGION" \
+        --filters "Name=resource-id,Values=$INSTANCE_ID" "Name=key,Values=SpireDBSecretArn" \
+        --query "Tags[0].Value" --output text)
+      DB_ENDPOINT=$(aws ec2 describe-tags \
+        --region "$REGION" \
+        --filters "Name=resource-id,Values=$INSTANCE_ID" "Name=key,Values=SpireDBEndpoint" \
+        --query "Tags[0].Value" --output text)
+      SECRET_JSON=$(aws secretsmanager get-secret-value \
+        --region "$REGION" \
+        --secret-id "$SECRET_ARN" \
+        --query SecretString \
+        --output text)
+      DB_PASSWORD=$(echo "$SECRET_JSON" | python3 -c \
+        "import sys,json; print(json.load(sys.stdin)['password'])")
+      DB_USER=$(echo "$SECRET_JSON" | python3 -c \
+        "import sys,json; print(json.load(sys.stdin)['username'])")
+
+      kubectl taint nodes --all node-role.kubernetes.io/control-plane:NoSchedule- || true
+
+      cilium status --wait --wait-duration 300s || true
+
+      kubectl apply -f https://raw.githubusercontent.com/rancher/local-path-provisioner/master/deploy/local-path-storage.yaml
+      kubectl patch storageclass local-path \
+        -p '{"metadata": {"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}'
+      kubectl rollout status deployment/local-path-provisioner \
+        -n local-path-storage --timeout=120s
+
+      kubectl apply -f - <<EOF
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: spire
+      ---
+      apiVersion: v1
+      kind: ServiceAccount
+      metadata:
+        name: spire-server
+        namespace: spire
+      ---
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRole
+      metadata:
+        name: spire-server
+      rules:
+        - apiGroups: [""]
+          resources: ["nodes", "pods"]
+          verbs: ["get", "list", "watch"]
+        - apiGroups: ["authentication.k8s.io"]
+          resources: ["tokenreviews"]
+          verbs: ["create"]
+      ---
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRoleBinding
+      metadata:
+        name: spire-server
+      roleRef:
+        apiGroup: rbac.authorization.k8s.io
+        kind: ClusterRole
+        name: spire-server
+      subjects:
+        - kind: ServiceAccount
+          name: spire-server
+          namespace: spire
+      EOF
+
+      kubectl create secret generic spire-db-credentials \
+        --namespace spire \
+        --from-literal=password="$DB_PASSWORD" \
+        --from-literal=host="$DB_ENDPOINT" \
+        --from-literal=username="$DB_USER" \
+        --dry-run=client -o yaml | kubectl apply -f -
+
+      DB_ENDPOINT="$DB_ENDPOINT" DB_PASSWORD="$DB_PASSWORD" DB_USER="$DB_USER" \
+        python3 /tmp/generate-spire-configmap.py
+
+      kubectl apply -f /tmp/spire-configmap.yaml
+
+      kubectl apply -f - <<EOF
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: spire-server
+        namespace: spire
+      spec:
+        type: NodePort
+        selector:
+          app: spire-server
+        ports:
+          - name: grpc
+            port: 8081
+            targetPort: 8081
+            nodePort: 30000
+          - name: health
+            port: 8080
+            targetPort: 8080
+            nodePort: 30001
+      ---
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: spire-server
+        namespace: spire
+      spec:
+        replicas: 1
+        selector:
+          matchLabels:
+            app: spire-server
+        serviceName: spire-server
+        template:
+          metadata:
+            labels:
+              app: spire-server
+          spec:
+            serviceAccountName: spire-server
+            hostNetwork: true
+            dnsPolicy: ClusterFirstWithHostNet
+            tolerations:
+              - key: node-role.kubernetes.io/control-plane
+                operator: Exists
+                effect: NoSchedule
+            nodeSelector:
+              node-role.kubernetes.io/control-plane: ""
+            initContainers:
+              - name: wait-for-db
+                image: postgres:15-alpine
+                command:
+                  - sh
+                  - -c
+                  - |
+                    until pg_isready -h \$DB_HOST -p 5432 -U \$DB_USER; do
+                      echo "waiting for postgres..."
+                      sleep 5
+                    done
+                env:
+                  - name: DB_HOST
+                    valueFrom:
+                      secretKeyRef:
+                        name: spire-db-credentials
+                        key: host
+                  - name: DB_USER
+                    valueFrom:
+                      secretKeyRef:
+                        name: spire-db-credentials
+                        key: username
+            containers:
+              - name: spire-server
+                image: ghcr.io/spiffe/spire-server:1.9.0
+                args: ["-config", "/run/spire/config/server.conf"]
+                ports:
+                  - containerPort: 8081
+                  - containerPort: 8080
+                livenessProbe:
+                  httpGet:
+                    path: /live
+                    port: 8080
+                  initialDelaySeconds: 15
+                  periodSeconds: 10
+                readinessProbe:
+                  httpGet:
+                    path: /ready
+                    port: 8080
+                  initialDelaySeconds: 10
+                  periodSeconds: 5
+                volumeMounts:
+                  - name: spire-config
+                    mountPath: /run/spire/config
+                    readOnly: true
+                  - name: spire-data
+                    mountPath: /run/spire/data
+            volumes:
+              - name: spire-config
+                configMap:
+                  name: spire-server-config
+        volumeClaimTemplates:
+          - metadata:
+              name: spire-data
+            spec:
+              accessModes: ["ReadWriteOnce"]
+              resources:
+                requests:
+                  storage: 1Gi
+      EOF
+
+      kubeadm token create --print-join-command > /etc/kubeadm-join-command.txt
+      cat /etc/kubeadm-join-command.txt
+
+runcmd:
+  - modprobe overlay
+  - modprobe br_netfilter
+  - sysctl --system
+  - swapoff -a
+  - sed -i '/swap/d' /etc/fstab
+  - apt-get update -y
+  - apt-get install -y curl python3 unzip gnupg apt-transport-https ca-certificates
+  - curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip" -o /tmp/awscliv2.zip
+  - unzip -q /tmp/awscliv2.zip -d /tmp
+  - /tmp/aws/install --update
+  - mkdir -p /etc/containerd
+  - containerd config default > /etc/containerd/config.toml
+  - sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
+  - systemctl restart containerd
+  - systemctl enable containerd
+  - mkdir -p /etc/apt/keyrings
+  - curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.30/deb/Release.key | gpg --batch --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+  - echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.30/deb/ /' > /etc/apt/sources.list.d/kubernetes.list
+  - apt-get update -y
+  - apt-get install -y --allow-change-held-packages kubelet kubeadm kubectl
+  - apt-mark hold kubelet kubeadm kubectl
+  - systemctl enable --now kubelet
+  - |
+    if [ ! -f /etc/kubernetes/admin.conf ]; then
+      kubeadm init --config /tmp/kubeadm-config.yaml --ignore-preflight-errors=NumCPU
+    else
+      echo "kubeadm already initialised, skipping"
+    fi
+  - mkdir -p /root/.kube
+  - cp /etc/kubernetes/admin.conf /root/.kube/config
+  - mkdir -p /home/ubuntu/.kube
+  - cp /etc/kubernetes/admin.conf /home/ubuntu/.kube/config
+  - chown ubuntu:ubuntu /home/ubuntu/.kube/config
+  - curl -L https://github.com/cilium/cilium-cli/releases/latest/download/cilium-linux-arm64.tar.gz -o /tmp/cilium.tar.gz
+  - tar xzvf /tmp/cilium.tar.gz -C /usr/local/bin
+  - |
+    if ! KUBECONFIG=/etc/kubernetes/admin.conf cilium status --brief 2>/dev/null; then
+      KUBECONFIG=/etc/kubernetes/admin.conf cilium install --version 1.15.0
+    else
+      echo "Cilium already installed, skipping"
+    fi
+  - bash /tmp/fetch-and-deploy-spire.sh
