@@ -112,6 +112,17 @@ func (p *Provider) ProvisionSpireHost(ctx context.Context, id string, connInfo a
 		IamInstanceProfile: &types.IamInstanceProfileSpecification{
 			Name: aws.String("Spire-server-instance-role"),
 		},
+		BlockDeviceMappings: []types.BlockDeviceMapping{
+			{
+				DeviceName: aws.String("/dev/sda1"), // or "/dev/sda1" depending on your AMI
+				Ebs: &types.EbsBlockDevice{
+					VolumeSize:          aws.Int32(15),
+					VolumeType:          types.VolumeTypeGp3,
+					DeleteOnTermination: aws.Bool(true),
+					Encrypted:           aws.Bool(true),
+				},
+			},
+		},
 		TagSpecifications: []types.TagSpecification{
 			{
 				ResourceType: types.ResourceTypeInstance,
@@ -184,6 +195,7 @@ func (p *Provider) ProvisionHost(ctx context.Context, role string, id string) (s
 }
 
 func (p *Provider) ProvisionLB(ctx context.Context, VPCID string, subnetIDs []string, cfg api.LBConfig) (string, error) {
+	log.Printf("[AWSCompute]/ProvisionLB: name=%s, vpc=%s, port=%d, internal=%v", cfg.Name, VPCID, cfg.Port, cfg.Internal)
 	var elb *elasticloadbalancingv2.Client
 	if p.elbClient != nil {
 		elb = p.elbClient
@@ -195,8 +207,63 @@ func (p *Provider) ProvisionLB(ctx context.Context, VPCID string, subnetIDs []st
 		elb = elasticloadbalancingv2.NewFromConfig(awsCfg)
 	}
 
+	tgARN, err := p.findOrCreateTargetGroup(ctx, elb, VPCID, cfg)
+	if err != nil {
+		return "", err
+	}
+
+	scheme := elbv2types.LoadBalancerSchemeEnumInternetFacing
+	if cfg.Internal {
+		scheme = elbv2types.LoadBalancerSchemeEnumInternal
+	}
+
+	lbDNS, lbARN, err := p.findOrCreateNLB(ctx, elb, VPCID, subnetIDs, cfg.Name, scheme)
+	if err != nil {
+		return "", err
+	}
+
+	if err = waitForNLBActive(ctx, elb, lbARN); err != nil {
+		return "", fmt.Errorf("NLB did not become active: %w", err)
+	}
+
+	_, err = elb.CreateListener(ctx, &elasticloadbalancingv2.CreateListenerInput{
+		LoadBalancerArn: aws.String(lbARN),
+		Protocol:        elbv2types.ProtocolEnumTcp,
+		Port:            aws.Int32(cfg.Port),
+		DefaultActions: []elbv2types.Action{
+			{
+				Type:           elbv2types.ActionTypeEnumForward,
+				TargetGroupArn: aws.String(tgARN),
+			},
+		},
+	})
+	if err != nil {
+		var apiErr smithy.APIError
+		if errors.As(err, &apiErr) && apiErr.ErrorCode() == "DuplicateListener" {
+			log.Printf("listener already exists, skipping")
+		} else {
+			return "", fmt.Errorf("create listener: %w", err)
+		}
+	}
+	log.Printf("listener created: TCP:%d → %s", cfg.Port, tgARN)
+
+	return lbDNS, nil
+}
+
+func (p *Provider) findOrCreateTargetGroup(ctx context.Context, elb *elasticloadbalancingv2.Client, VPCID string, cfg api.LBConfig) (string, error) {
+	tgName := cfg.Name + "-tg"
+
+	descOut, err := elb.DescribeTargetGroups(ctx, &elasticloadbalancingv2.DescribeTargetGroupsInput{
+		Names: []string{tgName},
+	})
+	if err == nil && len(descOut.TargetGroups) > 0 {
+		tgARN := *descOut.TargetGroups[0].TargetGroupArn
+		log.Printf("target group already exists: %s", tgARN)
+		return tgARN, nil
+	}
+
 	tgOut, err := elb.CreateTargetGroup(ctx, &elasticloadbalancingv2.CreateTargetGroupInput{
-		Name:                       aws.String(cfg.Name + "-tg"),
+		Name:                       aws.String(tgName),
 		Protocol:                   elbv2types.ProtocolEnumTcp,
 		Port:                       aws.Int32(cfg.Port),
 		VpcId:                      aws.String(VPCID),
@@ -216,49 +283,38 @@ func (p *Provider) ProvisionLB(ctx context.Context, VPCID string, subnetIDs []st
 	}
 	tgARN := *tgOut.TargetGroups[0].TargetGroupArn
 	log.Printf("target group created: %s", tgARN)
+	return tgARN, nil
+}
 
-	scheme := elbv2types.LoadBalancerSchemeEnumInternetFacing
-	if cfg.Internal {
-		scheme = elbv2types.LoadBalancerSchemeEnumInternal
+func (p *Provider) findOrCreateNLB(ctx context.Context, elb *elasticloadbalancingv2.Client, VPCID string, subnetIDs []string, name string, scheme elbv2types.LoadBalancerSchemeEnum) (string, string, error) {
+	lbName := name + "-nlb"
+
+	descOut, err := elb.DescribeLoadBalancers(ctx, &elasticloadbalancingv2.DescribeLoadBalancersInput{
+		Names: []string{lbName},
+	})
+	if err == nil && len(descOut.LoadBalancers) > 0 {
+		lb := descOut.LoadBalancers[0]
+		lbARN := *lb.LoadBalancerArn
+		log.Printf("NLB already exists: %s (%s)", *lb.DNSName, lbARN)
+		return *lb.DNSName, lbARN, nil
 	}
 
 	lbOut, err := elb.CreateLoadBalancer(ctx, &elasticloadbalancingv2.CreateLoadBalancerInput{
-		Name:    aws.String(cfg.Name + "-nlb"),
+		Name:    aws.String(lbName),
 		Type:    elbv2types.LoadBalancerTypeEnumNetwork,
 		Scheme:  scheme,
 		Subnets: subnetIDs,
 		Tags: []elbv2types.Tag{
-			{Key: aws.String("Purpose"), Value: aws.String(cfg.Purpose)},
+			{Key: aws.String("Purpose"), Value: aws.String("Spire server")},
 		},
 	})
 	if err != nil {
-		return "", fmt.Errorf("create NLB: %w", err)
+		return "", "", fmt.Errorf("create NLB: %w", err)
 	}
 	lb := lbOut.LoadBalancers[0]
 	lbARN := *lb.LoadBalancerArn
 	log.Printf("NLB provisioned: %s (%s)", *lb.DNSName, lbARN)
-
-	if err = waitForNLBActive(ctx, elb, lbARN); err != nil {
-		return "", fmt.Errorf("NLB did not become active: %w", err)
-	}
-
-	_, err = elb.CreateListener(ctx, &elasticloadbalancingv2.CreateListenerInput{
-		LoadBalancerArn: aws.String(lbARN),
-		Protocol:        elbv2types.ProtocolEnumTcp,
-		Port:            aws.Int32(cfg.Port),
-		DefaultActions: []elbv2types.Action{
-			{
-				Type:           elbv2types.ActionTypeEnumForward,
-				TargetGroupArn: aws.String(tgARN),
-			},
-		},
-	})
-	if err != nil {
-		return "", fmt.Errorf("create listener: %w", err)
-	}
-	log.Printf("listener created: TCP:%d → %s", cfg.Port, tgARN)
-
-	return *lb.DNSName, nil
+	return *lb.DNSName, lbARN, nil
 }
 
 func (p *Provider) ProvisionSpireDB(ctx context.Context, VPCID string, subdnetIDs []string, ec2SecurityGroupID string) (api.DBConnectionInfo, string, error) {
@@ -271,22 +327,38 @@ func (p *Provider) ProvisionSpireDB(ctx context.Context, VPCID string, subdnetID
 	ec2Client := ec2.NewFromConfig(awsCfg)
 	rdsClient := rds.NewFromConfig(awsCfg)
 
-	sgOut, err := ec2Client.CreateSecurityGroup(ctx, &ec2.CreateSecurityGroupInput{
-		GroupName:   aws.String(dbSGName),
-		Description: aws.String("SPIRE server RDS inbound 5432 from EC2 SG only"),
-		VpcId:       aws.String(VPCID),
-		TagSpecifications: []ec2types.TagSpecification{
-			{
-				ResourceType: ec2types.ResourceTypeSecurityGroup,
-				Tags:         []ec2types.Tag{{Key: aws.String("Purpose"), Value: aws.String("spire-rds")}},
-			},
+	output, err := ec2Client.DescribeSecurityGroups(ctx, &ec2.DescribeSecurityGroupsInput{
+		Filters: []types.Filter{
+			{Name: aws.String("group-name"), Values: []string{dbSGName}},
+			{Name: aws.String("vpc-id"), Values: []string{VPCID}},
 		},
 	})
 	if err != nil {
-		return api.DBConnectionInfo{}, "", fmt.Errorf("create RDS security group: %w", err)
+		return api.DBConnectionInfo{}, "", err
 	}
-	rdsSGID := *sgOut.GroupId
-	log.Printf("RDS security group created: %s", rdsSGID)
+
+	var rdsSGID string
+	if len(output.SecurityGroups) == 0 {
+		sgOut, err := ec2Client.CreateSecurityGroup(ctx, &ec2.CreateSecurityGroupInput{
+			GroupName:   aws.String(dbSGName),
+			Description: aws.String("SPIRE server RDS inbound 5432 from EC2 SG only"),
+			VpcId:       aws.String(VPCID),
+			TagSpecifications: []ec2types.TagSpecification{
+				{
+					ResourceType: ec2types.ResourceTypeSecurityGroup,
+					Tags:         []ec2types.Tag{{Key: aws.String("Purpose"), Value: aws.String("spire-rds")}},
+				},
+			},
+		})
+		if err != nil {
+			return api.DBConnectionInfo{}, "", fmt.Errorf("create RDS security group: %w", err)
+		}
+		rdsSGID = *sgOut.GroupId
+		log.Printf("RDS security group created: %s", rdsSGID)
+	} else {
+		rdsSGID = *output.SecurityGroups[0].GroupId
+		log.Printf("Using existing RDS security group: %s", rdsSGID)
+	}
 
 	// Allow inbound PostgreSQL from the EC2 security group only.
 	// UserIdGroupPairs lets us reference a SG rather than a CIDR, so the rule
@@ -305,7 +377,12 @@ func (p *Provider) ProvisionSpireDB(ctx context.Context, VPCID string, subdnetID
 		},
 	})
 	if err != nil {
-		return api.DBConnectionInfo{}, "", fmt.Errorf("authorize RDS ingress: %w", err)
+		var apiErr smithy.APIError
+		if errors.As(err, &apiErr) && apiErr.ErrorCode() == "InvalidPermission.Duplicate" {
+			log.Printf("RDS ingress rule already exists, skipping")
+		} else {
+			return api.DBConnectionInfo{}, "", fmt.Errorf("authorize RDS ingress: %w", err)
+		}
 	}
 
 	// ── 4. RDS PostgreSQL Instance ─────────────────────────────────────────────
