@@ -32,6 +32,63 @@ write_files:
       kind: KubeletConfiguration
       cgroupDriver: systemd
 
+  - path: /tmp/generate-spire-configmap.py
+    permissions: '0700'
+    content: |
+      import os, sys
+
+      endpoint = os.environ['DB_ENDPOINT']
+      password = os.environ['DB_PASSWORD']
+      user = os.environ['DB_USER']
+
+      config = """apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: spire-server-config
+        namespace: spire
+      data:
+        server.conf: |
+          server {{
+            bind_address = "0.0.0.0"
+            bind_port    = "8081"
+            trust_domain = "crane.internal"
+            data_dir     = "/run/spire/data"
+            log_level    = "INFO"
+          }}
+          plugins {{
+            DataStore "sql" {{
+              plugin_data {{
+                database_type     = "postgres"
+                connection_string = "host={endpoint} port=5432 user={user} password={password} dbname=spire sslmode=require"
+              }}
+            }}
+            KeyManager "disk" {{
+              plugin_data {{
+                keys_path = "/run/spire/data/keys.json"
+              }}
+            }}
+            NodeAttestor "aws_iid" {{
+              plugin_data {{
+                account_ids_allowed = ["912753427274"]
+              }}
+            }}
+          }}
+          health_checks {{
+            listener_enabled = true
+            bind_address     = "0.0.0.0"
+            bind_port        = "8080"
+            live_path        = "/live"
+            ready_path       = "/ready"
+          }}
+      """.format(endpoint=endpoint, password=password, user=user)
+
+      with open("/tmp/spire-configmap.yaml", "w") as f:
+          f.write(config)
+
+      print("ConfigMap written to /tmp/spire-configmap.yaml")
+      print("  endpoint:", endpoint)
+      print("  user:    ", user)
+
   - path: /tmp/fetch-and-deploy-spire.sh
     permissions: '0700'
     content: |
@@ -61,19 +118,20 @@ write_files:
         --output text)
       DB_PASSWORD=$(echo "$SECRET_JSON" | python3 -c \
         "import sys,json; print(json.load(sys.stdin)['password'])")
+      DB_USER=$(echo "$SECRET_JSON" | python3 -c \
+        "import sys,json; print(json.load(sys.stdin)['username'])")
 
-      # Remove control-plane taint so workloads can schedule on this node
       kubectl taint nodes --all node-role.kubernetes.io/control-plane:NoSchedule- || true
 
-      # Install local-path storage provisioner
+      cilium status --wait --wait-duration 300s || true
+
       kubectl apply -f https://raw.githubusercontent.com/rancher/local-path-provisioner/master/deploy/local-path-storage.yaml
       kubectl patch storageclass local-path \
         -p '{"metadata": {"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}'
       kubectl rollout status deployment/local-path-provisioner \
         -n local-path-storage --timeout=120s
 
-      # Write and apply RBAC (namespace created here first)
-      cat <<EOF | kubectl apply -f -
+      kubectl apply -f - <<EOF
       apiVersion: v1
       kind: Namespace
       metadata:
@@ -111,59 +169,19 @@ write_files:
           namespace: spire
       EOF
 
-      # Create DB secret (idempotent)
       kubectl create secret generic spire-db-credentials \
         --namespace spire \
         --from-literal=password="$DB_PASSWORD" \
         --from-literal=host="$DB_ENDPOINT" \
-        --from-literal=username="spire_admin" \
+        --from-literal=username="$DB_USER" \
         --dry-run=client -o yaml | kubectl apply -f -
 
-      # Write and apply ConfigMap with substituted values
-      cat <<EOF | kubectl apply -f -
-      apiVersion: v1
-      kind: ConfigMap
-      metadata:
-        name: spire-server-config
-        namespace: spire
-      data:
-        server.conf: |
-          server {
-            bind_address = "0.0.0.0"
-            bind_port    = "8081"
-            trust_domain = "crane.internal"
-            data_dir     = "/run/spire/data"
-            log_level    = "INFO"
-          }
-          plugins {
-            DataStore "sql" {
-              plugin_data {
-                database_type     = "postgres"
-                connection_string = "host=${DB_ENDPOINT} port=5432 user=postgres password=${DB_PASSWORD} dbname=spire sslmode=require"
-              }
-            }
-            KeyManager "disk" {
-              plugin_data {
-                keys_path = "/run/spire/data/keys.json"
-              }
-            }
-            NodeAttestor "aws_iid" {
-              plugin_data {
-                account_id_whitelist = ["AKIA5JBCYANFBNA6VFE7"]
-              }
-            }
-          }
-          health_checks {
-            listener_enabled = true
-            bind_address     = "0.0.0.0"
-            bind_port        = "8080"
-            live_path        = "/live"
-            ready_path       = "/ready"
-          }
-      EOF
+      DB_ENDPOINT="$DB_ENDPOINT" DB_PASSWORD="$DB_PASSWORD" DB_USER="$DB_USER" \
+        python3 /tmp/generate-spire-configmap.py
 
-      # Write and apply StatefulSet + Service
-      cat <<EOF | kubectl apply -f -
+      kubectl apply -f /tmp/spire-configmap.yaml
+
+      kubectl apply -f - <<EOF
       apiVersion: v1
       kind: Service
       metadata:
@@ -200,6 +218,8 @@ write_files:
               app: spire-server
           spec:
             serviceAccountName: spire-server
+            hostNetwork: true
+            dnsPolicy: ClusterFirstWithHostNet
             tolerations:
               - key: node-role.kubernetes.io/control-plane
                 operator: Exists
@@ -213,7 +233,7 @@ write_files:
                   - sh
                   - -c
                   - |
-                    until pg_isready -h \$DB_HOST -p 5432 -U spire_admin; do
+                    until pg_isready -h \$DB_HOST -p 5432 -U \$DB_USER; do
                       echo "waiting for postgres..."
                       sleep 5
                     done
@@ -223,15 +243,18 @@ write_files:
                       secretKeyRef:
                         name: spire-db-credentials
                         key: host
+                  - name: DB_USER
+                    valueFrom:
+                      secretKeyRef:
+                        name: spire-db-credentials
+                        key: username
             containers:
               - name: spire-server
                 image: ghcr.io/spiffe/spire-server:1.9.0
                 args: ["-config", "/run/spire/config/server.conf"]
                 ports:
                   - containerPort: 8081
-                    hostPort: 8081
                   - containerPort: 8080
-                    hostPort: 8080
                 livenessProbe:
                   httpGet:
                     path: /live
