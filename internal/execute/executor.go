@@ -154,13 +154,18 @@ func (e *DefaultExecutor) Execute(ctx context.Context, action *Action) error {
 		vpcID = "vpc-0fe5ab51bdf710362"
 		subnetIDs = []string{"subnet-0f73ec402ea914eb5"}
 
-		_, err = e.provider.ProvisionLB(ctx, vpcID, subnetIDs, api.LBConfig{
+		lbDNS, err := e.provider.ProvisionLB(ctx, vpcID, subnetIDs, api.LBConfig{
 			Name:                    "spire-server-test-db",
 			Port:                    30000,
 			Internal:                true,
 			Purpose:                 "Spire server",
 			DeregistrationDelaySecs: 30,
 		})
+		if err != nil {
+			log.Printf("failed to provision LB: %v", err)
+			return err
+		}
+		log.Printf("NLB provisioned with DNS: %s", lbDNS)
 
 		// provision host here
 		provider_id, err := e.provider.ProvisionSpireHost(ctx, hostID, connInfo)
