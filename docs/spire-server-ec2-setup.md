@@ -196,7 +196,7 @@ plugins {
     
     NodeAttestor "aws_iid" {
         plugin_data {
-            account_id_whitelist = ["YOUR_AWS_ACCOUNT_ID"]
+            account_ids_for_local_validation = ["YOUR_AWS_ACCOUNT_ID"]
         }
     }
     

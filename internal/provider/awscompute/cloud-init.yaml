@@ -69,7 +69,7 @@ write_files:
             }}
             NodeAttestor "aws_iid" {{
               plugin_data {{
-                account_ids_allowed = ["912753427274"]
+                account_ids_for_local_validation = ["912753427274"]
               }}
             }}
           }}

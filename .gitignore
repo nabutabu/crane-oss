@@ -1,4 +1,11 @@
 *.auto.pkrvars.hcl
+
+# GoReleaser build/release output
+dist/
+
+# Local secret-purge inputs (never commit real values)
+secrets-to-purge.txt
+
 ./spire/data/*
 spire/data/keys/
 spire/agent/data/
