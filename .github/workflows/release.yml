@@ -1,88 +1,234 @@
+# Release pipeline for crane-oss. Triggers on every push to main:
+#
+#   1. Runs the Go verification workflow (gofmt, vet, build, tests) as a gate —
+#      nothing is published until it passes.
+#   2. Determines the next version from internal/version/version.go. If the
+#      pushed commit hand-edited that file (a manual major/minor bump), the
+#      workflow uses it as-is. Otherwise it auto-bumps the patch number. It
+#      syncs the version back into version.go, commits with [skip ci], and
+#      pushes.
+#   3. Tags v<x.y.z> and pushes the tag.
+#   4. Runs goreleaser to cross-compile the subd host agent (linux/amd64 +
+#      linux/arm64), attach it to a GitHub Release, and publish checksums.
+#   5. Builds and pushes multi-arch container images for crane-api and
+#      dominator to both GHCR and ECR, tagged with the version, the git SHA,
+#      and latest.
+#
+# Only subd is released as a binary; crane-api and dominator ship as images.
+# This follows the binary-release pattern used by ~/programs/herdr-observr.
+
 name: Release
 
 on:
+  push:
+    branches: [main]
+    # Docs-only changes must not cut a new release. paths-ignore skips this
+    # workflow only when *every* changed file matches, so a mixed code+docs
+    # commit still releases.
+    paths-ignore:
+      - "docs/**"
+      - "*.md"
+  # Manual escape hatch to re-run the release flow against current main.
   workflow_dispatch:
-    inputs:
-      version:
-        description: 'Release version (e.g., 1.0.0)'
-        required: true
-        type: string
+
+permissions:
+  contents: write
+  packages: write
+
+# Serialise releases — no two version bumps racing each other.
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
-  build:
+  # Same verification the Go workflow runs on PRs, reused here as the gate.
+  verify:
+    uses: ./.github/workflows/go.yml
+
+  # Single job for the version bump, tag, and goreleaser so the tag and the
+  # goreleaser checkout are always the same commit (as in herdr-observr).
+  release:
+    needs: verify
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      version_tag: ${{ steps.version.outputs.version_tag }}
+      sha: ${{ steps.commit.outputs.sha }}
+      date: ${{ steps.version.outputs.date }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Full history so the workflow can inspect HEAD~1 for the "did this
+          # commit hand-edit version.go?" check, and so goreleaser sees prior
+          # tags for changelog generation.
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v5
         with:
-          go-version: '1.25.3'
+          go-version-file: go.mod
+          cache: true
 
-      - name: Build subd
-        run: go build -o subd-v${{ github.inputs.version }}-linux-amd64 ./cmd/subd
-
-      - name: Build dominator
-        run: go build -o dominator-v${{ github.inputs.version }}-linux-amd64 ./cmd/dominator
-
-      - name: Build crane-api
-        run: go build -o crane-api-v${{ github.inputs.version }}-linux-amd64 ./cmd/crane-api
-
-      - name: Upload subd
-        uses: actions/upload-artifact@v4
-        with:
-          name: subd
-          path: subd-v${{ github.inputs.version }}-linux-amd64
-
-      - name: Upload dominator
-        uses: actions/upload-artifact@v4
-        with:
-          name: dominator
-          path: dominator-v${{ github.inputs.version }}-linux-amd64
-
-      - name: Upload crane-api
-        uses: actions/upload-artifact@v4
-        with:
-          name: crane-api
-          path: crane-api-v${{ github.inputs.version }}-linux-amd64
-
-  release:
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Download subd
-        uses: actions/download-artifact@v4
-        with:
-          name: subd
-
-      - name: Download dominator
-        uses: actions/download-artifact@v4
-        with:
-          name: dominator
-
-      - name: Download crane-api
-        uses: actions/download-artifact@v4
-        with:
-          name: crane-api
-
-      - name: Make binaries executable
+      # Set the git identity once for the whole job: both the version-bump
+      # commit and the annotated release tag need it, and the bump step is
+      # skipped on a hand-edited release — so configuring it here keeps tagging
+      # working on every path.
+      - name: Configure git identity
         run: |
-          chmod +x subd-*
-          chmod +x dominator-*
-          chmod +x crane-api-*
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      - name: Create Release
-        uses: softprops/action-gh-release@v2
+      # Decide whether to auto-bump or accept a hand-edited version.
+      - name: Determine version
+        id: version
+        run: |
+          set -euo pipefail
+
+          CURRENT=$(sed -nE 's/.*var Version = "([0-9]+\.[0-9]+\.[0-9]+)".*/\1/p' internal/version/version.go)
+          if [[ -z "$CURRENT" ]]; then
+            echo "Could not parse version from internal/version/version.go" >&2
+            exit 1
+          fi
+
+          # If the pushed commit changed version.go, treat that as a manual
+          # major/minor bump and use the value as-is. Otherwise auto-bump patch.
+          if git diff --name-only HEAD~1..HEAD 2>/dev/null | grep -qx 'internal/version/version.go'; then
+            echo "Version was manually edited to $CURRENT — using as-is."
+            echo "bumped=false" >> "$GITHUB_OUTPUT"
+          else
+            MAJOR=$(echo "$CURRENT" | cut -d. -f1)
+            MINOR=$(echo "$CURRENT" | cut -d. -f2)
+            PATCH=$(echo "$CURRENT" | cut -d. -f3)
+            CURRENT="${MAJOR}.${MINOR}.$((PATCH + 1))"
+            echo "Auto-bumping to $CURRENT"
+            echo "bumped=true" >> "$GITHUB_OUTPUT"
+          fi
+
+          echo "version=$CURRENT"         >> "$GITHUB_OUTPUT"
+          echo "version_tag=v$CURRENT"    >> "$GITHUB_OUTPUT"
+          echo "date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+      # Sync the determined version into version.go and commit if anything
+      # changed. The diff guard makes it a no-op when the file already matches
+      # (hand-edited path). The [skip ci] marker stops the push from
+      # re-triggering CI or this workflow.
+      - name: Sync version into version.go
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.version.outputs.version }}"
+
+          sed -i -E "s/(var Version = )\"[0-9]+\.[0-9]+\.[0-9]+\"/\1\"$VERSION\"/" internal/version/version.go
+
+          if git diff --quiet internal/version/version.go; then
+            echo "version.go already at v$VERSION — nothing to commit."
+          else
+            git add internal/version/version.go
+            git commit -m "Release v$VERSION [skip ci]"
+            git push origin HEAD:main
+          fi
+
+      # Always create + push the tag (even when the version was hand-edited —
+      # that is the whole point of accepting it as-is).
+      - name: Tag release
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.version.outputs.version }}"
+          if git rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null; then
+            echo "Tag v$VERSION already exists, skipping."
+            exit 0
+          fi
+          git tag -a "v$VERSION" -m "Release v$VERSION"
+          git push origin "v$VERSION"
+
+      # Expose the exact released commit (post version-bump) so image tags pin
+      # to the same revision the tag points at, not the pre-bump trigger SHA.
+      - name: Record release commit
+        id: commit
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
         with:
-          tag_name: v${{ github.inputs.version }}
-          name: Release v${{ github.inputs.version }}
-          draft: false
-          prerelease: false
-          files: |
-            subd-*
-            dominator-*
-            crane-api-*
+          version: latest
+          args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # crane-api and dominator are published as multi-arch container images to
+  # both GHCR (via the built-in token) and ECR (via AWS OIDC — no long-lived
+  # keys; see docs/ci-oidc.md for the one-time IAM setup).
+  images:
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: crane-api
+            dockerfile: Dockerfile.crane-api
+            ghcr_image: ghcr.io/nabutabu/crane-oss
+            ecr_repo: crane-oss
+          - service: dominator
+            dockerfile: Dockerfile.dominator
+            ghcr_image: ghcr.io/nabutabu/crane-oss-dominator
+            ecr_repo: crane-oss-dominator
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release.outputs.version_tag }}
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          role-session-name: gha-crane-oss-${{ github.run_id }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Log in to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push ${{ matrix.service }}
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: |
+            VERSION=${{ needs.release.outputs.version }}
+            COMMIT=${{ needs.release.outputs.sha }}
+            BUILD_DATE=${{ needs.release.outputs.date }}
+          tags: |
+            ${{ matrix.ghcr_image }}:${{ needs.release.outputs.version }}
+            ${{ matrix.ghcr_image }}:${{ needs.release.outputs.sha }}
+            ${{ matrix.ghcr_image }}:latest
+            ${{ steps.login-ecr.outputs.registry }}/${{ matrix.ecr_repo }}:${{ needs.release.outputs.version }}
+            ${{ steps.login-ecr.outputs.registry }}/${{ matrix.ecr_repo }}:${{ needs.release.outputs.sha }}
+            ${{ steps.login-ecr.outputs.registry }}/${{ matrix.ecr_repo }}:latest
+
+      # Print the immutable digest so a deployment can pin by digest rather than
+      # a mutable tag.
+      - name: Record image digest
+        run: echo "${{ matrix.ghcr_image }}@${{ steps.build.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"

@@ -11,10 +11,12 @@ import (
 	"github.com/nabutabu/crane-oss/internal/dominator"
 	"github.com/nabutabu/crane-oss/internal/hostcatalog/service"
 	"github.com/nabutabu/crane-oss/internal/hostcatalog/store"
+	"github.com/nabutabu/crane-oss/internal/version"
 	"github.com/spiffe/go-spiffe/v2/workloadapi"
 )
 
 func main() {
+	log.Printf("dominator %s", version.String())
 	host := getEnv("DB_HOST", "localhost")
 	port := getEnvInt("DB_PORT", 43544)
 	user := getEnv("DB_USER", "postgres")

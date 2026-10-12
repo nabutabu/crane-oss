@@ -30,7 +30,7 @@ The system consists of several key components:
 
 ### Prerequisites
 
-- Go 1.21+
+- Go 1.25.3+
 - PostgreSQL database
 - AWS credentials (for AWS EC2 integration)
 - Docker and Docker Compose (for local development)

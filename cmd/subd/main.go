@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/nabutabu/crane-oss/internal/subd"
+	"github.com/nabutabu/crane-oss/internal/version"
 	"github.com/spiffe/go-spiffe/v2/workloadapi"
 )
 
@@ -39,6 +40,7 @@ func LoadConfig() Configuration {
 }
 
 func main() {
+	log.Printf("subd %s", version.String())
 	config := LoadConfig()
 	ctx := context.Background()
 

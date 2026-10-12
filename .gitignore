@@ -1,4 +1,8 @@
 *.auto.pkrvars.hcl
+
+# GoReleaser build/release output
+dist/
+
 ./spire/data/*
 spire/data/keys/
 spire/agent/data/
