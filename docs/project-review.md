@@ -56,7 +56,7 @@ git history.
 ### 1.1 AWS access key ID committed as `account_id_whitelist`
 
 - **Location:** `spire/server/server.conf:19`
-- **What:** `account_id_whitelist = ["REDACTED_AWS_ACCESS_KEY_ID"]`. The value is formatted as an
+- **What:** `account_id_whitelist = ["AKIA…VFE7"]` (full value redacted). The value is formatted as an
   AWS **access key ID** (`AKIA...`), not an AWS account ID (a 12-digit number), and the
   file is tracked by git (`git ls-files` confirms it).
 - **Why fix:** A real-looking AWS access key ID is in version control history. Even if the
