@@ -1,4 +1,4 @@
-# This workflow verifies the Go module: formatting, vet, build, and tests.
+# This workflow verifies the Go module: tidy, formatting, vet, build, and tests.
 # For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-go
 
 name: Go
@@ -8,6 +8,9 @@ on:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
+  # Reusable: release.yml calls this workflow as its test gate before anything
+  # is published (see .github/workflows/release.yml).
+  workflow_call:
 
 jobs:
 
@@ -36,6 +39,15 @@ jobs:
       with:
         go-version-file: go.mod
         cache: true
+
+    - name: Verify go.mod is tidy
+      run: |
+        go mod tidy
+        if ! git diff --quiet go.mod go.sum; then
+          echo "::error::go.mod / go.sum are not tidy. Run 'go mod tidy' and commit."
+          git --no-pager diff go.mod go.sum
+          exit 1
+        fi
 
     - name: Check formatting
       run: |

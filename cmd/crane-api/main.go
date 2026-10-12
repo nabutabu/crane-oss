@@ -22,6 +22,7 @@ import (
 	"github.com/nabutabu/crane-oss/internal/hostcatalog/service"
 	"github.com/nabutabu/crane-oss/internal/hostcatalog/store"
 	"github.com/nabutabu/crane-oss/internal/provider/awscompute"
+	"github.com/nabutabu/crane-oss/internal/version"
 )
 
 const BHD_CONFIG_YAML_PATH = "bhd.json"
@@ -84,6 +85,7 @@ func getEnvInt(key string, defaultValue int) int {
 }
 
 func main() {
+	log.Printf("crane-api %s", version.String())
 	ctx := context.Background()
 
 	host := getEnv("DB_HOST", "localhost")
