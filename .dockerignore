@@ -1,0 +1,13 @@
+# Keep the Docker build context minimal and reproducible. Excluding .git in
+# particular keeps git history out of build layers; the Dockerfiles build with
+# -buildvcs=false and inject commit/date via -ldflags instead.
+.git
+.github
+dist/
+postgres_data/
+docs/
+spire/
+golden_image_generator/
+*.md
+*.auto.pkrvars.hcl
+.dockerignore

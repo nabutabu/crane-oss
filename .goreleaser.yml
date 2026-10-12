@@ -1,0 +1,52 @@
+# GoReleaser config for crane-oss. Driven by .github/workflows/release.yml on
+# every push to main: that workflow bumps internal/version/version.go, tags
+# v<x.y.z>, then invokes `goreleaser release --clean`. GoReleaser then
+# cross-compiles the subd host agent, archives it, and attaches it (plus
+# checksums) to a GitHub Release.
+#
+# Only subd is released as a binary. crane-api and dominator are released as
+# container images (see the `images` job in release.yml).
+#
+# See ~/programs/herdr-observr/.goreleaser.yml for the pattern this follows.
+version: 2
+
+project_name: crane-oss
+
+builds:
+  - id: subd
+    binary: subd
+    main: ./cmd/subd
+    env:
+      - CGO_ENABLED=0
+    # subd is the on-host agent baked into the Linux golden image (systemd
+    # unit at /usr/local/bin/subd). It ships for both architectures the fleet
+    # targets — amd64 and the ARM-based t4g instances.
+    goos: [linux]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w
+      - -X github.com/nabutabu/crane-oss/internal/version.Version={{ .Version }}
+      - -X github.com/nabutabu/crane-oss/internal/version.Commit={{ .Commit }}
+      - -X github.com/nabutabu/crane-oss/internal/version.Date={{ .CommitDate }}
+
+archives:
+  - id: subd
+    name_template: "subd_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
+    files:
+      - LICENSE*
+      - README*
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - "^docs:"
+      - "^chore:"
+      - "^test:"
+      - "Merge pull request"
+      - "Merge branch"
