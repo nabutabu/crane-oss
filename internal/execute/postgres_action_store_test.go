@@ -67,8 +67,8 @@ func TestPostgresActionStore_Next(t *testing.T) {
 	}{
 		{
 			name: "success",
-			mockRows: sqlmock.NewRows([]string{"id", "hostid", "attempts", "type"}).
-				AddRow(1, "42", 1, "restart"),
+			mockRows: sqlmock.NewRows([]string{"id", "hostid", "attempts", "type", "provider"}).
+				AddRow(1, "42", 1, "restart", "aws"),
 			wantID:   1,
 			wantHost: "42",
 			wantType: "restart",
@@ -76,7 +76,7 @@ func TestPostgresActionStore_Next(t *testing.T) {
 		},
 		{
 			name:     "no rows",
-			mockRows: sqlmock.NewRows([]string{"id", "hostid", "attempts", "type"}),
+			mockRows: sqlmock.NewRows([]string{"id", "hostid", "attempts", "type", "provider"}),
 			wantErr:  true,
 		},
 	}
