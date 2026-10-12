@@ -31,7 +31,7 @@ func main() {
 
 	svid, err := source.GetX509SVID()
 	if err != nil {
-		log.Fatal("Couldnt get X509 %v", err)
+		log.Fatalf("Couldnt get X509 %v", err)
 	}
 
 	log.Println("SPIFFE ID:", svid.ID.String())

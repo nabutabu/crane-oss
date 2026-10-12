@@ -12,6 +12,6 @@ func NewConfig(zone string, interval time.Duration, checks []string) *Config {
 	return &Config{
 		Zone:         zone,
 		ScanInterval: interval,
-		Checks: checks,
+		Checks:       checks,
 	}
 }

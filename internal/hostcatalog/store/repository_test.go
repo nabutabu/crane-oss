@@ -36,7 +36,7 @@ func TestPostgresHostStore_Create(t *testing.T) {
 			},
 			mock: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec(
-					`INSERT INTO host\(id, role, zone, imageid, state, health, createdat\) VALUES\(\$1, \$2, \$3, \$4, \$5, \$6, \$7\)`,
+					`INSERT INTO host\(id, role, zone, imageid, state, health, createdat, provider, providerid\) VALUES\(\$1, \$2, \$3, \$4, \$5, \$6, \$7, \$8, \$9\)`,
 				).
 					WithArgs(
 						"host-1",
@@ -46,6 +46,8 @@ func TestPostgresHostStore_Create(t *testing.T) {
 						"running",
 						"healthy",
 						now,
+						"",
+						"",
 					).
 					WillReturnResult(sqlmock.NewResult(0, 1))
 			},
@@ -64,7 +66,7 @@ func TestPostgresHostStore_Create(t *testing.T) {
 			},
 			mock: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec(
-					`INSERT INTO host\(id, role, zone, imageid, state, health, createdat\) VALUES\(\$1, \$2, \$3, \$4, \$5, \$6, \$7\)`,
+					`INSERT INTO host\(id, role, zone, imageid, state, health, createdat, provider, providerid\) VALUES\(\$1, \$2, \$3, \$4, \$5, \$6, \$7, \$8, \$9\)`,
 				).
 					WillReturnError(errors.New("insert failed"))
 			},
@@ -117,7 +119,7 @@ func TestPostgresHostStore_GetByID(t *testing.T) {
 			id:   "host-1",
 			mock: func(mock sqlmock.Sqlmock) {
 				rows := sqlmock.NewRows(
-					[]string{"id", "role", "zone", "imageid", "state", "health", "createdat"},
+					[]string{"id", "role", "zone", "imageid", "state", "health", "createdat", "provider", "providerID", "lastseenheartbeat"},
 				).AddRow(
 					"host-1",
 					"worker",
@@ -126,22 +128,28 @@ func TestPostgresHostStore_GetByID(t *testing.T) {
 					"running",
 					"healthy",
 					now,
+					"aws",
+					"i-abc123",
+					now,
 				)
 
 				mock.ExpectQuery(
-					`SELECT id, role, zone, imageid, state, health, createdat FROM host WHERE id = \$1`,
+					`SELECT id, role, zone, imageid, state, health, createdat, provider, providerID, lastseenheartbeat FROM host WHERE id = \$1`,
 				).
 					WithArgs("host-1").
 					WillReturnRows(rows)
 			},
 			want: &api.Host{
-				ID:        "host-1",
-				Role:      api.Role{Name: "worker"},
-				Zone:      "us-west-2a",
-				ImageID:   "ami-123",
-				State:     "running",
-				Health:    "healthy",
-				CreatedAt: now,
+				ID:                "host-1",
+				Role:              api.Role{Name: "worker"},
+				Zone:              "us-west-2a",
+				ImageID:           "ami-123",
+				State:             "running",
+				Health:            "healthy",
+				CreatedAt:         now,
+				Provider:          "aws",
+				ProviderID:        "i-abc123",
+				LastSeenHeartbeat: now,
 			},
 			wantErr: false,
 		},
@@ -150,7 +158,7 @@ func TestPostgresHostStore_GetByID(t *testing.T) {
 			id:   "missing-host",
 			mock: func(mock sqlmock.Sqlmock) {
 				mock.ExpectQuery(
-					`SELECT id, role, zone, imageid, state, health, createdat FROM host WHERE id = \$1`,
+					`SELECT id, role, zone, imageid, state, health, createdat, provider, providerID, lastseenheartbeat FROM host WHERE id = \$1`,
 				).
 					WithArgs("missing-host").
 					WillReturnError(sql.ErrNoRows)
@@ -363,7 +371,7 @@ func TestPostgresHostStore_ListHosts(t *testing.T) {
 			name: "returns multiple hosts",
 			mock: func(mock sqlmock.Sqlmock) {
 				rows := sqlmock.NewRows(
-					[]string{"id", "role", "zone", "imageid", "state", "health", "createdat"},
+					[]string{"id", "role", "zone", "imageid", "state", "health", "createdat", "provider", "providerid", "lastseenheartbeat"},
 				).
 					AddRow(
 						"host-1",
@@ -372,6 +380,9 @@ func TestPostgresHostStore_ListHosts(t *testing.T) {
 						"ami-123",
 						"running",
 						"healthy",
+						now,
+						"aws",
+						"i-abc123",
 						now,
 					).
 					AddRow(
@@ -382,31 +393,40 @@ func TestPostgresHostStore_ListHosts(t *testing.T) {
 						"pending",
 						"unknown",
 						now,
+						"aws",
+						"i-def456",
+						now,
 					)
 
 				mock.ExpectQuery(
-					`SELECT id, role, zone, imageid, state, health, createdat FROM host`,
+					`SELECT id, role, zone, imageid, state, health, createdat, provider, providerid, lastseenheartbeat FROM host`,
 				).
 					WillReturnRows(rows)
 			},
 			want: []*api.Host{
 				{
-					ID:        "host-1",
-					Role:      api.Role{Name: "worker"},
-					Zone:      "us-west-2a",
-					ImageID:   "ami-123",
-					State:     "running",
-					Health:    "healthy",
-					CreatedAt: now,
+					ID:                "host-1",
+					Role:              api.Role{Name: "worker"},
+					Zone:              "us-west-2a",
+					ImageID:           "ami-123",
+					State:             "running",
+					Health:            "healthy",
+					CreatedAt:         now,
+					Provider:          "aws",
+					ProviderID:        "i-abc123",
+					LastSeenHeartbeat: now,
 				},
 				{
-					ID:        "host-2",
-					Role:      api.Role{Name: "control-plane"},
-					Zone:      "us-east-1a",
-					ImageID:   "ami-456",
-					State:     "pending",
-					Health:    "unknown",
-					CreatedAt: now,
+					ID:                "host-2",
+					Role:              api.Role{Name: "control-plane"},
+					Zone:              "us-east-1a",
+					ImageID:           "ami-456",
+					State:             "pending",
+					Health:            "unknown",
+					CreatedAt:         now,
+					Provider:          "aws",
+					ProviderID:        "i-def456",
+					LastSeenHeartbeat: now,
 				},
 			},
 			wantErr: false,
@@ -415,7 +435,7 @@ func TestPostgresHostStore_ListHosts(t *testing.T) {
 			name: "database error is returned",
 			mock: func(mock sqlmock.Sqlmock) {
 				mock.ExpectQuery(
-					`SELECT id, role, zone, imageid, state, health, createdat FROM host`,
+					`SELECT id, role, zone, imageid, state, health, createdat, provider, providerid, lastseenheartbeat FROM host`,
 				).
 					WillReturnError(errors.New("query failed"))
 			},
