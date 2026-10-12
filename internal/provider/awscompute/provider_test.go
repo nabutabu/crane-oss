@@ -228,6 +228,13 @@ func TestProvider_ProvisionLB(t *testing.T) {
 	ec2Client := newLocalstackEC2Client(t)
 	elbClient := newLocalstackELBv2Client(t)
 
+	// Elastic Load Balancing v2 is a LocalStack Pro feature; the community
+	// edition used in CI responds with an InternalFailure instead. Skip
+	// rather than fail when the service is unavailable.
+	if _, err := elbClient.DescribeLoadBalancers(context.Background(), &elasticloadbalancingv2.DescribeLoadBalancersInput{}); err != nil && strings.Contains(err.Error(), "not yet implemented or pro feature") {
+		t.Skipf("LocalStack ELBv2 is not available in this edition: %v", err)
+	}
+
 	vpcID, subnetIDs := createTestVPCAndSubnets(t, ec2Client)
 
 	tests := []struct {

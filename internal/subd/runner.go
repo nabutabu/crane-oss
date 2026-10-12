@@ -28,12 +28,12 @@ func (r *Runner) Check() {
 	// Observe local state from collector
 	services, err := r.servicesCollector.Collect()
 	if err != nil {
-		log.Printf("Erroring collecting host information %w\n", err)
+		log.Printf("Erroring collecting host information %v\n", err)
 	}
 
 	pkgs, err := r.pkgsCollector.Collect()
 	if err != nil {
-		log.Printf("Erroring collecting host information %w\n", err)
+		log.Printf("Erroring collecting host information %v\n", err)
 	}
 
 	// make currState obj
