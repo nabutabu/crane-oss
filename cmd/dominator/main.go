@@ -4,39 +4,43 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"log"
 	"os"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/nabutabu/crane-oss/internal/config"
 	"github.com/nabutabu/crane-oss/internal/dominator"
 	"github.com/nabutabu/crane-oss/internal/hostcatalog/service"
 	"github.com/nabutabu/crane-oss/internal/hostcatalog/store"
+	"github.com/nabutabu/crane-oss/internal/logging"
 	"github.com/nabutabu/crane-oss/internal/version"
 	"github.com/spiffe/go-spiffe/v2/workloadapi"
 )
 
 func main() {
-	log.Printf("dominator %s", version.String())
-	host := getEnv("DB_HOST", "localhost")
-	port := getEnvInt("DB_PORT", 43544)
-	user := getEnv("DB_USER", "postgres")
-	password := getEnv("DB_PASSWORD", "mysecretpassword")
-	dbname := getEnv("DB_NAME", "crane")
+	logger := logging.New("dominator")
+	logger.Info("dominator", "version", version.String())
+	host := config.GetEnv("DB_HOST", "localhost")
+	port := config.GetEnvInt("DB_PORT", 43544)
+	user := config.GetEnv("DB_USER", "postgres")
+	password := config.GetEnv("DB_PASSWORD", "mysecretpassword")
+	dbname := config.GetEnv("DB_NAME", "crane")
 
 	ctx := context.Background()
 
 	source, err := workloadapi.NewX509Source(ctx)
 	if err != nil {
-		log.Fatalf("failed to create X509 source: %v", err)
+		logger.Error("failed to create X509 source", "error", err)
+		os.Exit(1)
 	}
 	defer source.Close()
 
 	svid, err := source.GetX509SVID()
 	if err != nil {
-		log.Fatalf("Couldnt get X509 %v", err)
+		logger.Error("Couldnt get X509", "error", err)
+		os.Exit(1)
 	}
 
-	log.Println("SPIFFE ID:", svid.ID.String())
+	logger.Info("SPIFFE ID", "spiffe_id", svid.ID.String())
 
 	// 2. Create the connection string
 	// The sslmode parameter is often set to 'disable' for local development.
@@ -44,7 +48,7 @@ func main() {
 		host, port, user, password, dbname)
 	db, err := sql.Open("pgx", psqlInfo)
 	if err != nil {
-		log.Println(err)
+		logger.Error("error", "err", err)
 	}
 	hostStore := store.NewPostgresHostStore(db)
 
@@ -52,29 +56,14 @@ func main() {
 
 	resolver, err := dominator.NewPolicyResolver("./policy/os.star")
 	if err != nil {
-		log.Fatal(err)
+		logger.Error("error", "err", err)
+		os.Exit(1)
 	}
 
 	server := dominator.NewServer(":44000", db, hostCatalog, resolver)
 
 	if err := server.Start(source); err != nil {
-		log.Fatal(err)
+		logger.Error("error", "err", err)
+		os.Exit(1)
 	}
-}
-
-func getEnv(key, defaultValue string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
-	}
-	return defaultValue
-}
-
-func getEnvInt(key string, defaultValue int) int {
-	if value := os.Getenv(key); value != "" {
-		var intVal int
-		if _, err := fmt.Sscanf(value, "%d", &intVal); err == nil {
-			return intVal
-		}
-	}
-	return defaultValue
 }

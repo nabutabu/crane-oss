@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"time"
@@ -18,9 +17,11 @@ import (
 	"github.com/nabutabu/crane-oss/internal/badhost"
 	"github.com/nabutabu/crane-oss/internal/badhost/checks"
 	"github.com/nabutabu/crane-oss/internal/badhost/problem"
+	intconfig "github.com/nabutabu/crane-oss/internal/config"
 	"github.com/nabutabu/crane-oss/internal/execute"
 	"github.com/nabutabu/crane-oss/internal/hostcatalog/service"
 	"github.com/nabutabu/crane-oss/internal/hostcatalog/store"
+	"github.com/nabutabu/crane-oss/internal/logging"
 	"github.com/nabutabu/crane-oss/internal/provider/awscompute"
 	"github.com/nabutabu/crane-oss/internal/version"
 )
@@ -67,32 +68,16 @@ func BuildChecks(enabled []string, deps checks.Dependencies) ([]checks.Check, er
 	return res, nil
 }
 
-func getEnv(key, defaultValue string) string {
-	if value, exists := os.LookupEnv(key); exists {
-		return value
-	}
-	return defaultValue
-}
-
-func getEnvInt(key string, defaultValue int) int {
-	if value, exists := os.LookupEnv(key); exists {
-		var intVal int
-		if _, err := fmt.Sscanf(value, "%d", &intVal); err == nil {
-			return intVal
-		}
-	}
-	return defaultValue
-}
-
 func main() {
-	log.Printf("crane-api %s", version.String())
+	logger := logging.New("crane-api")
+	logger.Info("crane-api", "version", version.String())
 	ctx := context.Background()
 
-	host := getEnv("DB_HOST", "localhost")
-	port := getEnvInt("DB_PORT", 5432)
-	user := getEnv("DB_USER", "postgres")
-	password := getEnv("DB_PASSWORD", "mysecretpassword")
-	dbname := getEnv("DB_NAME", "crane")
+	host := intconfig.GetEnv("DB_HOST", "localhost")
+	port := intconfig.GetEnvInt("DB_PORT", 5432)
+	user := intconfig.GetEnv("DB_USER", "postgres")
+	password := intconfig.GetEnv("DB_PASSWORD", "mysecretpassword")
+	dbname := intconfig.GetEnv("DB_NAME", "crane")
 
 	// 2. Create the connection string
 	// The sslmode parameter is often set to 'disable' for local development.
@@ -100,7 +85,7 @@ func main() {
 		host, port, user, password, dbname)
 	db, err := sql.Open("pgx", psqlInfo)
 	if err != nil {
-		log.Println(err)
+		logger.Info("error", "err", err)
 	}
 
 	actionStore := execute.NewPostgresActionStore(db)
@@ -112,7 +97,8 @@ func main() {
 		config.WithRegion("us-west-2"), // Optional: specify region here
 	)
 	if err != nil {
-		log.Fatalf("unable to load SDK config, %v", err)
+		logger.Error("unable to load SDK config", "error", err)
+		os.Exit(1)
 	}
 
 	ec2Client := ec2.NewFromConfig(cfg)
@@ -138,12 +124,12 @@ func main() {
 
 	bhd_config, err := LoadConfigFromFile(BHD_CONFIG_YAML_PATH)
 	if err != nil {
-		log.Println(err)
+		logger.Info("error", "err", err)
 	}
 
 	checks, err := BuildChecks(bhd_config.Checks, deps)
 	if err != nil {
-		log.Println(err)
+		logger.Info("error", "err", err)
 	}
 
 	bhd := badhost.New(hostCatalog, problemStore, checks, bhd_config)
@@ -162,7 +148,7 @@ func main() {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("Healthy, %s", r.URL.Path)
+		logger.Info("healthy", "path", r.URL.Path)
 		fmt.Fprintf(w, `{"status": "available"}`)
 	})
 
@@ -178,5 +164,8 @@ func main() {
 		fmt.Fprintf(w, `{"status": "available"}`)
 	})
 
-	log.Fatal(http.ListenAndServe(":43060", mux))
+	if err := http.ListenAndServe(":43060", mux); err != nil {
+		logger.Error("listen error", "error", err)
+		os.Exit(1)
+	}
 }

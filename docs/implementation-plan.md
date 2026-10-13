@@ -22,7 +22,7 @@ The merged plan retains the full Kubernetes integration surface:
 -   The Kubernetes node autoscaler detects unschedulable Pods, evaluates eligible node groups, and requests capacity through the Crane autoscaler adapter.
 -   Crane API is the single authoritative placement and policy decision-maker: it validates policy, reserves credits atomically, selects eligible zones, and reconciles desired capacity against actual instances.
 -   Dominator executes provisioning and host lifecycle as a zone-scoped fleet controller; the Host Catalog provides the durable cross-zone inventory.
--   Observability is built in from the start: structured logging (stdlib `log/slog`), metrics, tracing readiness, health checks, audit events, and a clear control-plane/data-plane signal boundary.
+-   Observability is built in from the start: structured logging (stdlib `log/slog`), OTLP traces and metrics, health checks, audit events, and a clear control-plane/data-plane signal boundary.
 
 **Do not fork Kubernetes or write a custom scheduler for the initial implementation.** Prefer the existing Cluster Autoscaler external gRPC cloud-provider interface. Keep the adapter boundary narrow so the platform can later support another autoscaler.
 
@@ -604,7 +604,7 @@ Merged from `docs/observability.md` into this plan as a first-class workstream, 
 
 ### 14.1 Principles
 
--   **Control plane (`crane-api`, `dominator`)** — full observability: structured logs, metrics, and an audit trail. The Host Catalog is the natural instrumentation chokepoint for fleet state mutations.
+-   **Control plane (`crane-api`, `dominator`)** — full observability: structured logs, OTLP traces and metrics, and an audit trail. The Host Catalog is the natural instrumentation chokepoint for fleet state mutations.
 -   **Data plane (`subd`)** — observable but bounded. subd runs root on tenant-/attacker-influenced hosts, so it:
     1.  emits structured logs locally to journald (it is a systemd unit on the host);
     2.  reports **outcome** through the heartbeat it already sends to Dominator so the control plane can produce fleet metrics;
@@ -640,7 +640,7 @@ All binaries migrate to stdlib `log/slog` (Go 1.25) with **no behavior change an
 
 ### 14.4 Metrics
 
-Expose a `/metrics` endpoint (Prometheus, with `expvar` as a fallback) on `crane-api`, `dominator`, and optionally the adapter. Two sets of signals:
+Emit OTLP traces and metrics via gRPC exporters (configurable via `OTEL_EXPORTER_OTLP_ENDPOINT`); expose a `/metrics` endpoint (Prometheus) where appropriate as a convenience surface on `crane-api`, `dominator`, and optionally the adapter. Two sets of signals:
 
 **Fleet and runtime health (from the observability assessment):**
 
@@ -666,7 +666,7 @@ Avoid high-cardinality labels such as Pod UID, request UUID, or arbitrary servic
 
 ### 14.5 Tracing
 
-Introduce context propagation across the problem → decision → action pipeline (currently correlated only by `host_id`). Carry `request_id`/trace context through capacity requests, provisioning operations, and remediation decisions. Full distributed tracing may be a later phase; the first milestone must at least thread request IDs consistently through logs.
+Introduce context propagation across the problem → decision → action pipeline (currently correlated only by `host_id`). Carry `request_id`/trace context through capacity requests, provisioning operations, and remediation decisions. Emit distributed traces via OTLP. Thread trace context (TraceContext/Baggage) across all control-plane boundaries and include `request_id` in logs for correlation.
 
 ### 14.6 Health checks and deployment hygiene
 
@@ -767,7 +767,7 @@ The phases merge the Kubernetes plan's phases (0–7), the architecture review's
 -   Document scale-down ownership and drain semantics.
 -   Confirm how node bootstrap receives cloud zone metadata and labels.
 -   Decide the placement authority model: Crane API owns policy; Dominator owns zone execution.
--   Pin observability defaults: `slog`-based structured logging, log level/format config, metrics backend choice.
+-   Pin observability defaults: `slog`-based structured logging, log level/format config, and OTLP (traces/metrics) as the mandated telemetry backend.
 
 **Exit criteria:**
 -   A design decision record answers each item above.
@@ -781,11 +781,11 @@ The phases merge the Kubernetes plan's phases (0–7), the architecture review's
 -   Shared `slog` logger setup in each `cmd/*/main.go` (`LOG_LEVEL`, `LOG_FORMAT`, `service` field).
 -   Thread the logger through constructors; replace hot-path `log` calls with typed fields.
 -   Fix logging safety and correctness: redact DSN/raw-body/RDS info, fix invalid format verbs, replace library `log.Fatal` with returned errors.
--   Run `gofmt -l`, `go vet ./...`, `go test ./...`; add all three to CI.
+-   Initialize OTLP telemetry (traces/metrics) in each control-plane binary via `internal/telemetry`; propagate trace context; Run `gofmt -l`, `go vet ./...`, `go test ./...`; add all three to CI.
 
 **Exit criteria:**
 -   Host creation, failure, and termination are representable accurately, including after controller restarts.
--   All binaries compile with structured, correlated, redaction-safe logging.
+-   All control-plane binaries compile with structured, correlated, redaction-safe logging and OTLP telemetry initialized (with no-op fallback when OTEL_EXPORTER_OTLP_ENDPOINT unset).
 
 ### Phase 2 — One zone end to end
 
@@ -1063,7 +1063,7 @@ Keep the cloud provider interface behind a narrow abstraction. Do not make core 
 9.  **Zone balancing:** Is balancing best-effort infrastructure policy, or must a pool maintain strict per-zone capacity targets?
 10. **Developer interface:** How should developers select approved pools — namespace defaults, a workload label, a sanctioned node selector, or a platform-generated workload template?
 11. **Dominator replication:** Are there multiple independent zone controllers, replicas of one controller (leader election), or both?
-12. **Metrics backend:** Prometheus, OpenTelemetry, or `expvar` for the first milestone, and where are metrics scraped from in containers?
+12. **Metrics backend:** OTLP (OpenTelemetry Protocol) for traces and metrics as the mandated backend; Prometheus `/metrics` as an optional compatibility surface, and where are metrics scraped from in containers?
 13. **Heartbeat reporting:** Is subd's heartbeat-outcome enrichment sufficient for fleet metrics, or is a separate trusted reporting path required?
 14. **Package enforcement scope:** What does "ensure only allowed packages and services exist" mean — allowlist, package-state reconciliation, immutable image, or combination?
 
@@ -1083,7 +1083,7 @@ The architecture is ready for a wider rollout when all of the following are true
 -   Failures, retries, restarts, and zone outages do not leak credits or create unmanaged hosts.
 -   Golden-image rollouts pin immutable versions, canary safely, and converge without drift.
 -   Developers can diagnose pending Pods and capacity denials from Kubernetes-facing status, conditions, and events.
--   All control-plane binaries emit structured, redaction-safe logs, expose liveness/readiness and metrics, embed version/commit, and pass `gofmt`/`go vet`/`go test` in CI.
+-   All control-plane binaries emit structured, redaction-safe logs, expose liveness/readiness, emit OTLP traces/metrics, and expose metrics endpoints as configured, embed version/commit, and pass `gofmt`/`go vet`/`go test` in CI.
 -   Capacity changes, drains, terminations, image rollouts, quota denials, and zone selections are auditable end to end.
 -   subd is observable via local journald logs and heartbeat outcome reporting without streaming telemetry or open listeners.
 -   The Crane API team has auditable operational controls, dashboards, alerts, and runbooks for capacity, zones, credit accounting, and rollouts.

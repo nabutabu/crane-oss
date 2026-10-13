@@ -3,10 +3,10 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"log"
 	"os"
 	"time"
 
+	"github.com/nabutabu/crane-oss/internal/logging"
 	"github.com/nabutabu/crane-oss/internal/subd"
 	"github.com/nabutabu/crane-oss/internal/version"
 	"github.com/spiffe/go-spiffe/v2/workloadapi"
@@ -22,10 +22,11 @@ type Configuration struct {
 	Token        string
 }
 
-func LoadConfig() Configuration {
+func LoadConfig(logger *logging.Logger) Configuration {
 	file, err := os.Open(APP_SETTINGS_FILE)
 	if err != nil {
-		log.Fatal("Error opening config file:", err)
+		logger.Error("Error opening config file", "error", err)
+		os.Exit(1)
 	}
 	defer file.Close()
 
@@ -33,20 +34,23 @@ func LoadConfig() Configuration {
 	configuration := Configuration{}
 	err = decoder.Decode(&configuration)
 	if err != nil {
-		log.Fatal("Error decoding config file:", err)
+		logger.Error("Error decoding config file", "error", err)
+		os.Exit(1)
 	}
 
 	return configuration
 }
 
 func main() {
-	log.Printf("subd %s", version.String())
-	config := LoadConfig()
+	logger := logging.New("subd")
+	logger.Info("subd", "version", version.String())
+	config := LoadConfig(logger)
 	ctx := context.Background()
 
 	source, err := workloadapi.NewX509Source(ctx)
 	if err != nil {
-		log.Fatalf("failed to create X509Source: %v", err)
+		logger.Error("failed to create X509Source", "error", err)
+		os.Exit(1)
 	}
 	defer source.Close()
 
