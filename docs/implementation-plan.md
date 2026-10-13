@@ -1,37 +1,18 @@
-# Crane + Kubernetes: Merged Implementation Plan
+# Crane + Kubernetes: Implementation Plan
 
-**Status:** Proposed architecture and phased implementation plan
-**Scope:** Kubernetes-first developer experience, capacity provisioning, zone placement, credit enforcement, fleet operations, and control-plane/data-plane observability
-**Primary implementation language:** Go
-**Infrastructure target for the first milestone:** AWS EC2
-**Important boundary:** Application teams use Kubernetes APIs only. The Crane API team owns Crane services, provider integration, capacity management, operational tooling, and observability.
-**Source documents:** Merged from `docs/Crane + Kubernetes: implementation pla.md` and `docs/observability.md`, restructured around the reference architecture in `docs/architecture-review.md`.
-
-This plan merges two artifacts into one: the Kubernetes capacity-platform implementation plan, and the observability assessment + logging plan. All phases below assume the component structure and ownership shown in the reference architecture diagram (section 2). Observability is not an appendix; it is a horizontal requirement threaded through every phase.
-
------------------------------------------------------------------------
+**Status:** Draft | **Language:** Go | **Target:** AWS EC2 (first milestone)
 
 ## 1. Executive summary
 
-Crane should be the infrastructure control plane underneath Kubernetes---not a second developer-facing platform. Developers deploy workloads using standard Kubernetes resources. Kubernetes scheduling and node autoscaling determine when additional worker-node capacity is needed. Crane's control plane (Crane API, Dominator, Host Catalog) authorizes, reserves, provisions, inventories, and retires the underlying hosts, while the host agent (Subd) enforces host-level state.
+Crane is the infrastructure control plane underneath Kubernetes—not a second developer-facing platform. Developers deploy workloads using standard Kubernetes resources. The Kubernetes scheduler and Cluster Autoscaler determine when additional capacity is needed. For node autoscaling, Crane API validates the autoscaler-selected, cluster-scoped node group and atomically reserves credits; it never redirects a request to another cluster or zone. A layer-zero Zone Bootstrap Controller creates new zone clusters, Dominator executes zone-scoped host lifecycle operations, Subd enforces host-local state, and the Host Catalog provides durable cross-zone inventory. Observability is treated as a horizontal requirement.
 
-The merged plan retains the full Kubernetes integration surface:
-
--   Standard `Deployment`, `StatefulSet`, `Job`, `Pod`, `ResourceQuota`, affinity, and topology-spread APIs remain the default developer interface.
--   A platform-owned `CraneNodePool` custom resource describes eligible capacity profiles and zone policy.
--   The Kubernetes node autoscaler detects unschedulable Pods, evaluates eligible node groups, and requests capacity through the Crane autoscaler adapter.
--   Crane API is the single authoritative placement and policy decision-maker: it validates policy, reserves credits atomically, selects eligible zones, and reconciles desired capacity against actual instances.
--   Dominator executes provisioning and host lifecycle as a zone-scoped fleet controller; the Host Catalog provides the durable cross-zone inventory.
--   Observability is built in from the start: structured logging (stdlib `log/slog`), OTLP traces and metrics, health checks, audit events, and a clear control-plane/data-plane signal boundary.
-
-**Do not fork Kubernetes or write a custom scheduler for the initial implementation.** Prefer the existing Cluster Autoscaler external gRPC cloud-provider interface. Keep the adapter boundary narrow so the platform can later support another autoscaler.
+Application teams must never call Crane APIs directly. All capacity changes flow through the Cluster Autoscaler external gRPC provider adapter.
 
 ## 2. Reference architecture
 
-The following diagram from `architecture-review.md` is the canonical component structure this plan implements. Every phase, ticket, and ownership decision in this document maps back to one of these components.
+The component structure below is canonical. Every decision maps back to these components.
 
 ```mermaid
-
 flowchart TB
     REQ["Functional Requirements<br/>• Bring up a zone from a developer machine<br/>• Ensure host homogeneity<br/>• Control services, resource usage, and network state<br/>• Detect and replace faulty machines<br/>• Automate OS upgrades<br/>• Ensure service-to-service mTLS<br/><br/>Non-functional Requirements<br/>• Match requested resource quantities<br/>• Minimize host provisioning latency"]
 
@@ -44,7 +25,7 @@ flowchart TB
             S4["Perform kubelet drain when<br/>unhealthy or under maintenance"]
             S5["Bring host back using uncordon"]
 
-            STATE["Host Expected State<br/>• OS version<br/>• Container runtime version<br/>• Kubernetes versions<br/>• Observability services<br/>• mTLS version / packages / identity<br/>• File system packages and installed services"]
+            STATE["Host Expected State"]
         end
     end
 
@@ -52,23 +33,26 @@ flowchart TB
         direction TB
         subgraph DOM["Dominator"]
             D1["Maintain host list for its zone"]
-            D2["Notify Subd of expected-state changes<br/>for maintenance or upgrades"]
-            D3["Canary-roll expected-state changes<br/>before rolling out to all hosts"]
-            D4["Ensure new hosts match<br/>the golden OS image state"]
-            D5["Expose endpoint for Crane API<br/>to change expected state"]
+            D2["Notify Subd of expected-state changes"]
+            D3["Canary-roll expected-state changes"]
+            D4["Ensure new hosts match golden OS image"]
+            D5["Expose endpoint for Crane API"]
             D6["CRUD operations for hosts"]
         end
 
-        CATALOG(("Host Catalog<br/>host_id<br/>cloud_provider<br/>cloud_provider_host_id<br/>crane_zone<br/>provider_zone<br/>created_at<br/>updated_at<br/>expected_state_sha<br/>createdwith_golden_ami_sha<br/><br/>host_resources_available<br/>• RAM<br/>• CPU<br/>• Disk"))
+        CATALOG(("Host Catalog<br/>Durable inventory"))
 
-        API["Crane API<br/>• Manages all Dominator instances<br/>• CRUD for zones<br/>• Performs zone bring-up<br/>• Requests hosts in a region based on demand<br/>  and current available resources<br/>• Exposes a gRPC Kubernetes adapter"]
+        API["Crane API<br/>• Manages Dominator instances<br/>• Zone/pool policy<br/>• Placement & reservations<br/>• Exposes gRPC K8s adapter"]
+        BOOT["Zone Bootstrap Controller<br/>• Create cluster control plane<br/>• Install Cilium and Dominator<br/>• Validate and hand off zone"]
     end
 
     REQ -. defines requirements .-> SUBD
     DOM <-->|mTLS| SUBD
-    DOM -->|Read and update host records<br/>across zones| CATALOG
-    API <-->|Manage multiple Dominator instances<br/>across all zones| DOM
-    API -->|Zone bring-up and host provisioning| DOM
+    DOM -->|Read and update host records| CATALOG
+    API <-->|Manage across zones| DOM
+    API -->|Durable host lifecycle operations| DOM
+    API -->|Durable CreateZone operation| BOOT
+    BOOT -->|Bootstrap then hand off| DOM
 
     classDef requirements fill:#fff8e7,stroke:#a47b61,color:#493629
     classDef agent fill:#edf5ff,stroke:#668db3,color:#18334d
@@ -80,1020 +64,243 @@ flowchart TB
     class S1,S2,S3,S4,S5,STATE agent
     class D1,D2,D3,D4,D5,D6 controller
     class CATALOG database
-    class API api
-
+    class API,BOOT api
 ```
 
-Three structural consequences of this diagram shape everything in this merged plan:
+**Structural consequences:**
 
-1.  **Crane API is the single placement and policy authority.** It does not provision hosts directly; it decides policy, selects zones, reserves capacity, and coordinates Dominator instances. This resolves the review's P0 question ("who owns the global capacity decision?") without building a fragile central orchestrator: global policy stays logically centralized in Crane API, while durable operations, idempotent controllers, and zone-level execution in Dominator make the system recoverable.
-2.  **Dominator is zone-scoped, Subd is host-scoped.** Capacity decisions and fleet placement live in the control plane; host enforcement and repair live on the host. The data plane (Subd) is observable but does not stream telemetry to the control plane.
-3.  **The Host Catalog is a durable inventory, not a cache.** It records lifecycle state, versioned desired/observed state, allocatable-minus-reserved resources, and durable operations so the fleet can be reconstructed from durable state rather than by querying every Subd.
+1. **Crane API is the single policy and capacity authority.** The per-cluster autoscaler selects a node group. Crane validates that selection and global policy; it does not redirect the request to another cluster or zone. Dominator executes zone-scoped work.
+2. **Dominator is zone-scoped; Subd is host-scoped.** Control plane owns decisions, data plane enforces state.
+3. **Host Catalog is durable inventory, not a cache.** Fleet state is reconstructible from durable records.
+4. **Per-zone clusters; layer zero is outside the zone.** Each zone is its own Kubernetes cluster with its own control plane/API endpoint. Identity and control-plane bootstrap (SPIRE, Crane's Postgres, `crane-api`, and the Zone Bootstrap Controller) live in layer zero and are not run on capacity being provisioned (see §5.1).
 
 ## 3. Component responsibilities and ownership
 
 ### 3.1 Developer experience
 
-A product team should be able to:
+Developers use standard Kubernetes (`Deployment`, `StatefulSet`, `Job`, `Pod`, `ResourceQuota`, affinity, topology spread, taints/tolerations). They must not call Crane APIs, choose instance IDs, or manage host lifecycle.
 
-1.  Deploy a service through Kubernetes.
-2.  Set Pod CPU and memory requests and limits.
-3.  Set replicas and, when appropriate, use a HorizontalPodAutoscaler.
-4.  Express placement needs using standard Kubernetes topology spread, affinity, taints/tolerations, and storage constraints.
-5.  Select an approved capacity pool only when a workload requires a particular class of hardware.
-6.  Inspect standard Kubernetes events, Pod status, and platform-provided capacity status without accessing Crane APIs or understanding Crane internals.
-
-A developer should **not** need to:
-
--   Call Crane APIs directly.
--   Choose EC2 instance IDs or manually request hosts.
--   Translate internal Crane zone IDs into AWS Availability Zone names.
--   Implement host lifecycle, retry, or cloud reconciliation logic.
--   Understand credit reservation internals.
-
-### 3.2 Team ownership
+### 3.2 Key ownership
 
 | Responsibility | Owner |
-| --- | --- |
-| Declare application CPU/memory requests | Application team |
-| Decide where a Pod can be scheduled | Kubernetes scheduler |
-| Decide when additional nodes are needed | Kubernetes node autoscaler |
-| Choose target zone / required capacity / placement policy | Crane API (placement & policy) |
-| Express approved pool and topology policy | Platform API / policy controller |
-| Enforce team capacity credits | Crane API (authoritative reservation transaction) |
-| Resolve Crane zones to AWS zones | Crane API / zone inventory |
-| Provision, register, repair, terminate zone hosts | Dominator |
-| Read and update cross-zone host inventory | Host Catalog |
-| Enforce expected host state, drains, uncordon | Subd |
-| Populate accurate node topology labels | Cloud integration / node bootstrap, validated by Crane |
-| Reconcile desired and actual capacity | Crane API orchestrates; Dominator executes |
-| Protects against workload replica spread violations | Kubernetes scheduler |
-| Structured logging, metrics, audit events | All components, respecting the control/data plane boundary |
+|---|---|
+| Workload scheduling | Kubernetes scheduler |
+| When nodes needed | Kubernetes node autoscaler |
+| Validate autoscaler-selected group, global policy, credit enforcement | Crane API |
+| Create and validate new zone clusters | Zone Bootstrap Controller on layer-zero/platform capacity |
+| Provision/repair/terminate (zone) | Dominator |
+| Cross-zone inventory | Host Catalog |
+| Kubernetes cordon, eviction, drain completion, uncordon | Dominator |
+| Host-local preparation and expected-state enforcement | Subd |
 
-### 3.3 Crane API team ownership (observability included)
+## 4. Architecture decisions (core)
 
-The Crane API team owns:
+- **A.** Kubernetes owns workload scaling (HPA + autoscaler).
+- **B.** Crane owns machine capacity; autoscaler adapter requests capacity changes.
+- **C.** Use standard Kubernetes topology primitives.
+- **D.** CRDs describe policy; autoscaler/provider does imperative scale.
+- **E.** Credits enforced atomically at Crane API boundary. Credits track only machines Crane has allocated (pending and provisioned nodes) against the team budget; observed workload allocation is informational and does not itself draw down credits.
+- **F.** Each Cluster Autoscaler manages exactly one Kubernetes cluster and may select only node groups with that `ClusterID`. Crane honors the selected group. There is no cross-cluster or cross-zone fallback within a node-capacity request.
+- **G.** Capacity = reserved (not raw free) resources.
+- **H.** Golden images/rollouts are version-pinned (not "latest").
+- **I.** Capacity is a state progression (`requested → provisioning → booting → registering → converging → ready → draining → terminating → terminated/failed`). Registration alone is not readiness.
+- **J.** Control plane gets full observability; Subd reports outcome via heartbeat only (no streaming telemetry).
 
--   Crane API, persistence, credit accounting, capacity reconciliation, and cloud-provider implementation.
--   Canonical zone inventory and provider-zone resolution.
--   Node-pool capacity templates and validation.
--   Placement decision-making (zone eligibility, ranking, reservation).
--   The adapter that integrates the chosen Kubernetes node autoscaler with Crane.
--   The Host Catalog schema, lifecycle state machine, and durable operations.
--   Platform CRD schemas and controller implementation.
--   Operational dashboards, audit records, failure recovery, compatibility testing, alerting, and the observability baseline across crane-api, dominator, and subd.
+## 5. Kubernetes integration
 
-## 4. Architecture decisions to make explicit
+**Prefer Cluster Autoscaler external gRPC provider.** The CA external gRPC `IncreaseSize`/`DecreaseTargetSize` calls do **not** include idempotency keys. The adapter therefore must not attempt to infer a stable "autoscaler decision" key from `(group, delta)`. It converts each received RPC into a revision-checked target mutation. A handler-scoped request UUID deduplicates adapter→Crane retries for that RPC; target refresh and reconciliation recover when the adapter dies before returning a response. Pending-pod aggregation remains in the autoscaler; the adapter only translates decisions.
 
--   **Decision A — Kubernetes owns workload scaling.** Use the Kubernetes scheduler and an established node autoscaler. HPA adjusts replicas; the node autoscaler adjusts nodes. Crane receives node-capacity intents and never makes independent workload scheduling decisions.
--   **Decision B — Crane owns machine capacity.** Kubernetes does not create EC2 instances directly. The autoscaler adapter asks Crane to change node-group capacity.
--   **Decision C — Standard Kubernetes topology primitives.** Developers use standard topology labels and spread constraints. Do not invent a new workload-level zone API unless standard Kubernetes placement features cannot express a real requirement.
--   **Decision D — CRDs describe policy, not imperative work.** `CraneNodePool` declares desired policy; a controller validates and reconciles it. The autoscaler uses a provider interface for imperative scale up/down.
--   **Decision E — Credits are enforced at the Crane API boundary.** CRD validation improves feedback but is not the security or accounting boundary. Every capacity change is authorized and checked atomically by Crane API.
--   **Decision F — One authoritative placement decision-maker.** Global policy and capacity decisions are centralized logically in Crane API; Dominator only executes for its zone. The catalog distinguishes multiple independent zone controllers from replicas of one controller (the latter need leader election or partitioning).
--   **Decision G — Capacity is reserved capacity, not free resources.** Placement decisions use allocatable resources minus committed reservations, not raw observed utilization. The catalog's stored availability is a snapshot, not an atomic reservation.
--   **Decision H — Golden-image rollouts are versioned, not "latest".** Each rollout pins an immutable image ID/digest and a desired-state version. New hosts use the version assigned to their zone's rollout policy.
--   **Decision I — Capacity is a state progression.** Exposed stages run requested → provisioning → registering → ready → draining → terminated/failed, not a binary available/unavailable value.
--   **Decision J — Observability respects the trust boundary.** Control plane (crane-api, dominator) gets full structured logs, metrics, and audit trail. Data plane (subd) emits structured logs to local journald and reports outcome through its heartbeat; it keeps no open listener and streams no telemetry.
+Adapter responsibilities: expose only groups belonging to its Kubernetes cluster; discover groups with identity/zone/class/template revision; report target/actual; translate increase/decrease by group ID; delete explicitly named nodes per contract; return the selected group's simulated node template; report instance state with group ownership; and map provider errors safely. The adapter must pass the autoscaler-selected `NodeGroupID` through to Crane.
 
-## 5. Kubernetes integration strategy
+### 5.1 Layer zero and cluster ownership
 
-### 5.1 Prefer the Cluster Autoscaler external provider interface
+Layer zero is identity plus the control-plane bootstrap, brought up **before any zone exists**:
 
-For the initial implementation, evaluate the upstream Cluster Autoscaler external gRPC cloud-provider interface. Implement the contract for the exact Cluster Autoscaler release selected by the platform team. Do not copy an interface definition from a different release and assume wire or semantic compatibility.
+1. **SPIRE server + its PostgreSQL (RDS)** — provisioned manually from a developer's machine per [`docs/spire-server-ec2-setup.md`](spire-server-ec2-setup.md). No cloud hosts exist beforehand. This remains the one manual step whenever no infrastructure exists.
+2. **The first zone** — a Kubernetes cluster built with kubeadm that hosts `crane-api` and the Dominator that owns that zone. The first zone is always the **platform team's cluster**.
+3. Once at least one `crane-api` is running, **subsequent zones are brought up by calling the Crane API**. A Zone Bootstrap Controller running on protected layer-zero/platform capacity executes the operation; the destination Dominator cannot bootstrap the cluster in which it will run.
 
-The adapter should implement the operations needed to:
+Layer-zero components (SPIRE, Postgres, `crane-api`) must not run on capacity being provisioned, preserving an independent bootstrap path (cf. Uber's Crane, which keeps layer-zero dependencies outside the zone being assembled).
 
--   Discover and list node groups.
--   Report each group's target size and actual nodes.
--   Increase target size.
--   Decrease target size or delete selected nodes according to the interface contract.
--   Return a simulated/template node with correct CPU, memory, labels, taints, zone, and other scheduling-relevant metadata.
--   Report instance/node identity and lifecycle state.
--   Handle provider errors in a way the autoscaler can interpret safely.
+Each zone is a **separate Kubernetes cluster**; `crane-api` tracks one cluster record per zone.
 
-Keep the adapter as a separately deployable service or tightly isolated package. It should be replaceable without redesigning Crane's capacity API.
+The Zone Bootstrap Controller owns a durable `CreateZone` state machine:
 
-**Version gate:** Before coding, pin the Kubernetes, Cluster Autoscaler, external provider protocol, and CRD API versions. Add a compatibility test against the exact upstream release. The external-provider API may have release-specific behavior; treat the selected upstream interface as a contract, not as generic pseudocode.
-
-### 5.2 Why not start with a custom operator that watches Pods?
-
-A Pod-watching operator would need to reproduce node scheduling simulation, Pod constraints, node affinity, taints, topology rules, storage constraints, and scale-down safety. Use the node autoscaler for **capacity decisions**, a custom Kubernetes controller for **configuration and policy**, and Crane API for **placement, host lifecycle, and credit enforcement**.
-
-### 5.3 Alternative: Cluster API
-
-Cluster API is valid if the longer-term goal includes creating and upgrading entire clusters. For the first milestone, choose either Cluster API or the external Cluster Autoscaler provider, not both.
-
-## 6. API and data model
-
-These are proposed models, not existing repository types. Adapt naming and storage to current repository conventions. The capacity models below live in Crane API; the Host Catalog record lives in the shared inventory.
-
-### 6.1 Canonical zones
-
-Crane should maintain canonical zone IDs scoped to a provider account and region. Do not assume a human-readable AWS zone suffix maps to the same physical zone across different AWS accounts.
-
-``` go
-type Zone struct {
-    ID             string // e.g. "zone-a"
-    Provider       string // e.g. "aws"
-    AccountID      string
-    Region         string // e.g. "us-west-2"
-    ProviderZoneID string // e.g. "us-west-2a", account-scoped
-    Enabled        bool
-    Status         ZoneStatus
-}
-
-type ZoneStatus string
-
-const (
-    ZoneReady       ZoneStatus = "Ready"
-    ZoneUnavailable ZoneStatus = "Unavailable"
-    ZoneDraining    ZoneStatus = "Draining"
-)
+```text
+Requested
+→ InfrastructureProvisioning
+→ ControlPlaneInitializing
+→ NetworkInstalling
+→ DominatorInstalling
+→ Validating
+→ Ready
+→ Failed
 ```
 
-Recommended persistence constraints:
-
--   Unique `(provider, account_id, region, provider_zone_id)`.
--   Stable canonical `id` within Crane's namespace.
--   Store discovery time and last successful validation time.
--   Do not delete a zone record merely because a discovery call temporarily fails.
--   Mark a zone unavailable when it cannot accept new capacity; existing instances may still be running.
--   Treat zone status and instance-type availability as separate facts.
-
-### 6.2 Host profiles / instance offerings
-
-The availability of a host type varies by region and zone. Keep the generic profile separate from provider-specific offerings.
-
-``` go
-type HostProfile struct {
-    Name            string // general-purpose, compute-optimized, memory-optimized
-    VCPU            int
-    MemoryMiB       int64
-    Architecture    string
-    GPUCount        int
-    RequiredLabels  map[string]string
-    Taints          []Taint
-}
-
-type ZoneOffering struct {
-    ProfileName     string
-    ZoneID          string
-    ProviderType    string // e.g. an EC2 instance type
-    Available       bool
-    CapacityStatus  string
-}
-```
-
-A pool template must use the resources and labels Kubernetes can actually observe. Account for allocatable resources rather than reporting all physical CPU and memory as schedulable application capacity.
-
-### 6.3 Capacity pool model
-
-``` go
-type NodePool struct {
-    ID              string
-    ClusterID       string
-    Name            string
-    TeamID          string
-    AllowedProfiles []string
-    AllowedZoneIDs  []string
-    MinNodes        int
-    MaxNodes        int
-    DesiredNodes    int
-    Labels          map[string]string
-    Taints          []Taint
-    Enabled         bool
-}
-```
-
-Use `TeamID` as a trusted, platform-resolved identity, not a field the requesting application can freely spoof. Make explicit whether a pool is team-dedicated or shared.
-
-### 6.4 Capacity request model
-
-The request model should distinguish the desired target from the operations used to reconcile it.
-
-``` go
-type CapacityRequest struct {
-    ID             string
-    IdempotencyKey string
-    ClusterID      string
-    NodePoolID     string
-    DesiredNodes   int
-    Reason         string
-    CreatedAt      time.Time
-}
-
-type CapacityStatus struct {
-    RequestID       string
-    ObservedNodes   int
-    TargetNodes     int
-    Phase           string // Pending, Provisioning, Ready, Failed, Deleting
-    Conditions      []Condition
-    LastError       string
-    UpdatedAt       time.Time
-}
-```
-
-The adapter should usually set a node group's target size. Crane then reconciles actual instances toward that target. Avoid treating each autoscaler retry as a brand-new independent host-creation command, and aggregate pending demand (e.g. ten pending Pods → two hosts, not ten requests) before placing.
-
-### 6.5 Credits and reservations
-
-Prefer an explicit ledger over a single mutable `credits_remaining` number.
-
-``` go
-type TeamBudget struct {
-    TeamID            string
-    MaxVCPU            int
-    MaxMemoryMiB       int64
-    MaxNodes           int
-    MaxHourlyCostUnits int64 // optional, if cost policy is needed
-}
-
-type CreditReservation struct {
-    ID              string
-    TeamID          string
-    CapacityRequestID string
-    NodePoolID      string
-    VCPU            int
-    MemoryMiB       int64
-    NodeCount       int
-    State           string // Reserved, Committed, Released, Failed
-    CreatedAt       time.Time
-}
-```
-
-Use a database transaction or equivalent concurrency-safe mechanism to verify the budget and create a reservation atomically. Enforce uniqueness for the request/idempotency key. Reconcile reservation state when provisioning succeeds, fails, is cancelled, or a node is removed.
-
-Decide what a credit means before implementation:
-
--   **Capacity entitlement:** maximum simultaneous provisioned/reserved vCPU, memory, and/or node count.
--   **Consumption budget:** time-based cost such as instance-hours.
--   **Both:** capacity entitlement for admission control plus metering for chargeback.
-
-Do not conflate these units.
-
-### 6.6 Host Catalog inventory record
-
-The Host Catalog is a durable control-plane inventory, not just a metadata table. A host record includes:
-
-| Field | Purpose |
-| --- | --- |
-| `host_id` | Stable Crane-generated identity |
-| `provider`, `provider_host_id` | Cloud resource identity |
-| `crane_zone`, `provider_zone` | Logical placement and physical location |
-| `lifecycle_state` | Requested, provisioning, registering, ready, draining, terminating, terminated, failed |
-| `health_state` | Healthy, degraded, unhealthy, unknown |
-| `desired_state_version` | Version of the configuration assigned to the host |
-| `observed_state_version` | Version last successfully applied by Subd |
-| `allocatable_resources` | Resources Kubernetes can schedule |
-| `reserved_resources` | Resources already committed to workloads |
-| `last_heartbeat_at` | Freshness of host observations |
-| `operation_id` | Current provisioning, upgrade, or termination operation |
-
-Existing `expectedstate_sha` / `createdwith_goldenos_sha` fields supplement, not replace, explicit version and lifecycle metadata. Cloud-provider observations, Dominator's desired operations, and Subd's host reports are reconciled into this inventory using idempotent operations and periodic repair. A missed heartbeat is a freshness signal, not proof a host is dead.
-
-### 6.7 Capacity states
-
-Expose capacity as a progression, not a binary value:
-
--   `requested` — the control plane accepted the demand.
--   `provisioning` — the cloud resource is being created.
--   `registering` — the host exists but isn't yet ready.
--   `ready` — the host has joined Kubernetes and passed readiness checks.
--   `draining` — the host is leaving service.
--   `terminated` or `failed` — completed or requires recovery.
-
-A VM existing in the cloud does not mean Kubernetes can schedule onto it.
-
-## 7. Proposed CRDs
-
-Start with one primary CRD: `CraneNodePool`. Add `CraneTeamQuota` only if the organization needs Kubernetes-visible quota declarations or review workflows.
-
-### 7.1 `CraneNodePool`
-
-``` yaml
-apiVersion: platform.crane.io/v1alpha1
-kind: CraneNodePool
-metadata:
-  name: payments-general
-  namespace: platform-system
-spec:
-  clusterRef: production-us-west
-  ownerTeam: payments
-  profiles:
-    - general-purpose
-    - compute-optimized
-  placement:
-    region: us-west-2
-    zones:
-      - zone-a
-      - zone-b
-      - zone-c
-    strategy: balanced
-  capacity:
-    minNodes: 0
-    maxNodes: 20
-  scheduling:
-    labels:
-      platform.crane.io/pool: payments-general
-    taints: []
-  credits:
-    budgetRef: payments-production
-status:
-  observedGeneration: 1
-  conditions:
-    - type: Valid
-      status: "True"
-      reason: PolicyValidated
-```
-
-Design notes:
-
--   Put these objects in a platform-controlled namespace or a cluster-scoped API depending on the authorization model.
--   Application teams must not be able to grant themselves new profiles, zones, quotas, or larger limits.
--   `status` is controller-written and reports observed conditions; it is not user input.
--   Use a structural OpenAPI schema, defaults, CEL validation where appropriate, and conversion webhooks only if versioning requires them.
--   Avoid accepting arbitrary provider-specific instance IDs in this CRD.
-
-### 7.2 Optional `CraneTeamQuota`
-
-``` yaml
-apiVersion: platform.crane.io/v1alpha1
-kind: CraneTeamQuota
-metadata:
-  name: payments-production
-  namespace: platform-system
-spec:
-  team: payments
-  maxNodes: 20
-  maxVCPU: 64
-  maxMemoryGiB: 256
-  allowedProfiles:
-    - general-purpose
-    - compute-optimized
-  allowedZones:
-    - zone-a
-    - zone-b
-    - zone-c
-```
-
-Do not permit application teams to create or modify their own authoritative quota object. Use RBAC and admission policy to restrict write access to platform operators. Crane API must independently enforce the same budget.
-
-### 7.3 Avoid a service-name-only authorization model
-
-Kubernetes service names are not globally unique and can be spoofed across namespaces if authorization is poorly designed. Resolve identity from trusted metadata: a platform-managed team registry, namespace ownership, workload identity, or an approved pool binding. A workload should not gain a larger infrastructure budget merely by setting `metadata.name: high-budget-service`.
-
-## 8. Zone resolution and placement
-
-### 8.1 Source of truth
-
-Crane API owns the mapping from canonical zone IDs to provider-specific zones. The Kubernetes integration publishes each node group's real zone, region, and capabilities.
-
-Use standard labels on actual Nodes:
-
--   `topology.kubernetes.io/region`
--   `topology.kubernetes.io/zone`
--   `kubernetes.io/hostname`
--   A platform label such as `platform.crane.io/node-pool`
-
-Do not use the internal canonical zone ID as a substitute for the standard zone label.
-
-### 8.2 Node-pool and zone-group relationship
-
-A logical pool may permit multiple zones, but the autoscaler may require distinct underlying node groups per zone or capacity class.
-
-``` text
-CraneNodePool: general-purpose-ha
-  |
-  +-- autoscaler group: general-purpose-zone-a
-  |       +-- Crane zone-a -> provider zone us-west-2a
-  |
-  +-- autoscaler group: general-purpose-zone-b
-  |       +-- Crane zone-b -> provider zone us-west-2b
-  |
-  +-- autoscaler group: general-purpose-zone-c
-          +-- Crane zone-c -> provider zone us-west-2c
-```
-
-Each underlying group must have a correct node template. A group provisionable only in zone A must not advertise a template in zone B.
-
-### 8.3 Placement strategies
-
-Support a small, explicit set of policies:
-
--   `Any`: provision in any permitted, eligible zone.
--   `Balanced`: distribute capacity across eligible zones where the autoscaler/provider integration supports this safely.
--   `Pinned`: use a single permitted zone, only when a real workload or infrastructure dependency requires it.
-
-Kubernetes Pod topology spread is the mechanism for replica distribution; infrastructure balancing is a separate policy. Do not promise perfect balance if the autoscaler cannot guarantee it.
-
-### 8.4 Pod placement
-
-Use standard Kubernetes primitives: `topologySpreadConstraints`, `podAntiAffinity`, `nodeAffinity`/`nodeSelector`, taints and tolerations, and storage topology/CSI behavior. Strict topology rules can leave Pods pending if a zone is unavailable; document that tradeoff for developers.
-
-### 8.5 Zone failure and drain behavior
-
-When a zone becomes unavailable:
-
-1.  Mark it in Crane's inventory as unavailable for new provisioning.
-2.  Stop offering it as a scale-up destination.
-3.  Do not automatically terminate healthy existing nodes just because discovery temporarily failed.
-4.  Surface the condition to the platform and autoscaler.
-5.  Allow Kubernetes to reschedule workloads only where their placement constraints permit.
-6.  Keep replacement capacity within quota and eligible zones.
-7.  If a pool can no longer satisfy its policy, expose an explicit degraded condition rather than silently weakening a strict placement rule.
-
-## 9. Scale-up end-to-end flow
-
-1.  A team applies or updates a standard Kubernetes workload.
-2.  The scheduler tries to place Pods using resource requests, affinity, taints, topology spread, storage constraints, and current node availability.
-3.  Pods that cannot be scheduled remain pending with scheduler events.
-4.  The node autoscaler simulates eligible node-group templates to determine which group could accommodate the Pods, **aggregating** pending demand so a burst does not produce one request per Pod (bin packing, per-host allocatable resources, workload constraints, configurable buffer).
-5.  It selects a compatible group according to its strategy and configured limits.
-6.  The adapter receives the desired node-group size.
-7.  Crane API validates:
-    -   Cluster and pool are registered and enabled.
-    -   The group/profile/zone combination is valid.
-    -   The team has permission to use the pool.
-    -   The target remains within pool min/max and team budgets.
-    -   The selected instance type is available in the zone.
-    -   Capacity and quota reservations are safe under concurrent requests.
-8.  Crane API **atomically reserves capacity**, records the new desired target, and creates a durable provisioning operation with an idempotency key.
-9.  Crane API performs zone selection (filter zones violating constraints or capacity/limits, rank by headroom/provisioning latency/cost/fault-domain distribution, reserve required capacity) and dispatches the operation to the owning Dominator.
-10. Dominator provisions, registers, and bootstraps the instances through the cloud-provider abstraction and tracks in-flight operations.
-11. Hosts reconcile their expected state (Subd enrolls, applies versioned expected state, passes health checks) and register as Kubernetes Nodes with correct topology and pool labels.
-12. The autoscaler observes the new nodes; Kubernetes schedules the Pods.
-13. Crane records status, reconciles reservations against actual inventory, and emits audit events, metrics, and Kubernetes-visible conditions.
-
-A scale-up request is asynchronous: "request accepted" is a valid API response; host readiness comes later. Define clear timeouts, retry behavior, and observable states.
-
-## 10. Scale-down end-to-end flow
-
-Scale-down is more conservative than scale-up:
-
-1.  Workloads scale down or move, leaving nodes underutilized (assessed over sustained demand with cooldowns/hysteresis).
-2.  The autoscaler determines whether a node can be removed without violating Pod disruption budgets, local storage constraints, or minimum zone capacity.
-3.  The autoscaler requests a target-size reduction or deletion through the adapter.
-4.  Crane validates that the node belongs to a managed group and that deletion is allowed.
-5.  Dominator marks hosts unschedulable and drains them through Kubernetes; Subd executes the drain.
-6.  Confirm eviction and workload rescheduling before taking further action. If a drain cannot complete, cancel or defer termination rather than forcibly removing the host.
-7.  Terminate the cloud instances and update the Host Catalog.
-8.  Reconcile reservations/credit accounting after the instance is actually released.
-
-Do not return credits merely because a target-size number decreased. Reconcile against actual lifecycle state so a failed or delayed termination does not create a budget-accounting gap.
-
-## 11. Failure handling and consistency
-
-The system has multiple asynchronous controllers, so design for retries and partial failures rather than exactly-once execution.
-
--   **Idempotency:** repeated increase/decrease operations converge on the same target state; idempotency keys on all provisioning operations.
--   **Optimistic concurrency or transactions:** concurrent requests cannot exceed a team's budget or overallocate a zone.
--   **Durable desired state:** persist the target before attempting external cloud side effects; persisted operations survive controller restarts.
--   **Reconciliation:** periodically compare desired state, Crane's database, the Host Catalog, cloud instances, and Kubernetes Nodes.
--   **Partial provisioning:** handle an instance launch succeeding while response delivery fails.
--   **Stale inventory:** distinguish temporary cloud API errors from authoritative deletion.
--   **Quota exhaustion:** return a clear capacity-denied result and surface a useful Kubernetes event/condition where possible.
--   **Zone exhaustion:** try another eligible group only if policy and scheduling constraints allow it.
--   **Instance-type unavailability:** avoid an infinite retry loop; expose a degraded state and retry with backoff.
--   **Scale-down safety:** never terminate instances outside the managed group or protected by platform policy.
--   **Credit reconciliation:** periodically detect orphaned reservations, leaked allocations, and hosts without corresponding reservations.
--   **Heartbeat resilience:** do not interpret a missed heartbeat as proof a host is dead during a network partition.
--   **Recovery, not synchronous rebuild:** Dominator reconstructs its zone view from durable state plus cloud/provider and host reports, not by querying every Subd.
--   **API security:** authenticate the adapter, authorize cluster/pool operations, bound retries/timeouts with backoff and circuit breakers, and audit every target-size change.
-
-Do not let the CRD controller and adapter independently maintain separate authoritative quota counters. There must be one authoritative reservation transaction path in Crane API.
-
-## 12. Security and multi-tenancy
-
--   Developers use Kubernetes RBAC and the organization's standard deployment workflow.
--   Platform administrators own `CraneNodePool` and authoritative quota writes.
--   The adapter authenticates to Crane with a dedicated workload identity or service credential.
--   Crane authorizes the adapter's cluster and pool scope; it must not trust a client-supplied `teamID` without resolving it.
--   Application namespaces map to trusted team identities through a platform-owned registry or admission-controlled metadata.
--   Restrict who can set privileged node selectors, tolerations, host namespaces, or pool labels.
--   mTLS alone does not establish authorization. Every connection needs both authenticated identity and scoped authorization:
-
-| Connection | Required control |
-| --- | --- |
-| Crane API → Dominator | Authenticated service identity and authorization scoped to permitted zones and operations |
-| Dominator → Subd | Authenticated, authorized host-management requests |
-| Subd → control plane | Authenticated reporting; host identity bound to its registered provider instance |
-| Kubernetes integration → Crane API | Authenticated caller and authorization for capacity operations |
-| Crane API → Host Catalog | Restricted database access and audited state changes |
-
--   Use cloud-provider instance identity or another trusted bootstrap mechanism when enrolling hosts; do not treat a reusable join token as proof of host identity.
--   Keep cloud credentials in the Crane execution environment, not in application namespaces or developer manifests.
--   Audit capacity changes, image rollouts, host drains, terminations, quota denials, zone selections, and instance launches.
--   Apply API rate limits and maximum request sizes.
--   Do not wire `internal/hostcatalog/http` handlers (currently unauthenticated, dead code) without mTLS auth and audit middleware first.
-
-## 13. Golden-image and expected-state rollout
-
-"Latest" is an ambiguous target during a rollout. Pin every rollout to an immutable image ID/digest and a desired-state version:
-
--   Dominator tracks rollout progress per zone and canary-rolls expected-state changes before full rollout.
--   New hosts are created with the version their zone's rollout policy assigns, not whatever image is currently latest.
--   Subd enforces the host's assigned `desired_state_version` and reports `observed_state_version`.
--   Subd reconciles OS, runtime, Kubernetes, observability, and security configuration against the expected state.
--   Subd does not independently uncordon a recovered host; it returns to service only when the maintenance operation completes and the host is authorized.
--   Define precisely whether package enforcement is an allowlist, package-state reconciliation, immutable-image enforcement, or a combination, and avoid removing packages required for emergency recovery or provider agents.
-
-## 14. Observability
-
-Merged from `docs/observability.md` into this plan as a first-class workstream, mapped onto the reference architecture's control-plane/data-plane split.
-
-### 14.1 Principles
-
--   **Control plane (`crane-api`, `dominator`)** — full observability: structured logs, OTLP traces and metrics, and an audit trail. The Host Catalog is the natural instrumentation chokepoint for fleet state mutations.
--   **Data plane (`subd`)** — observable but bounded. subd runs root on tenant-/attacker-influenced hosts, so it:
-    1.  emits structured logs locally to journald (it is a systemd unit on the host);
-    2.  reports **outcome** through the heartbeat it already sends to Dominator so the control plane can produce fleet metrics;
-    3.  keeps no open listener. A thin agent is a smaller attack surface.
-
-### 14.2 Current-state baseline (findings that drive the work)
-
-The repository has essentially no production-grade observability today:
-
--   Unstructured stdlib `log` everywhere; zero observability dependencies in `go.mod`; no leveling, JSON, key-value fields, or request/host/trace IDs.
--   Secrets reach logs: DSN with DB password (`cmd/crane-api/main.go:97-102`), raw heartbeat bodies (`internal/dominator/server.go:127,134`), RDS connection info (`internal/execute/executor.go:114,152`).
--   Invalid log calls that fail `go vet`: `%w` wrappers (`internal/subd/runner.go:31,36`), printf-style `log.Fatal` (`cmd/dominator/main.go:34`).
--   Errors are logged-and-swallowed throughout control loops (`internal/badhost/detector.go:50-53`, `internal/subd/services_collector.go:114`), so failures are invisible.
--   `log.Fatal` in library/execution paths kills the process on recoverable errors (`internal/execute/executor.go:94,111,143`, `internal/dominator/server.go:56-59`).
--   No audit trail: the persisted `actions` table records outcomes but not rationale, driving problems, or actor identity.
--   No metrics, no `/metrics` endpoint, no tracing, no context propagation. The pipeline is correlated only by `host_id` in Postgres.
--   Health checks are shallow: `/health` returns a fixed 200 (`cmd/crane-api/main.go:162-165`); no liveness/readiness split; no `HEALTHCHECK` in Dockerfiles.
--   No alerting signal path, no audit middleware, no version/commit injection, no log-level/log-format/metrics-port config, and CI only runs `go build` (`.github/workflows/go.yml:24-25`).
-
-### 14.3 Structured logging (Phase 1 of this workstream)
-
-All binaries migrate to stdlib `log/slog` (Go 1.25) with **no behavior change and no new dependencies**.
-
-1.  **Shared logger setup (per binary).** Each `cmd/*/main.go` builds a `*slog.Logger` from env vars:
-    -   `LOG_LEVEL` (debug/info/warn/error, default `info`)
-    -   `LOG_FORMAT` (json/text, default `text` local, `json` in containers)
-    -   Always add a `service` field (`crane-api`, `dominator`, `subd`, `crane-autoscaler-adapter`, `crane-controller`) and `version`/`commit` once build metadata is injected.
-2.  **Thread the logger through constructors.** Pass `*slog.Logger` into constructed types (`BadHostDetector`, `ActivityManager`, `Worker`, `DefaultExecutor`, `PostgresActionStore`, `PostgresHostStore`, `HostCatalogService`, `PolicyResolver`, `Dominator` server, subd Runner/Client/collectors) instead of package-level `log`. Use a temporary std-log→slog bridge during migration if needed.
-3.  **Replace hot-path log calls with typed fields.** Convert `log.Printf("[X] ...")` lines to `logger.Info/Debug/Warn/Error` with structured attributes such as `host_id`, `action_type`, `check`, `problem_type`, `zone`, `node_pool`, `request_id`. Use `Warn`/`Error` (never `Info`) for failures.
-4.  **Fix correctness and safety issues:** redact DSN/raw-body/connection-info logging; fix invalid format verbs; replace `log.Fatal` in library code with returned errors (only `main` decides to exit).
-5.  **Audit-grade events (control plane).** Emit JSON structured events on every remediation decision (with `host_id`, `action_type`, and the problems that drove it), every catalog state transition (`host_id`, `from_state`, `to_state`), and every capacity/credit decision.
-6.  **Verify.** Run `gofmt -l`, `go vet ./...`, `go test ./...` after migration, and add all three to CI.
-
-### 14.4 Metrics
-
-Emit OTLP traces and metrics via gRPC exporters (configurable via `OTEL_EXPORTER_OTLP_ENDPOINT`); expose a `/metrics` endpoint (Prometheus) where appropriate as a convenience surface on `crane-api`, `dominator`, and optionally the adapter. Two sets of signals:
-
-**Fleet and runtime health (from the observability assessment):**
-
--   Hosts scanned, problems by check/severity.
--   Actions by type and outcome; queue depth; heartbeat age.
--   Provider/DB latency; reconciliation errors by controller; audit event rate.
-
-**Capacity platform (from the Kubernetes plan):**
-
--   `crane_capacity_requests_total{result,reason}`
--   `crane_capacity_request_duration_seconds` (measure request-acceptance latency separately from host-readiness latency)
--   `crane_nodes_desired` / `crane_nodes_actual`
--   `crane_credit_reserved_vcpu` / `crane_credit_reserved_memory_bytes`
--   `crane_credit_denials_total{reason}`
--   `crane_zone_capacity{zone,profile,state}`
--   `crane_instance_provision_failures_total{provider,reason}`
--   `crane_reconciliation_errors_total{controller}`
--   `crane_duplicate_provisioning_requests_total`, `crane_unused_capacity` (autoscaling efficiency)
-
-Map these to service-level objectives (from the architecture review): scheduling failures due to insufficient allocatable resources; time from accepted request to Kubernetes-ready host; time from confirmed failure to restored capacity; failed/incomplete drains; time in desired/observed mismatch; scale oscillation; unauthorized control operations; failed rollout rate.
-
-Avoid high-cardinality labels such as Pod UID, request UUID, or arbitrary service name on every metric. Put per-request identity in structured logs and traces.
-
-### 14.5 Tracing
-
-Introduce context propagation across the problem → decision → action pipeline (currently correlated only by `host_id`). Carry `request_id`/trace context through capacity requests, provisioning operations, and remediation decisions. Emit distributed traces via OTLP. Thread trace context (TraceContext/Baggage) across all control-plane boundaries and include `request_id` in logs for correlation.
-
-### 14.6 Health checks and deployment hygiene
-
--   Split **liveness** (process up) from **readiness** (DB/provider reachable, controllers initialized) on `crane-api` and `dominator`.
--   Add `HEALTHCHECK` to `Dockerfile.crane-api`, `Dockerfile.dominator`, and any new binaries.
--   Add `HEALTHCHECK`, restart policies, resource limits, and log config to `docker-compose.yml`.
--   Inject `version`/`commit` via `-ldflags` in Dockerfiles and CI so a running binary can be correlated to a commit.
-
-### 14.7 Dashboards and alerting
-
-**Dashboards:**
-
-1.  Pending Pods by reason and duration.
-2.  Desired vs. actual nodes by pool and zone.
-3.  Fleet health: hosts by lifecycle/health state, heartbeat age, queue depth.
-4.  Provisioning latency (acceptance vs. readiness) and failure rate.
-5.  Team budgets: reserved vs. allocated vs. remaining.
-6.  Zone/profile availability.
-7.  Reconciliation drift and orphaned reservations.
-8.  Scale-up requests denied by policy or quota.
-
-**Alerting:** capacity drift, quota denials, provisioning failures, stale reservations, unhealthy heartbeat age, failed/incomplete drains. Add these only after the signal path exists; today, logged-and-dropped errors mean operators have no way to learn something is failing.
-
-### 14.8 Kubernetes-facing diagnostics
-
-Developers should diagnose pending workloads from Kubernetes:
-
--   Pod scheduler events explain why the Pod is pending.
--   Node-pool conditions explain whether eligible capacity is available.
--   A quota-denial event or platform status explains when scale-up was rejected.
--   Standard Node labels reveal region and zone.
--   Documentation explains the difference between an unschedulable Pod, a quota denial, and a cloud provisioning failure.
-
-## 15. Testing strategy
-
-### Unit tests
-
--   Canonical zone resolution and provider/account scoping.
--   Profile/zone availability validation.
--   Node template generation: CPU, memory, labels, taints, topology.
--   Credit calculations and transactional reservation rules.
--   Idempotent target-size updates.
--   Pool min/max and team quota enforcement.
--   Failure transitions, drain handling, and reservation release.
--   Authorization and team identity resolution.
--   Placement: zone filtering, ranking, and reservation safety.
--   Host Catalog lifecycle state transitions.
--   Redaction and structured-field correctness for logging.
-
-### Contract tests
-
--   Adapter against the exact upstream autoscaler external-provider protocol.
--   Crane API compatibility and error mapping.
--   Cloud provider abstraction using a fake provider or LocalStack where supported.
--   CRD schema validation, defaulting, RBAC, and status conditions.
--   Bootstrap contract ensuring nodes receive the correct standard topology labels.
--   Dominator ↔ subd mTLS and authorization contract.
-
-### Integration tests
-
-1.  Create a pool in a test cluster.
-2.  Deploy a workload that fits existing capacity; verify no scale-up.
-3.  Deploy enough replicas to make Pods unschedulable; verify the autoscaler requests more capacity **as one aggregated request**.
-4.  Verify Crane reserves credits once and provisions the expected profile in an allowed zone through Dominator.
-5.  Verify Nodes join with correct labels, Subd reports readiness, and Pods become schedulable.
-6.  Exhaust a team's quota; verify scale-up is denied without leaking reservations.
-7.  Make one zone unavailable; verify new capacity is directed only to eligible zones.
-8.  Scale the workload down; verify safe node removal, drain completion, and credit reconciliation.
-9.  Inject cloud/API failures and retries; verify idempotent convergence.
-10. Restart controllers (adapter, crane-api, dominator) mid-operation; verify recovery from durable desired state.
-11. Verify audit events and metrics appear for a full scale-up/scale-down cycle.
-
-### End-to-end acceptance criteria
-
--   Application teams never need Crane credentials or direct Crane API access.
--   A standard Kubernetes workload can trigger capacity provisioning automatically.
--   The autoscaler sees correct node templates before provisioning.
--   The resulting nodes have correct provider zone, region, and pool labels.
--   Zone-spread constraints behave predictably.
--   Concurrent requests cannot exceed team budgets.
--   Repeated requests do not double-provision or double-reserve.
--   Scale-down, failed launches, and controller restarts converge without credit leaks.
--   Operators can trace a workload's pending state through autoscaler decision, Crane request, zone selection, Dominator provisioning, Subd enrollment, and node registration.
--   Logs are structured and safe; `gofmt -l`, `go vet ./...`, and `go test ./...` pass in CI.
-
-## 16. Phased implementation plan
-
-The phases merge the Kubernetes plan's phases (0–7), the architecture review's recommended order (control-plane data model → one zone end to end → global placement → scale-up → scale-down/repair → harden fleet ops), and the observability plan's phases. Observability work is explicit work in the early phases and gets hardened in phase 9.
-
-### Phase 0 — Architecture and compatibility spike
-
-**Deliverables:**
--   Select the autoscaler, exact upstream Cluster Autoscaler version, and CRD API versions.
--   Verify the external gRPC provider contract and node-group semantics.
--   Decide whether node groups are per-zone, per-profile, or a supported combination.
--   Define team identity source and whether pools are dedicated or shared.
--   Define credit semantics: capacity entitlement, cost budget, or both.
--   Document scale-down ownership and drain semantics.
--   Confirm how node bootstrap receives cloud zone metadata and labels.
--   Decide the placement authority model: Crane API owns policy; Dominator owns zone execution.
--   Pin observability defaults: `slog`-based structured logging, log level/format config, and OTLP (traces/metrics) as the mandated telemetry backend.
-
-**Exit criteria:**
--   A design decision record answers each item above.
--   A minimal adapter prototype can report one static node group and a valid node template to the chosen autoscaler.
-
-### Phase 1 — Control-plane data model and structured-logging foundation
-
-**Deliverables:**
--   Canonical `Zone` and `HostProfile` models; provider discovery for region, zones, and instance-type offerings; persistence and uniqueness constraints.
--   Host Catalog durable schema: host lifecycle states, health state, desired/observed state versions, allocatable vs. reserved resources, durable operation records.
--   Shared `slog` logger setup in each `cmd/*/main.go` (`LOG_LEVEL`, `LOG_FORMAT`, `service` field).
--   Thread the logger through constructors; replace hot-path `log` calls with typed fields.
--   Fix logging safety and correctness: redact DSN/raw-body/RDS info, fix invalid format verbs, replace library `log.Fatal` with returned errors.
--   Initialize OTLP telemetry (traces/metrics) in each control-plane binary via `internal/telemetry`; propagate trace context; Run `gofmt -l`, `go vet ./...`, `go test ./...`; add all three to CI.
-
-**Exit criteria:**
--   Host creation, failure, and termination are representable accurately, including after controller restarts.
--   All control-plane binaries compile with structured, correlated, redaction-safe logging and OTLP telemetry initialized (with no-op fallback when OTEL_EXPORTER_OTLP_ENDPOINT unset).
-
-### Phase 2 — One zone end to end
-
-**Deliverables:**
--   Durable capacity request/status records with idempotency keys.
--   Provider-backed instance create/delete operations; desired-vs-actual reconciler in this zone's Dominator.
--   Node-pool persistence and validation; explicit lifecycle states and retry/backoff behavior.
--   Dominator copies host lifecycle operations to the Host Catalog; Subd enrolls and reports readiness.
--   Audit events on catalog state transitions and remediation decisions.
--   Fake-provider tests and LocalStack integration tests where practical.
-
-**Exit criteria:**
--   Crane API accepts a capacity request, Dominator provisions an instance, Subd enrolls it, and Kubernetes sees a ready node.
--   A request can be retried safely; a failed provisioning operation recovers without duplicate hosts or orphaned resources.
--   The operator can observe the full flow in structured logs and audit events.
-
-### Phase 3 — Credits and authorization
-
-**Deliverables:**
--   Team budget model and reservation ledger.
--   Transactional reservation API with idempotency and concurrent-request tests.
--   Trusted team/cluster/pool identity mapping.
--   Quota-denial reasons and audit records.
--   Periodic reservation/instance reconciliation.
--   Environment-scoped authorization for the Crane API → Dominator and Dominator → Subd boundaries (mTLS plus authorization).
-
-**Exit criteria:**
--   Concurrent requests cannot exceed the configured budget, and every provisioned or pending instance is accounted for.
-
-### Phase 4 — Global placement
-
-**Deliverables:**
--   Zone eligibility filtering (hard constraints, capacity/instance-type fit, availability, configured limits).
--   Zone ranking policy: headroom, provisioning latency, cost, fault-domain distribution.
--   Capacity reservation at placement time (allocatable minus reserved).
--   Zone-scoped Dominator ownership with explicit replication/leader-election rules.
--   Audit of zone selections and reservations.
-
-**Exit criteria:**
--   Concurrent requests cannot overallocate a zone; workloads with zone constraints are placed only into eligible zones.
-
-### Phase 5 — Autoscaler adapter and scale-up
-
-**Deliverables:**
--   External provider adapter for the selected Cluster Autoscaler release.
--   Accurate node-group discovery, target-size, node inventory, and template responses.
--   Pending-demand aggregation and request deduplication before calling Crane.
--   Increase/decrease operations backed by Crane's capacity API and placement logic.
--   Error mapping for quota denial, unsupported profile, unavailable zone, and provider failure.
--   Protocol contract tests and a small end-to-end test cluster.
-
-**Exit criteria:**
--   An unschedulable test Pod causes a node-capacity request through the autoscaler, adapter, and Crane, and becomes schedulable once the node joins — without application teams touching Crane directly.
-
-### Phase 6 — `CraneNodePool` CRD and policy controller
-
-**Deliverables:**
--   Versioned CRD schema, generated manifests, RBAC, and admission rules preventing privilege escalation.
--   Controller that validates pool references, zones, profiles, min/max, and authorization.
--   Status conditions and clear validation errors; controller-to-Crane reconciliation path.
--   Generated API docs and example manifests.
-
-**Exit criteria:**
--   A platform operator can declare a pool through Kubernetes configuration, and the validated pool is reflected in Crane and exposed to the autoscaler without manual database edits.
-
-### Phase 7 — Scale-down, repair, and zone-aware operations
-
-**Deliverables:**
--   Safe draining (respecting PDBs, local storage, min-zone capacity), capacity protection, and credit release after actual termination.
--   Failure detection and replacement workflows; orphan reconciliation.
--   Per-zone node-group representation, accurate templates, and standard topology labels.
--   Multi-zone test workloads using topology spread; zone-outage and profile-unavailable handling.
--   Operator dashboards and alerts for capacity drift and scale failures.
-
-**Exit criteria:**
--   Workloads spread across eligible zones as specified; Crane does not launch into disallowed or unavailable zones; Crane removes excess capacity without disrupting protected workloads and recovers from failed hosts.
-
-### Phase 8 — Golden-image rollouts and fleet hardening
-
-**Deliverables:**
--   Versioned golden-image/expected-state rollout: dominator tracks rollout progress, canary-rolls change, pins immutable image/digest per zone policy; Subd enforces assigned `desired_state_version`.
--   Fault injection, load tests, restart-recovery tests.
--   subd journald logging and heartbeat enrichment (convergence outcome); no streaming telemetry, no open listener.
-
-**Exit criteria:**
--   Provisioning, maintenance, and upgrades remain safe under retries, partial outages, and controller restarts; rollout progress and host convergence are observable from the control plane.
-
-### Phase 9 — Observability hardening and production readiness
-
-**Deliverables:**
--   `/metrics` (Prometheus/`expvar`) on crane-api, dominator, and the adapter; SLO-aligned dashboards and alerts.
--   Liveness/readiness split and `HEALTHCHECK` in Dockerfiles; `docker-compose.yml` healthchecks, restart policies, resource limits.
--   `-ldflags` version/commit injection wired through CI.
--   Audit middleware for API calls; mTLS auth before wiring `internal/hostcatalog/http` handlers.
--   Request/trace correlation across the capacity pipeline.
--   Security review of adapter identity and authorization; runbooks for unavailable zones and stuck scale operations; pilot with one non-critical workload.
-
-**Exit criteria:**
--   Every binary is observable (structured logs, health, metrics, version), the fleet control loop is auditable end to end, and runbooks cover the primary failure modes.
-
-### Phase 10 — Developer self-service rollout
-
-**Deliverables:**
--   Standard workload examples and golden paths.
--   Documentation for CPU/memory requests, HPA, topology spread, pool selection, taints, and quota behavior.
--   Kubernetes-only troubleshooting workflow.
--   Example GitOps repository with approved pool and workload manifests.
--   Operational runbooks and escalation paths; gradual rollout to pilot teams.
-
-**Exit criteria:**
--   Pilot developers deploy and scale workloads using Kubernetes alone, while the Crane API team can trace and manage all underlying capacity operations and observe the fleet without reading raw application manifests.
-
-## 17. Suggested repository layout
-
-Adapt to the existing repository rather than mechanically renaming current packages. Target organization:
-
-``` text
-cmd/
-  crane-api/
-  crane-dominator/
-  crane-subd/
-  crane-autoscaler-adapter/
-  crane-controller/             # if the Kubernetes controller is a separate binary
-
-api/
-  crane/v1/                     # internal/public Crane API types
-  platform/v1alpha1/            # CRD API types
-
-config/
-  crd/
-  rbac/
-  samples/
-
-internal/
-  capacity/
-    service.go
-    request.go
-    reconciler.go
-    status.go
-    placement.go               # zone eligibility, ranking, reservation
-  credit/
-    ledger.go
-    reservation.go
-    policy.go
-  hostcatalog/
-    model.go                   # lifecycle state machine, versions
-    store.go
-    reconcile.go
-  dominator/
-  subd/
-  nodepool/
-    model.go
-    service.go
-    validation.go
-  zone/
-    model.go
-    discovery.go
-    resolver.go
-  hostprofile/
-    model.go
-    catalog.go
-  autoscaler/
-    adapter.go
-    nodegroup.go
-    template.go
-    errors.go
-  provider/
-    provider.go
-    awscompute/
-  persistence/
-  audit/
-  observability/
-    logging.go
-    metrics.go
-    health.go
-
-controllers/
-  cranenodepool_controller.go
-  cranteamquota_controller.go    # optional
-
-deploy/
-  helm/
-  kustomize/
-  examples/
-
-docs/
-  architecture/
-  decisions/
-  runbooks/
-```
-
-Keep the cloud provider interface behind a narrow abstraction. Do not make core capacity, credit, or lifecycle logic depend directly on AWS SDK types.
-
-## 18. Initial implementation tickets
-
-### Epic A — Control-plane data model and logging foundation (Phase 1)
-
--   [ ] Add canonical zone and host-profile models with provider discovery.
--   [ ] Add Host Catalog schema: lifecycle/health states, state versions, allocatable vs. reserved, durable operations.
--   [ ] Add node-pool persistence and validation; capacity request/status persistence.
--   [ ] Define API error taxonomy.
--   [ ] Add shared `slog` setup and thread the logger through all constructors.
--   [ ] Convert hot-path logging to typed fields; fix redaction, format verbs, and library `log.Fatal`.
--   [ ] Add audit events for catalog state transitions; run `gofmt`/`go vet`/`go test` in CI.
-
-### Epic B — Reconciliation and provider operations (Phases 2 and 7)
-
--   [ ] Implement desired-vs-actual node reconciliation in Dominator.
--   [ ] Make provisioning and termination idempotent with idempotency keys.
--   [ ] Handle partially successful provider operations.
--   [ ] Add retry/backoff and reconciliation metrics.
--   [ ] Add drain, PDB-safe scale-down, and min-zone capacity protection.
--   [ ] Add orphaned-reservation and leaked-host reconciliation.
-
-### Epic C — Credits and policy (Phases 3 and 4)
-
--   [ ] Define credit units and accounting rules.
--   [ ] Implement transactional reservations.
--   [ ] Enforce pool min/max and team quotas.
--   [ ] Add zone eligibility, ranking, and placement-time reservation.
--   [ ] Add trusted team identity resolution.
--   [ ] Add audit events and quota-denial diagnostics.
-
-### Epic D — Autoscaler integration (Phase 5)
-
--   [ ] Pin the supported Cluster Autoscaler version and external provider protocol.
--   [ ] Implement node-group discovery and node templates.
--   [ ] Implement pending-demand aggregation and request deduplication.
--   [ ] Implement target-size increase/decrease operations.
--   [ ] Map Crane errors to autoscaler-compatible errors.
--   [ ] Test scale-up, scale-down, retries, and restarts.
-
-### Epic E — Kubernetes policy (Phase 6)
-
--   [ ] Define `CraneNodePool` CRD (and optional `CraneTeamQuota`).
--   [ ] Generate schema, RBAC, and installation manifests.
--   [ ] Implement validation and status conditions.
--   [ ] Reconcile CRD state into Crane's validated pool catalog.
--   [ ] Add sample multi-zone pool and workload manifests.
--   [ ] Verify developers cannot modify authoritative quotas or provider mappings.
-
-### Epic F — Observability and production readiness (Phases 8 and 9)
-
--   [ ] Add `/metrics` and SLO-aligned dashboards: capacity, fleet health, budgets, zone availability, drift.
--   [ ] Add alerts: capacity drift, quota denials, provisioning failures, stale reservations, heartbeat age, failed drains.
--   [ ] Add liveness/readiness split, `HEALTHCHECK`, docker-compose healthchecks, and `-ldflags` version injection.
--   [ ] Add request/trace correlation across the capacity pipeline.
--   [ ] subd journald logging + heartbeat outcome enrichment.
--   [ ] Perform security review of adapter identity/authorization; add audit middleware; secure `hostcatalog` HTTP.
--   [ ] Run failure-injection and load tests; add runbooks; pilot with one non-critical workload.
-
-## 19. Important non-goals for the first release
-
--   Forking Kubernetes or Cluster Autoscaler; implementing a custom Pod scheduler.
--   Exposing Crane APIs or cloud credentials to application teams.
--   Supporting every cloud provider and every instance family immediately.
--   Building a universal cost optimizer before reliable capacity reconciliation exists.
--   Automatically relaxing strict topology rules during zone failures.
--   Implementing both Cluster API and a separate autoscaler provider integration in the first milestone.
--   Treating the CRD controller as the authoritative credit ledger.
--   Assuming one logical multi-zone pool maps to one homogeneous autoscaler node group.
--   Streaming subd telemetry to the control plane or opening listeners on subd.
--   Introducing third-party logging frameworks when stdlib `slog` covers the baseline.
-
-## 20. Open questions requiring a decision
-
-1.  **Autoscaler:** Is Cluster Autoscaler already the standard, or is the platform using another autoscaler?
-2.  **Cluster ownership:** Does Crane manage worker nodes in pre-existing Kubernetes clusters, or must it also create and lifecycle-manage the clusters?
-3.  **Zone semantics:** Are canonical zones scoped to an AWS account and region, or does the platform require a cross-account abstraction?
-4.  **Pool sharing:** Are node pools dedicated per team, shared across teams, or both?
-5.  **Credit semantics:** Are credits a hard simultaneous capacity entitlement, a cost budget, or a combination?
-6.  **Quota source of truth:** Quotas live in Crane's database with a read-only Kubernetes view, or are declared in a platform-owned CRD and reconciled into Crane?
-7.  **Scale-down contract:** Which component owns draining and deletion ordering for a node (autoscaler contract vs. Dominator/Subd)?
-8.  **Instance selection:** Does Crane choose a concrete instance type, or does each node group represent one concrete type or a constrained set of equivalent types?
-9.  **Zone balancing:** Is balancing best-effort infrastructure policy, or must a pool maintain strict per-zone capacity targets?
-10. **Developer interface:** How should developers select approved pools — namespace defaults, a workload label, a sanctioned node selector, or a platform-generated workload template?
-11. **Dominator replication:** Are there multiple independent zone controllers, replicas of one controller (leader election), or both?
-12. **Metrics backend:** OTLP (OpenTelemetry Protocol) for traces and metrics as the mandated backend; Prometheus `/metrics` as an optional compatibility surface, and where are metrics scraped from in containers?
-13. **Heartbeat reporting:** Is subd's heartbeat-outcome enrichment sufficient for fleet metrics, or is a separate trusted reporting path required?
-14. **Package enforcement scope:** What does "ensure only allowed packages and services exist" mean — allowlist, package-state reconciliation, immutable image, or combination?
-
-Resolve these before finalizing the API schemas.
-
-## 21. Definition of done
-
-The architecture is ready for a wider rollout when all of the following are true:
-
--   Developers deploy and scale workloads using Kubernetes APIs only.
--   Crane is the only component with authority to provision and terminate managed cloud hosts; placement policy is authoritative in Crane API, executed zone-scoped in Dominator.
--   The node autoscaler uses an established provider integration rather than a custom scheduling algorithm in Crane.
--   Crane exposes correct per-zone, per-profile node templates; actual Nodes have correct standard topology labels.
--   Kubernetes topology constraints produce predictable multi-zone placement.
--   Capacity requests are idempotent, aggregated, and reconciled against actual cloud state and the Host Catalog.
--   Team budgets are enforced atomically in Crane; zones cannot be overallocated by concurrent requests.
--   Failures, retries, restarts, and zone outages do not leak credits or create unmanaged hosts.
--   Golden-image rollouts pin immutable versions, canary safely, and converge without drift.
--   Developers can diagnose pending Pods and capacity denials from Kubernetes-facing status, conditions, and events.
--   All control-plane binaries emit structured, redaction-safe logs, expose liveness/readiness, emit OTLP traces/metrics, and expose metrics endpoints as configured, embed version/commit, and pass `gofmt`/`go vet`/`go test` in CI.
--   Capacity changes, drains, terminations, image rollouts, quota denials, and zone selections are auditable end to end.
--   subd is observable via local journald logs and heartbeat outcome reporting without streaming telemetry or open listeners.
--   The Crane API team has auditable operational controls, dashboards, alerts, and runbooks for capacity, zones, credit accounting, and rollouts.
-
-## References
-
--   Kubernetes node autoscaling: https://kubernetes.io/docs/concepts/cluster-administration/node-autoscaling/
--   Cluster Autoscaler external gRPC cloud provider: https://github.com/kubernetes/autoscaler/tree/master/cluster-autoscaler/cloudprovider/externalgrpc
--   Kubernetes topology spread constraints: https://kubernetes.io/docs/concepts/scheduling-eviction/topology-spread-constraints/
--   Kubernetes node labels and topology: https://kubernetes.io/docs/reference/labels-annotations-taints/
--   Kubernetes custom resources: https://kubernetes.io/docs/concepts/extend-kubernetes/api-extension/custom-resources/
--   Uber Crane architecture inspiration: https://www.uber.com/blog/crane-ubers-next-gen-infrastructure-stack/
--   Go stdlib structured logging (`log/slog`): https://pkg.go.dev/log/slog
+It provisions control-plane hosts, coordinates `kubeadm init`, records the API endpoint and CA discovery hash, obtains scoped administrative access, installs Cilium and required platform components, deploys the destination Dominator, and verifies that Dominator is authenticated and healthy. Only then does it hand routine zone execution to Dominator and allow worker node groups in that zone.
+
+### 5.2 Node join and readiness
+
+- **Join mechanism:** `kubeadm`. Workers join their zone's cluster via `kubeadm join`, using the zone's cluster record (API server endpoint, CA cert hash, bootstrap token).
+- **Token flow:** the Zone Bootstrap Controller or destination Dominator uses authenticated access to the destination Kubernetes API to create a short-lived `bootstrap.kubernetes.io/token` Secret. Dominator delivers the token to Subd over the authenticated control-plane→host channel. Tokens are never handed to applications, and plaintext tokens are not retained after use.
+- **CNI:** **Cilium**.
+- **Registering** means `kubeadm join` is in progress. **Converging** means the Kubernetes `Node` exists but platform requirements are incomplete. **Ready** is set by Dominator's trusted Kubernetes watcher only after the Node has `Ready=True`, `NetworkUnavailable` is absent or `False`, its provider/group/pool/region/zone identity matches the Host Catalog, Subd reports the assigned expected-state version, and the required Cilium agent is healthy. The node remains cordoned or carries a provisioning taint until validation completes. Subd cannot declare itself ready.
+
+## 6. API and data model essentials
+
+- **Zone**: canonical Crane zone ID, provider/account/region, `ProviderZoneID`, enabled/status. Unique `(provider,account_id,region,provider_zone_id)`.
+- **Cluster** (one per zone): `ID`, `ZoneID`, `APIServerEndpoint`, `CACertHash` (discovery trust root), kubeadm/kubelet version, container runtime, `CNI` (Cilium), bootstrap/join configuration, `LifecycleState`. `crane-api` owns cluster records; the bootstrap controller or Dominator creates join-token Secrets through the destination Kubernetes API.
+- **ZoneBootstrapOperation**: `ID`, `ZoneID`, immutable bootstrap parameters, phase, lease/fencing metadata, last error, timestamps. It is owned by the layer-zero Zone Bootstrap Controller until validated handoff.
+- **NodeGroup** (contract unit): `ID`, `ClusterID`, `NodePoolID`, `ZoneID`, `CapacityClass`, `ProviderZoneID`, `TargetNodes`, `TargetRevision`, `MinNodes`, `MaxNodes`, `TemplateRevision`, `LifecycleState`. One pool may back multiple cluster-scoped groups, but an autoscaler sees only groups with its `ClusterID`.
+- **CapacityRequest**: `NodeGroupID` (required), handler-scoped `RequestID`, `ExpectedTargetRevision`, `DesiredTarget`, `TemplateRevision`. `(NodeGroupID, RequestID)` deduplicates only retries made while handling one external RPC.
+- **CreditReservation**: `TeamID`, `NodeGroupID`, `CapacityRequestID`, VCPU/Memory/NodeCount, `State`. Reservation mutation is part of the target transaction and is deduplicated by the associated `(NodeGroupID, RequestID)`.
+- **NodeRemovalOperation**: explicit `NodeGroupID`, host/node/provider identities, reason (`autoscaler-delete`, `repair`, `maintenance`), whether desired capacity is preserved, drain deadline/status, lease/fencing metadata, provider termination status.
+- **Host Catalog**: host identity, placement (`node_group_id`, `node_pool_id`, `crane_zone`), lifecycle/health, `desired_state_version`/`observed_state_version`, allocatable/reserved, `operation_id`, `last_heartbeat_at`. Hosts cannot self-assign placement/ownership.
+
+## 7. Placement
+
+- **Node group topology:** logical pool → cluster-scoped group for one (zone, capacity class). Group identity is part of the capacity contract, and its `ClusterID` must match the calling autoscaler.
+- **Pod placement:** standard `topologySpreadConstraints`, `podAntiAffinity`, `nodeAffinity`/`nodeSelector`, taints/tolerations, and storage topology apply within one zone cluster. Cross-zone application availability requires a separate multi-cluster deployment and traffic-management layer and is outside the first milestone.
+- **Zone failure:** mark the cluster/zone unavailable for new provisioning, do not auto-terminate healthy nodes on transient discovery failure, and surface a degraded condition. A different zone cluster cannot satisfy Pods pending in the failed cluster.
+- **Cluster placement:** zone selection applies when creating a new cluster or when a future multi-cluster placement layer chooses a workload cluster. It is not repeated during a node scale-up request.
+
+## 8. Scale-up flow
+
+1. Workload applied; scheduler leaves unschedulable Pods.
+2. CA aggregates pending demand, simulates eligible groups, selects a compatible group.
+3. Adapter reads the current target and revision, computes `DesiredTarget = current target + delta`, generates a handler-scoped `RequestID`, and calls Crane with `NodeGroupID`, `ExpectedTargetRevision`, and `DesiredTarget`.
+4. Crane validates that the group belongs to the adapter's cluster and is active, its template revision is compatible, and pool/team/budget/group limits permit the change. It uses compare-and-set against the target revision.
+5. Crane atomically writes the new target revision, reserves only the increment, and creates durable provisioning operations keyed by `(NodeGroupID, RequestID)`. A retry from the same handler returns the existing outcome. A CAS conflict requires a target reread; `(group, delta)` is never used for deduplication.
+6. Crane dispatches to the Dominator owning that zone. If the group is invalid, reject with a precise reason; CA may independently reevaluate other compatible groups exposed for the same cluster.
+7. Dominator provisions via cloud provider; Subd enrolls, applies versioned expected state, and joins the zone's cluster via `kubeadm`. Registration moves the host to `converging`; Dominator marks it `ready` and removes the provisioning taint/cordon only after the §5.2 readiness gates pass.
+8. Autoscaler sees nodes; Pods schedule. Crane reconciles status/inventory and emits audit/metrics events.
+
+Scale-up is asynchronous (accepted ≠ ready). Define timeouts, retries, observable states.
+
+## 9. Capacity reduction, node deletion, repair, and maintenance
+
+These are separate durable operations.
+
+### 9.1 `DecreaseTargetSize`: cancel unfulfilled capacity
+
+1. CA requests a negative target delta for a specific group. This operation must not delete an existing Kubernetes node.
+2. The adapter performs the same revision-checked target mutation used for scale-up.
+3. Crane atomically lowers the target and cancels only unclaimed or pre-registration provisioning operations.
+4. If a provider launch is already irreversible, record the resulting host as excess capacity. Reconcile it through a later explicit node-removal operation rather than silently selecting a ready node.
+5. Release a reservation only when its provisioning operation is safely cancelled or its provider instance is actually released.
+
+### 9.2 `DeleteNodes`: remove explicitly named nodes
+
+1. CA determines that named nodes can be removed, considering cooldowns, local storage, PDBs, and minimum group capacity.
+2. Crane verifies every node belongs to the stated group, atomically lowers the target, and creates one durable `NodeRemovalOperation` per node.
+3. Dominator is the sole Kubernetes drain coordinator. It cordons the node, performs eviction, and records blocking Pods/PDBs. Subd performs requested host-local preparation and reports its outcome.
+4. A blocked drain retries with backoff until its deadline. The node remains cordoned while active; expiry reports a blocked operation and does not terminate the instance.
+5. After eviction completes, Dominator terminates the provider instance, marks the host terminated, and releases its credits.
+
+### 9.3 Repair and maintenance
+
+Repair and maintenance use explicit host identities and the same drain coordinator. The operation records whether desired group capacity must be preserved. When availability policy requires replacement, reserve and provision replacement capacity before removing a reachable degraded host. Confirmed-dead or unreachable hosts follow a separately authorized force-removal policy because Subd cannot prepare them and eviction may be impossible. Maintenance, repair, and autoscaler deletion acquire exclusive operation ownership for a host so they cannot race.
+
+## 10. Failure handling & consistency
+
+- **Single durable authority:** PostgreSQL is the one source of truth for a capacity mutation. One transaction atomically writes the target revision, credit reservation, host intent, and executable operation, then commits. Dominator claims and reconciles those persisted operations; it must not "copy" them into a second authority. The Host Catalog is inventory derived from these records, not a competing writer.
+- **Database placement:** for the first milestone, Crane's operational database shares the same RDS instance as SPIRE (the `crane` database); there is no separate PostgreSQL deployment yet.
+- **Adapter request idempotency:** `(group_id, request_id)` uniqueness deduplicates downstream retries made by one live external-RPC handler. It does not identify an autoscaler decision and `(group_id, delta)` is never a key. A later identical delta is a new intent.
+- **Provider idempotency:** persist a provider idempotency token (AWS `ClientToken`) and immutable launch parameters with each provisioning operation so provider retries cannot launch a second instance.
+- **Recovery on lost response:** a live handler retries with its `RequestID`. If the adapter dies after commit, Cluster Autoscaler reads the committed target through `TargetSize`; reconciliation uses the persisted target revision, operation progress, and cloud inventory rather than blindly reapplying a delta.
+- **Target-first:** persist target + operation before external side effects; survive restarts.
+- **Operation ownership:** operations carry leases; a stale/expired controller is fenced from acting. Abandoned work is recovered, and an operation is cancelled when a newer target supersedes it. Leader election alone does not prevent delayed side effects from an old controller.
+- **Concurrency:** CAS on target revisions; transactional reservations; cannot exceed budget/overallocate zone.
+- **Partial provisioning:** handle launch success + lost response via inventory/operation state.
+- **Reconciliation:** periodic compare of desired/DB/Host Catalog/cloud/K8s Nodes.
+- **Safety:** group exhaustion is surfaced to the autoscaler; a group in another zone cluster cannot satisfy the request. Safe drain respects PDBs/minimum capacity and never terminates merely because a drain deadline expired. Credit reconciliation follows actual lifecycle state. Heartbeat freshness is a signal, not proof of death during partitions.
+
+## 11. Security (high level)
+
+- Developers use K8s RBAC only. Platform owns `CraneNodePool`/quotas.
+- Adapter authenticates to Crane with scoped identity; do not trust client-supplied team identity.
+- mTLS + scoped authorization for Crane→Dominator, Dominator→Subd, adapter→Crane, control-plane→catalog. Authentication ≠ authorization.
+- Hosts prove identity at enrollment (cloud instance identity/bootstrap). Keep cloud creds in control plane.
+- Audit capacity changes, rollouts, drains/terminations, quota denials, zone selections, launches.
+
+## 12. Observability (brief)
+
+- **Control plane** (crane-api, dominator): structured logs (slog), OTLP traces/metrics, audit trail.
+- **Data plane** (subd): structured local journald logs + heartbeat outcome reporting only; no streaming telemetry, no open listener.
+- Redact secrets in logs; replace `log.Fatal` in library paths with returned errors; propagate `request_id`/trace context; liveness/readiness split; inject `version`/`commit`.
+
+## 13. Testing strategy (key)
+
+- **Unit:** zone resolution, node-group/template validation, CAS/target updates, transactional reservations, idempotent replay, lifecycle transitions, logging redaction.
+- **Contract:** CA external gRPC adapter against exact upstream release (including group identity, template revisions), mTLS/auth boundaries.
+- **Integration/E2E:** aggregated pending demand → one request; downstream retry with one `RequestID`; adapter crash after commit followed by `TargetSize` refresh; two legitimate equal deltas; CAS conflict; provider lost-response recovery; target cancellation without deletion of ready nodes; explicit-node deletion; blocked PDB and unreachable-host behavior; automated zone bootstrap and handoff; restart recovery; audit events present.
+
+## 14. Phased implementation plan
+
+### Phase 0 — Architecture & compatibility spike
+- Pin K8s/CA/external gRPC/kubeadm versions, container runtime, and **Cilium** as CNI; confirm NodeGroup scope (per zone + per capacity class) and one-cluster-per-zone topology.
+- Define the **cluster record** and `ZoneBootstrapOperation` contracts, bootstrap state machine, handoff gate, and join-token flow through the destination Kubernetes API.
+- Define handler-scoped adapter `RequestID`, revision-checked `SetTarget`, replay/recovery rules, and provider-token scope. Confirm behavior with the pinned CA release for lost responses, adapter restart, equal consecutive deltas, and CAS conflict.
+- Decide credit semantics (capacity entitlement vs cost) and bootstrap identity. Dominator is the Kubernetes drain coordinator; Subd owns host-local preparation.
+- Exit: ADR covering the above; minimal adapter reports a cluster-scoped static group/template; compatibility tests prove target refresh/recovery semantics for the pinned CA release.
+
+### Phase 1 — Control-plane data model & structured logging foundation
+- Models: `Zone`, `NodeGroup`, `NodePool`, `CapacityRequest`, `CreditReservation`. Host Catalog schema with lifecycle states, desired/observed versions, allocatable/reserved, operations.
+- Add `ZoneBootstrapOperation` and `NodeRemovalOperation`; enforce `(group_id, request_id)` uniqueness and target revisioning in persistence.
+- Implement the single-transaction mutation boundary: one PostgreSQL transaction writes target revision + credit reservation + host intent + executable operation; operation leases, stale-controller fencing, supersede cancellation, and provider idempotency token persisted with the operation.
+- slog migration with redaction, OTLP init (no-op fallback), `gofmt`/`go vet`/`go test` in CI.
+- Exit: durable state models compile; the atomic mutation boundary is proven by tests (no partial writes); control-plane binaries use structured redaction-safe logging.
+
+### Phase 2 — One zone end-to-end
+- Assume layer zero exists (SPIRE + Postgres + a running `crane-api` in the platform team's first zone); subsequent zones are created via the Crane API.
+- Implement adapter-to-Crane target protocol (handler `RequestID`, target revision CAS, replay, lost-response and adapter-crash recovery).
+- Provider-backed create/delete, per-zone cluster record, zone-scoped Dominator reconciler, Subd enrollment via `kubeadm join` (Cilium), endpoint/reporting.
+- Implement the Zone Bootstrap Controller and use it to create one subsequent zone: provision control plane, run `kubeadm init`, install Cilium/Dominator, validate, and hand off.
+- Audit events on bootstrap and catalog transitions. Include lost autoscaler and provider response recovery tests (fake/LocalStack).
+- Exit: one request provisions one node → Subd enrolls and runs `kubeadm join` → node registers, converges, becomes Kubernetes Ready, and has its provisioning taint/cordon removed; downstream retry returns the same outcome; adapter crash recovers via target refresh; one subsequent zone reaches validated handoff.
+
+### Phase 3 — Credits & authorization
+- Transactional reservation ledger, concurrency-safe budget checks, replay semantics.
+- Trusted team/cluster/pool identity; quota-denial reasons + audit.
+- mTLS + scoped authorization (adapter→Crane, Crane→Dominator, Dominator→Subd), periodic reconciliation.
+- Exit: concurrent requests cannot exceed budget; retries with the same handler `RequestID` do not create new reservations; two legitimate equal deltas both apply; all pending/provisioned instances are accounted for.
+
+### Phase 4 — Autoscaler adapter & cluster-scoped capacity policy
+- CA external gRPC adapter: group discovery, templates, target/actual, increase/decrease by group ID.
+- Expose only groups for the adapter's `ClusterID`; honor the selected `NodeGroupID`; aggregated demand remains in CA.
+- Validate group/cluster/zone consistency, reserve capacity transactionally, and enforce Dominator zone ownership. Do not rank or redirect to another zone cluster.
+- Exit: unschedulable Pod → aggregated CA request → adapter → Crane → node ready; app teams never call Crane directly.
+
+### Phase 5 — Scale-down, repair & hardening
+- Implement distinct `DecreaseTargetSize` cancellation and explicit `DeleteNodes` workflows. Cancellation never deletes a ready node; irreversible launches become observable excess capacity.
+- Dominator owns cordon/eviction/drain completion; test blocked PDBs, expired drain deadlines, unreachable Subd, cancellation during launch, and exclusive host operation ownership. Terminate only after the applicable safety gate; release credits **after actual termination**.
+- Failure detection, replacement, orphan reconciliation, controller restart recovery from durable state.
+- Per-zone cluster outage handling, credit leak prevention, and replacement-at-quota tests. Cross-cluster workload failover remains out of scope.
+- Exit: safe scale-down, restart recovery works, no credit leaks on failures/retries.
+
+### Phase 6 — CRDs, golden-image rollouts & production readiness (consolidated)
+- `CraneNodePool` CRD + validating RBAC/admission; controller validation/status.
+- Version-pinned golden-image/expected-state rollouts with canary + Subd convergence reporting.
+- Health (liveness/readiness), version/commit injection, metrics/traces hardening, runbooks, pilot readiness.
+- Exit: policy declared via K8s CRDs; rollouts version-pinned and observable; fleet converges under failures.
+
+## 15. Open questions (resolve before API freeze)
+1. NodeGroup scope: per (zone, capacity class) only, or other combinations?
+2. Credit model: capacity entitlement, cost budget, or both?
+3. Bootstrap identity: mechanism for nodes to prove identity on enrollment? (Layer zero provides SPIRE with AWS instance-identity attestation — confirm this is the enrollment path.)
+4. Force-removal policy: which confirmed-dead-host conditions and actor authorization permit bypassing normal drain completion?
+5. Subd reporting boundary: local journald + heartbeat outcome only; no streaming telemetry—confirm acceptable?
+
+## 16. Definition of Done
+- Layer zero (SPIRE + Postgres + `crane-api`) is bring-up-able from a developer machine; subsequent zones are created through the Crane API.
+- The Zone Bootstrap Controller creates a subsequent cluster through `Ready`, then hands routine execution to its authenticated Dominator before worker provisioning is enabled.
+- A K8s-only workflow triggers aggregated capacity requests; each external RPC becomes a revision-checked target mutation with a handler-scoped `(group_id,request_id)` retry key.
+- No double-provisioning or double-reserving on downstream/provider retry; adapter loss recovers through target refresh; two legitimate equal deltas remain distinct intents.
+- Credits reserved atomically in the same PostgreSQL transaction that writes the target revision, host intent, and executable operation; released only after actual termination; no leaks on restarts/failures/partial launches.
+- Operations are leased and fenced: a superseded or stale controller cannot apply delayed side effects.
+- Nodes join their per-zone cluster via `kubeadm`; registration and convergence are distinct from readiness. Dominator declares ready only after Kubernetes Ready/network, identity/labels, expected-state, and Cilium gates pass.
+- Each autoscaler sees only groups for its cluster. The selected group is always honored, and a node-capacity request is never redirected to another cluster or zone.
+- `DecreaseTargetSize` cancels only unfulfilled capacity; `DeleteNodes` removes named nodes. Dominator solely owns Kubernetes cordon/eviction/drain, and blocked drains do not terminate instances implicitly.
+- Structured, redaction-safe logs; liveness/readiness; basic OTLP telemetry; `gofmt`/`go vet`/`go test` pass in CI.
+- Capacity changes, drains/terminations, rollouts, quota denials, zone selections are auditable end-to-end.
+- Subd observable via local journald + heartbeat outcome; no streaming telemetry or open listeners.
