@@ -89,6 +89,11 @@ variables → Actions → Variables) — not secrets, since neither is sensitive
 | `AWS_ROLE_ARN` | `arn:aws:iam::123456789012:role/gha-crane-oss-release` | Role the workflow assumes via OIDC. |
 | `AWS_REGION` | `us-west-2` | Region for the ECR login/registry. |
 
+ECR is **optional**. GHCR is the primary registry and is always published using
+the built-in `GITHUB_TOKEN`. The workflow skips ECR when `AWS_ROLE_ARN` and
+`AWS_REGION` are unset, and a failure while assuming the role or logging in to
+ECR does not block the GHCR publish.
+
 ## 4. Verify
 
 Trigger the **Release** workflow (`workflow_dispatch`) and confirm the `images`
