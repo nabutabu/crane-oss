@@ -3,20 +3,28 @@ package telemetry
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/metric"
+	metricnoop "go.opentelemetry.io/otel/metric/noop"
 	"go.opentelemetry.io/otel/propagation"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.34.0"
 	"go.opentelemetry.io/otel/trace"
+	tracenoop "go.opentelemetry.io/otel/trace/noop"
 )
+
+// EnvOTLPEndpoint configures the OTLP gRPC collector endpoint. When unset,
+// telemetry falls back to no-op providers.
+const EnvOTLPEndpoint = "OTEL_EXPORTER_OTLP_ENDPOINT"
 
 // Config holds telemetry configuration.
 type Config struct {
@@ -30,15 +38,58 @@ type ShutdownFunc func(context.Context) error
 
 // Provider holds telemetry providers.
 type Provider struct {
-	TracerProvider *sdktrace.TracerProvider
-	MeterProvider  *sdkmetric.MeterProvider
+	TracerProvider trace.TracerProvider
+	MeterProvider  metric.MeterProvider
 	Tracer         trace.Tracer
 	Meter          metric.Meter
 	Shutdown       ShutdownFunc
 }
 
-// New initializes OpenTelemetry with OTLP exporters (gRPC).
+// New initializes OpenTelemetry with OTLP exporters (gRPC). When
+// OTEL_EXPORTER_OTLP_ENDPOINT is unset, or when initialization fails, New
+// returns a true no-op provider. In that failure case the returned error
+// describes the problem and the provider is still safe to use and shut down.
 func New(ctx context.Context, cfg Config) (*Provider, error) {
+	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
+		propagation.TraceContext{},
+		propagation.Baggage{},
+	))
+
+	endpoint := strings.TrimSpace(os.Getenv(EnvOTLPEndpoint))
+	if endpoint == "" {
+		return newNoopProvider(cfg), nil
+	}
+	if strings.Contains(endpoint, "://") {
+		u, err := url.Parse(endpoint)
+		if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil {
+			return newNoopProvider(cfg), fmt.Errorf("invalid OTLP endpoint URL")
+		}
+	}
+
+	p, err := newOTLPProvider(ctx, cfg, endpoint)
+	if err != nil {
+		return newNoopProvider(cfg), fmt.Errorf("otlp telemetry init failed; continuing with no-op providers: %w", err)
+	}
+	return p, nil
+}
+
+func newNoopProvider(cfg Config) *Provider {
+	tracerProvider := tracenoop.NewTracerProvider()
+	meterProvider := metricnoop.NewMeterProvider()
+
+	otel.SetTracerProvider(tracerProvider)
+	otel.SetMeterProvider(meterProvider)
+
+	return &Provider{
+		TracerProvider: tracerProvider,
+		MeterProvider:  meterProvider,
+		Tracer:         tracerProvider.Tracer(cfg.ServiceName),
+		Meter:          meterProvider.Meter(cfg.ServiceName),
+		Shutdown:       func(context.Context) error { return nil },
+	}
+}
+
+func newOTLPProvider(ctx context.Context, cfg Config, endpoint string) (*Provider, error) {
 	res, err := resource.New(ctx,
 		resource.WithAttributes(
 			semconv.ServiceNameKey.String(cfg.ServiceName),
@@ -50,17 +101,12 @@ func New(ctx context.Context, cfg Config) (*Provider, error) {
 		return nil, fmt.Errorf("failed to create resource: %w", err)
 	}
 
-	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
-		propagation.TraceContext{},
-		propagation.Baggage{},
-	))
-
-	tracerProvider, err := initTracerProvider(ctx, res)
+	tracerProvider, err := initTracerProvider(ctx, res, endpoint)
 	if err != nil {
 		return nil, err
 	}
 
-	meterProvider, err := initMeterProvider(ctx, res)
+	meterProvider, err := initMeterProvider(ctx, res, endpoint)
 	if err != nil {
 		_ = tracerProvider.Shutdown(ctx)
 		return nil, err
@@ -68,9 +114,6 @@ func New(ctx context.Context, cfg Config) (*Provider, error) {
 
 	otel.SetTracerProvider(tracerProvider)
 	otel.SetMeterProvider(meterProvider)
-
-	tracer := tracerProvider.Tracer(cfg.ServiceName)
-	meter := meterProvider.Meter(cfg.ServiceName)
 
 	shutdown := func(ctx context.Context) error {
 		var errs []error
@@ -89,22 +132,18 @@ func New(ctx context.Context, cfg Config) (*Provider, error) {
 	return &Provider{
 		TracerProvider: tracerProvider,
 		MeterProvider:  meterProvider,
-		Tracer:         tracer,
-		Meter:          meter,
+		Tracer:         tracerProvider.Tracer(cfg.ServiceName),
+		Meter:          meterProvider.Meter(cfg.ServiceName),
 		Shutdown:       shutdown,
 	}, nil
 }
 
-func initTracerProvider(ctx context.Context, res *resource.Resource) (*sdktrace.TracerProvider, error) {
-	endpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
-	if endpoint == "" {
-		tp := sdktrace.NewTracerProvider(sdktrace.WithResource(res))
-		return tp, nil
+func initTracerProvider(ctx context.Context, res *resource.Resource, endpoint string) (*sdktrace.TracerProvider, error) {
+	options := []otlptracegrpc.Option{otlptracegrpc.WithEndpoint(endpoint), otlptracegrpc.WithInsecure()}
+	if strings.Contains(endpoint, "://") {
+		options = []otlptracegrpc.Option{otlptracegrpc.WithEndpointURL(endpoint)}
 	}
-	exporter, err := otlptracegrpc.New(ctx,
-		otlptracegrpc.WithEndpoint(endpoint),
-		otlptracegrpc.WithInsecure(),
-	)
+	exporter, err := otlptracegrpc.New(ctx, options...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create OTLP trace exporter: %w", err)
 	}
@@ -115,16 +154,12 @@ func initTracerProvider(ctx context.Context, res *resource.Resource) (*sdktrace.
 	return tp, nil
 }
 
-func initMeterProvider(ctx context.Context, res *resource.Resource) (*sdkmetric.MeterProvider, error) {
-	endpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
-	if endpoint == "" {
-		mp := sdkmetric.NewMeterProvider(sdkmetric.WithResource(res))
-		return mp, nil
+func initMeterProvider(ctx context.Context, res *resource.Resource, endpoint string) (*sdkmetric.MeterProvider, error) {
+	options := []otlpmetricgrpc.Option{otlpmetricgrpc.WithEndpoint(endpoint), otlpmetricgrpc.WithInsecure()}
+	if strings.Contains(endpoint, "://") {
+		options = []otlpmetricgrpc.Option{otlpmetricgrpc.WithEndpointURL(endpoint)}
 	}
-	exporter, err := otlpmetricgrpc.New(ctx,
-		otlpmetricgrpc.WithEndpoint(endpoint),
-		otlpmetricgrpc.WithInsecure(),
-	)
+	exporter, err := otlpmetricgrpc.New(ctx, options...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create OTLP metric exporter: %w", err)
 	}

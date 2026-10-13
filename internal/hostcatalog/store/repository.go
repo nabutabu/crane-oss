@@ -3,7 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/nabutabu/crane-oss/pkg/api"
@@ -20,10 +20,10 @@ func NewPostgresHostStore(DB *sql.DB) *PostgresHostStore {
 }
 
 func (store *PostgresHostStore) Create(ctx context.Context, host *api.Host) error {
-	log.Println("/PostgresHostStore/Create")
+	slog.Debug("creating host", "host_id", host.ID)
 	query := "INSERT INTO host(id, role, zone, imageid, state, health, createdat, provider, providerid) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9)"
 
-	_, err := store.DB.Exec(query, host.ID, host.Role.Name, host.Zone, host.ImageID, host.State, host.Health, host.CreatedAt, host.Provider, host.ProviderID)
+	_, err := store.DB.ExecContext(ctx, query, host.ID, host.Role.Name, host.Zone, host.ImageID, host.State, host.Health, host.CreatedAt, host.Provider, host.ProviderID)
 	if err != nil {
 		return err
 	}
@@ -32,10 +32,10 @@ func (store *PostgresHostStore) Create(ctx context.Context, host *api.Host) erro
 }
 
 func (store *PostgresHostStore) Delete(ctx context.Context, id string) error {
-	log.Printf("/PostgresHostStore/Delete: id: %s\n", id)
+	slog.Debug("deleting host", "host_id", id)
 	query := "DELETE FROM host WHERE id = $1"
 
-	_, err := store.DB.Exec(query, id)
+	_, err := store.DB.ExecContext(ctx, query, id)
 
 	return err
 }
@@ -143,10 +143,10 @@ func (store *PostgresHostStore) GetByProviderID(ctx context.Context, id string) 
 }
 
 func (store *PostgresHostStore) UpdateState(ctx context.Context, id string, newState api.HostState) error {
-	log.Println("/PostgresHostStore/UpdateState")
+	slog.Debug("updating host state", "host_id", id, "new_state", newState)
 
 	query := "UPDATE host SET state = $1 WHERE id = $2"
-	_, err := store.DB.Exec(query, newState, id)
+	_, err := store.DB.ExecContext(ctx, query, newState, id)
 	if err != nil {
 		return err
 	}
@@ -155,10 +155,10 @@ func (store *PostgresHostStore) UpdateState(ctx context.Context, id string, newS
 }
 
 func (store *PostgresHostStore) UpdateHealth(ctx context.Context, id string, newHealth api.HostHealth) error {
-	log.Println("/PostgresHostStore/UpdateHealth")
+	slog.Debug("updating host health", "host_id", id, "new_health", newHealth)
 
 	query := "UPDATE host SET health = $1 WHERE id = $2"
-	_, err := store.DB.Exec(query, newHealth, id)
+	_, err := store.DB.ExecContext(ctx, query, newHealth, id)
 	if err != nil {
 		return err
 	}
@@ -167,10 +167,10 @@ func (store *PostgresHostStore) UpdateHealth(ctx context.Context, id string, new
 }
 
 func (store *PostgresHostStore) GetByZone(ctx context.Context, zone string) ([]*api.Host, error) {
-	log.Println("/PostgresHostStore/GetByZone")
+	slog.Debug("listing hosts by zone", "zone", zone)
 
 	query := `SELECT id, role, zone, imageid, state, health, createdat, provider, providerid, lastSeenHeartbeat FROM host`
-	rows, err := store.DB.Query(query)
+	rows, err := store.DB.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}
@@ -220,10 +220,10 @@ func (store *PostgresHostStore) GetByZone(ctx context.Context, zone string) ([]*
 }
 
 func (store *PostgresHostStore) ListHosts(ctx context.Context) ([]*api.Host, error) {
-	log.Println("/PostgresHostStore/ListHosts")
+	slog.Debug("listing hosts")
 
 	query := `SELECT id, role, zone, imageid, state, health, createdat, provider, providerid, lastseenheartbeat FROM host`
-	rows, err := store.DB.Query(query)
+	rows, err := store.DB.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}
@@ -273,34 +273,34 @@ func (store *PostgresHostStore) ListHosts(ctx context.Context) ([]*api.Host, err
 }
 
 func (store *PostgresHostStore) UpdateProviderID(ctx context.Context, hostID string, providerID string) error {
-	log.Println("/PostgresHostStore/UpdateProviderID")
+	slog.Debug("updating host provider id", "host_id", hostID)
 	query := "UPDATE host set providerID = $1 WHERE id = $2"
 
-	_, err := store.DB.Exec(query, providerID, hostID)
+	_, err := store.DB.ExecContext(ctx, query, providerID, hostID)
 
 	return err
 }
 
 func (store *PostgresHostStore) UpdateLastSeenHeartbeat(ctx context.Context, hostID string, lastSeen time.Time) error {
-	log.Println("/PostgresHostStore/UpdateLastSeenHeartbeat")
+	slog.Debug("updating last seen heartbeat", "host_id", hostID)
 	query := "UPDATE host SET lastSeenHeartbeat = $1 WHERE id = $2"
 
-	_, err := store.DB.Exec(query, lastSeen, hostID)
+	_, err := store.DB.ExecContext(ctx, query, lastSeen, hostID)
 
 	return err
 }
 
 func (store *PostgresHostStore) UpdateDBConnectionInfo(ctx context.Context, hostID string, endpoint string, port int32, dbname string, username string, secretarn string, rdssgid string) error {
-	log.Println("/PostgresHostStore/UpdateDBConnectionInfo")
+	slog.Debug("updating db connection info", "host_id", hostID)
 	query := "UPDATE host SET endpoint = $1, port = $2, dbname = $3, username = $4, secretarn = $5, rdssgid = $6 WHERE id = $7"
 
-	_, err := store.DB.Exec(query, endpoint, port, dbname, username, secretarn, rdssgid, hostID)
+	_, err := store.DB.ExecContext(ctx, query, endpoint, port, dbname, username, secretarn, rdssgid, hostID)
 
 	return err
 }
 
 func (store *PostgresHostStore) GetByToken(ctx context.Context, token string) (*api.Host, error) {
-	log.Println("/PostgresHostStore/")
+	slog.Debug("getting host by token")
 	query := "SELECT id, role, zone, imageid, state, health, createdat, provider, providerid, lastseenheartbeat FROM host WHERE token = $1"
 
 	row := store.DB.QueryRowContext(ctx, query, token)

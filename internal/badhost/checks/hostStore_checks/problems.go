@@ -2,7 +2,7 @@ package hoststorechecks
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/nabutabu/crane-oss/internal/badhost/problem"
@@ -25,7 +25,7 @@ func (check *UnhealthyHostStoreCheck) Name() string {
 }
 
 func (check *UnhealthyHostStoreCheck) Detect(ctx context.Context, host *api.Host) ([]problem.Problem, error) {
-	log.Printf("[INFO:HostStoreChecks]/Detect %s", host.ID)
+	slog.Debug("running host store check", "host_id", host.ID)
 	var problems []problem.Problem
 
 	if host.Health == api.HostHealthUnhealthy {

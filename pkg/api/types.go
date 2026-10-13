@@ -7,10 +7,16 @@ import (
 type HostState string
 
 const (
+	HostRequested    HostState = "REQUESTED"
 	HostProvisioning HostState = "PROVISIONING"
+	HostBooting      HostState = "BOOTING"
+	HostRegistering  HostState = "REGISTERING"
+	HostConverging   HostState = "CONVERGING"
 	HostReady        HostState = "READY"
 	HostDraining     HostState = "DRAINING"
+	HostTerminating  HostState = "TERMINATING"
 	HostTerminated   HostState = "TERMINATED"
+	HostFailed       HostState = "FAILED"
 	HostUnhealthy    HostState = "UNHEALTHY"
 )
 
@@ -53,25 +59,33 @@ type HealthRequest struct {
 }
 
 type Host struct {
-	ID                string
-	HostName          string
-	ProviderID        string
-	Provider          string
-	Role              Role
-	Zone              string
-	Fleet             Fleet
-	ImageID           string
-	Capacity          Capacity
-	State             HostState
-	Health            HostHealth
-	CreatedAt         time.Time
-	LastSeenHeartbeat time.Time
-	Endpoint          string
-	Port              int32
-	DBName            string
-	Username          string
-	SecretARN         string
-	RDSSGID           string
+	NodeGroupID          string
+	NodePoolID           string
+	OperationID          string
+	DesiredStateVersion  string
+	ObservedStateVersion string
+	Allocatable          Resources
+	Reserved             Resources
+	ExcessCapacity       bool
+	ID                   string
+	HostName             string
+	ProviderID           string
+	Provider             string
+	Role                 Role
+	Zone                 string
+	Fleet                Fleet
+	ImageID              string
+	Capacity             Capacity
+	State                HostState
+	Health               HostHealth
+	CreatedAt            time.Time
+	LastSeenHeartbeat    time.Time
+	Endpoint             string
+	Port                 int32
+	DBName               string
+	Username             string
+	SecretARN            string
+	RDSSGID              string
 }
 
 type DesiredState struct {

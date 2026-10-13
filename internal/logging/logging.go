@@ -2,6 +2,7 @@ package logging
 
 import (
 	"io"
+	stdlog "log"
 	"log/slog"
 	"os"
 	"strings"
@@ -58,13 +59,25 @@ func New(service string) *Logger {
 		handler = slog.NewTextHandler(w, opts)
 	}
 
-	logger := slog.New(handler).With(
+	// Redaction is applied at the handler level so every attribute, group,
+	// attached field, and message is sanitized before it is written.
+	logger := slog.New(NewRedactHandler(handler)).With(
 		slog.String("service", service),
 		slog.String("version", version.Version),
 		slog.String("commit", version.Commit),
 	)
 
 	return &Logger{Logger: logger}
+}
+
+// SetDefault installs l as the process-wide slog logger and routes the
+// standard library "log" package through its handler so legacy log calls are
+// emitted as structured, redaction-safe records.
+func (l *Logger) SetDefault() {
+	slog.SetDefault(l.Logger)
+	stdlog.SetOutput(slog.NewLogLogger(l.Logger.Handler(), slog.LevelInfo).Writer())
+	stdlog.SetFlags(0)
+	stdlog.SetPrefix("")
 }
 
 // With returns a new logger with additional attributes.

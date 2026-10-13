@@ -2,7 +2,7 @@ package execute
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"time"
 )
 
@@ -22,16 +22,16 @@ func (w *Worker) Run(ctx context.Context) {
 	ticker := time.NewTicker(time.Minute * 1)
 	defer ticker.Stop()
 
-	log.Printf("[Executor] starting")
+	slog.Info("executor worker starting")
 
 	for range ticker.C {
 		record, err := w.store.Next(ctx)
 		if err != nil {
-			log.Printf("[Info:Executor]/Run/Next %v", err)
+			slog.Error("failed to fetch next action", "error", err)
 			continue
 		}
 
-		log.Println("calling execute")
+		slog.Debug("calling execute", "action_id", record.ID, "host_id", record.HostID, "action", record.Type)
 		err = w.executor.Execute(ctx, &Action{
 			HostID: record.HostID,
 			Type:   record.Type,
@@ -39,13 +39,13 @@ func (w *Worker) Run(ctx context.Context) {
 		if err != nil {
 			// action failed
 			w.store.MarkFailed(ctx, record.ID)
-			log.Println(err)
+			slog.Error("action failed", "action_id", record.ID, "host_id", record.HostID, "error", err)
 		}
 
 		// mark action completed
 		err = w.store.MarkDone(ctx, record.ID)
 		if err != nil {
-			log.Println(err)
+			slog.Error("failed to mark action done", "action_id", record.ID, "error", err)
 		}
 	}
 }

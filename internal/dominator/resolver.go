@@ -4,7 +4,7 @@ import (
 	"crypto/sha1"
 	"encoding/binary"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 
 	"github.com/nabutabu/crane-oss/pkg/api"
@@ -15,9 +15,15 @@ import (
 
 type PolicyResolver struct {
 	program *starlark.Program
+	logger  *slog.Logger
 }
 
-func NewPolicyResolver(path string) (*PolicyResolver, error) {
+func NewPolicyResolver(path string, loggers ...*slog.Logger) (*PolicyResolver, error) {
+	logger := slog.Default()
+	if len(loggers) > 0 && loggers[0] != nil {
+		logger = loggers[0]
+	}
+
 	src, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -32,6 +38,7 @@ func NewPolicyResolver(path string) (*PolicyResolver, error) {
 
 	return &PolicyResolver{
 		program: prog,
+		logger:  logger,
 	}, nil
 }
 
@@ -111,6 +118,16 @@ func (r *PolicyResolver) Resolve(host *api.Host) (api.DesiredState, error) {
 		return api.DesiredState{}, err
 	}
 
-	log.Printf("Sending following desired state to subd: %s", result)
-	return starlarkResultToDesiredState(result)
+	desired, err := starlarkResultToDesiredState(result)
+	if err != nil {
+		return api.DesiredState{}, err
+	}
+
+	r.logger.Info("sending desired state to subd",
+		"host_id", host.ID,
+		"image_id", desired.ImageID,
+		"track", desired.Track,
+		"version", desired.Version,
+	)
+	return desired, nil
 }

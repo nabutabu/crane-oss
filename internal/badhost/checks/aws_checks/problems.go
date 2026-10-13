@@ -2,7 +2,7 @@ package aws_checks
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -28,7 +28,7 @@ func NewUnhealthyEC2Instance(client *ec2.Client) *UnhealthyEC2InstanceCheck {
 }
 
 func (ec2Instance *UnhealthyEC2InstanceCheck) Detect(ctx context.Context, host *api.Host) ([]problem.Problem, error) {
-	log.Println("/aws/DetectProblems")
+	slog.Debug("running unhealthy ec2 instance check", "host_id", host.ID, "provider_id", host.ProviderID)
 	input := &ec2.DescribeInstanceStatusInput{
 		InstanceIds: []string{host.ProviderID},
 		// Optional: IncludeAllInstances can be set to false if only a specific instance is needed

@@ -3,7 +3,7 @@ package execute
 import (
 	"context"
 	"database/sql"
-	"log"
+	"log/slog"
 )
 
 type PostgresActionStore struct {
@@ -17,7 +17,7 @@ func NewPostgresActionStore(DB *sql.DB) *PostgresActionStore {
 }
 
 func (store *PostgresActionStore) Enqueue(ctx context.Context, action *ActionRecord) error {
-	log.Println("/PostgresActionStore/Enqueue")
+	slog.Debug("enqueuing action", "host_id", action.HostID, "action", action.Type)
 
 	query := `
         INSERT INTO actions (hostid, status, attempts, createdat, type)
@@ -26,17 +26,17 @@ func (store *PostgresActionStore) Enqueue(ctx context.Context, action *ActionRec
     `
 
 	var id int
-	err := store.DB.QueryRow(query, action.HostID, action.Type).Scan(&id)
+	err := store.DB.QueryRowContext(ctx, query, action.HostID, action.Type).Scan(&id)
 	if err != nil {
 		return err
 	}
-	log.Printf("New task id: %d", id)
+	slog.Debug("action enqueued", "action_id", id, "host_id", action.HostID)
 
 	return nil
 }
 
 func (store *PostgresActionStore) Next(ctx context.Context) (*ActionRecord, error) {
-	log.Println("/PostgresActionStore/Next")
+	slog.Debug("fetching next action")
 	var record ActionRecord
 	query := `
         UPDATE actions
@@ -51,7 +51,7 @@ func (store *PostgresActionStore) Next(ctx context.Context) (*ActionRecord, erro
         )
         RETURNING id, hostid, attempts, type, provider
     `
-	err := store.DB.QueryRow(query).Scan(
+	err := store.DB.QueryRowContext(ctx, query).Scan(
 		&record.ID,
 		&record.HostID,
 		&record.Attempts,
@@ -67,9 +67,9 @@ func (store *PostgresActionStore) Next(ctx context.Context) (*ActionRecord, erro
 }
 
 func (store *PostgresActionStore) MarkDone(ctx context.Context, id int) error {
-	log.Println("/PostgresActionStore/MarkDone")
+	slog.Debug("marking action done", "action_id", id)
 	// Mark it done
-	_, err := store.DB.Exec("UPDATE actions SET status='done', updatedat=NOW() WHERE id=$1", id)
+	_, err := store.DB.ExecContext(ctx, "UPDATE actions SET status='done', updatedat=NOW() WHERE id=$1", id)
 	if err != nil {
 		return err
 	}
@@ -77,9 +77,9 @@ func (store *PostgresActionStore) MarkDone(ctx context.Context, id int) error {
 }
 
 func (store *PostgresActionStore) MarkFailed(ctx context.Context, id int) error {
-	log.Println("/PostgresActionStore/MarkFailed")
+	slog.Debug("marking action failed", "action_id", id)
 	// Mark it failed
-	_, err := store.DB.Exec("UPDATE actions SET status='failed', updatedat=NOW() WHERE id=$1", id)
+	_, err := store.DB.ExecContext(ctx, "UPDATE actions SET status='failed', updatedat=NOW() WHERE id=$1", id)
 	if err != nil {
 		return err
 	}

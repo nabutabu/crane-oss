@@ -3,7 +3,7 @@ package service
 import (
 	"context"
 	"errors"
-	"log"
+	"log/slog"
 	"slices"
 	"time"
 
@@ -16,18 +16,43 @@ type HostCatalogService struct {
 	store *store.PostgresHostStore
 }
 
+var ErrManagedCapacity = errors.New("capacity-managed host requires a fenced durable operation")
+
+// EnsureLegacyLifecycle keeps the legacy action queue from becoming a second
+// lifecycle authority for hosts admitted through the capacity transaction.
+func (service *HostCatalogService) EnsureLegacyLifecycle(ctx context.Context, id string) error {
+	var managed bool
+	if err := service.store.DB.QueryRowContext(ctx, `SELECT node_group_id IS NOT NULL FROM host WHERE id=$1`, id).Scan(&managed); err != nil {
+		return err
+	}
+	if managed {
+		return ErrManagedCapacity
+	}
+	return nil
+}
+
 func NewHostCatalogService(store *store.PostgresHostStore) *HostCatalogService {
 	return &HostCatalogService{store: store}
 }
 
 func GetValidNextStates(currState api.HostState) []api.HostState {
 	switch currState {
+	case api.HostRequested:
+		return []api.HostState{api.HostProvisioning, api.HostTerminated, api.HostFailed}
 	case api.HostProvisioning:
-		return []api.HostState{api.HostReady}
+		return []api.HostState{api.HostBooting, api.HostFailed}
+	case api.HostBooting:
+		return []api.HostState{api.HostRegistering, api.HostFailed}
+	case api.HostRegistering:
+		return []api.HostState{api.HostConverging, api.HostFailed}
+	case api.HostConverging:
+		return []api.HostState{api.HostReady, api.HostFailed}
 	case api.HostReady:
 		return []api.HostState{api.HostDraining, api.HostUnhealthy}
 	case api.HostDraining:
-		return []api.HostState{api.HostUnhealthy, api.HostTerminated}
+		return []api.HostState{api.HostUnhealthy, api.HostTerminating}
+	case api.HostTerminating:
+		return []api.HostState{api.HostTerminated, api.HostFailed}
 	case api.HostUnhealthy:
 		return []api.HostState{api.HostReady, api.HostTerminated}
 	case api.HostTerminated:
@@ -42,7 +67,10 @@ func (service *HostCatalogService) TransitionState(
 	id string,
 	newState api.HostState,
 ) error {
-	log.Printf("/service.go/TransitionState %s newState: %s\n", id, newState)
+	if err := service.EnsureLegacyLifecycle(ctx, id); err != nil {
+		return err
+	}
+	slog.Info("transitioning host state", "host_id", id, "new_state", newState)
 	// 1. load host
 	host, err := service.store.GetByID(ctx, id)
 	if err != nil {
@@ -87,6 +115,9 @@ func (service *HostCatalogService) CreateHost(ctx context.Context, provider stri
 }
 
 func (service *HostCatalogService) UpdateHostProviderID(ctx context.Context, hostID string, providerID string) error {
+	if err := service.EnsureLegacyLifecycle(ctx, hostID); err != nil {
+		return err
+	}
 	return service.store.UpdateProviderID(ctx, hostID, providerID)
 }
 
@@ -95,6 +126,9 @@ func (service *HostCatalogService) UpdateLastSeenHeartbeat(ctx context.Context, 
 }
 
 func (service *HostCatalogService) DeleteHost(ctx context.Context, id string) error {
+	if err := service.EnsureLegacyLifecycle(ctx, id); err != nil {
+		return err
+	}
 	return service.store.Delete(ctx, id)
 }
 
@@ -107,6 +141,9 @@ func (service *HostCatalogService) GetByToken(ctx context.Context, token string)
 }
 
 func (service *HostCatalogService) UpdateState(ctx context.Context, id string, newState string) error {
+	if err := service.EnsureLegacyLifecycle(ctx, id); err != nil {
+		return err
+	}
 	return service.store.UpdateState(ctx, id, api.HostState(newState))
 }
 

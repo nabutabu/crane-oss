@@ -1,0 +1,142 @@
+-- Additive migration: existing host/action inventory is preserved.
+CREATE TABLE IF NOT EXISTS zones (
+ id text PRIMARY KEY, provider text NOT NULL, account_id text NOT NULL,
+ region text NOT NULL, provider_zone_id text NOT NULL,
+ enabled boolean NOT NULL DEFAULT true, lifecycle_state text NOT NULL DEFAULT 'requested',
+ UNIQUE(provider, account_id, region, provider_zone_id), UNIQUE(id, provider_zone_id)
+);
+CREATE TABLE IF NOT EXISTS clusters (
+ id text PRIMARY KEY, zone_id text NOT NULL UNIQUE REFERENCES zones(id),
+ api_server_endpoint text NOT NULL DEFAULT '', ca_cert_hash text NOT NULL DEFAULT '',
+ kubeadm_version text NOT NULL, kubelet_version text NOT NULL,
+ container_runtime text NOT NULL, cni text NOT NULL CHECK(cni = 'cilium'),
+ join_configuration jsonb NOT NULL DEFAULT '{}', lifecycle_state text NOT NULL DEFAULT 'requested',
+ UNIQUE(id, zone_id)
+);
+CREATE TABLE IF NOT EXISTS team_budgets (
+ team_id text PRIMARY KEY,
+ vcpu bigint NOT NULL CHECK(vcpu >= 0), memory_mib bigint NOT NULL CHECK(memory_mib >= 0),
+ nodes bigint NOT NULL CHECK(nodes >= 0)
+);
+CREATE TABLE IF NOT EXISTS node_pools (
+ id text PRIMARY KEY, team_id text NOT NULL REFERENCES team_budgets(team_id),
+ enabled boolean NOT NULL DEFAULT true,
+ max_vcpu bigint NOT NULL CHECK(max_vcpu >= 0), max_memory_mib bigint NOT NULL CHECK(max_memory_mib >= 0),
+ max_nodes bigint NOT NULL CHECK(max_nodes >= 0)
+);
+CREATE TABLE IF NOT EXISTS node_groups (
+ id text PRIMARY KEY, cluster_id text NOT NULL, zone_id text NOT NULL,
+ node_pool_id text NOT NULL REFERENCES node_pools(id), capacity_class text NOT NULL,
+ provider_zone_id text NOT NULL, target_nodes bigint NOT NULL DEFAULT 0,
+ target_revision bigint NOT NULL DEFAULT 0 CHECK(target_revision >= 0),
+ min_nodes bigint NOT NULL CHECK(min_nodes >= 0), max_nodes bigint NOT NULL,
+ template_revision text NOT NULL, lifecycle_state text NOT NULL DEFAULT 'active',
+ vcpu bigint NOT NULL CHECK(vcpu > 0), memory_mib bigint NOT NULL CHECK(memory_mib > 0),
+ launch_parameters jsonb NOT NULL,
+ CHECK(max_nodes >= min_nodes), CHECK(target_nodes BETWEEN min_nodes AND max_nodes),
+ FOREIGN KEY(cluster_id, zone_id) REFERENCES clusters(id, zone_id),
+ FOREIGN KEY(zone_id, provider_zone_id) REFERENCES zones(id, provider_zone_id),
+ UNIQUE(id, node_pool_id, zone_id)
+);
+CREATE TABLE IF NOT EXISTS capacity_requests (
+ id text PRIMARY KEY, group_id text NOT NULL REFERENCES node_groups(id), request_id text NOT NULL,
+ cluster_id text NOT NULL REFERENCES clusters(id), expected_revision bigint NOT NULL,
+ desired_target bigint NOT NULL, template_revision text NOT NULL, result_revision bigint NOT NULL,
+ created_at timestamptz NOT NULL DEFAULT clock_timestamp(), UNIQUE(group_id, request_id)
+);
+CREATE TABLE IF NOT EXISTS operations (
+ id text PRIMARY KEY, kind text NOT NULL CHECK(kind IN ('provision', 'create_zone', 'remove_node')),
+ zone_id text NOT NULL REFERENCES zones(id), group_id text REFERENCES node_groups(id),
+ host_id text, capacity_request_id text REFERENCES capacity_requests(id), target_revision bigint NOT NULL DEFAULT 0,
+ state text NOT NULL DEFAULT 'pending' CHECK(state IN ('pending', 'leased', 'launching', 'succeeded', 'cancelled', 'failed', 'blocked')),
+ provider_token text NOT NULL UNIQUE, parameters jsonb NOT NULL,
+ lease_owner text, lease_until timestamptz, fence bigint NOT NULL DEFAULT 0 CHECK(fence >= 0),
+ last_error text NOT NULL DEFAULT '', created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ CHECK((lease_owner IS NULL) = (lease_until IS NULL)),
+ CHECK(kind <> 'provision' OR (group_id IS NOT NULL AND host_id IS NOT NULL AND capacity_request_id IS NOT NULL))
+);
+CREATE INDEX IF NOT EXISTS operations_claim ON operations(zone_id, kind, state, lease_until);
+CREATE TABLE IF NOT EXISTS host (
+ id varchar PRIMARY KEY, role varchar, zone varchar, imageid varchar, state varchar NOT NULL,
+ health varchar, createdat timestamptz, updatedat timestamptz, provider varchar, providerid varchar,
+ lastseenheartbeat timestamptz, endpoint varchar, port int4, dbname varchar, username varchar,
+ secretarn varchar, rdssgid varchar
+);
+ALTER TABLE host ADD COLUMN IF NOT EXISTS node_group_id text;
+ALTER TABLE host ADD COLUMN IF NOT EXISTS node_pool_id text;
+ALTER TABLE host ADD COLUMN IF NOT EXISTS crane_zone text REFERENCES zones(id);
+ALTER TABLE host ADD COLUMN IF NOT EXISTS operation_id text REFERENCES operations(id);
+ALTER TABLE host ADD COLUMN IF NOT EXISTS desired_state_version text NOT NULL DEFAULT '';
+ALTER TABLE host ADD COLUMN IF NOT EXISTS observed_state_version text NOT NULL DEFAULT '';
+ALTER TABLE host ADD COLUMN IF NOT EXISTS allocatable_vcpu bigint NOT NULL DEFAULT 0 CHECK(allocatable_vcpu >= 0);
+ALTER TABLE host ADD COLUMN IF NOT EXISTS allocatable_memory_mib bigint NOT NULL DEFAULT 0 CHECK(allocatable_memory_mib >= 0);
+ALTER TABLE host ADD COLUMN IF NOT EXISTS reserved_vcpu bigint NOT NULL DEFAULT 0 CHECK(reserved_vcpu >= 0);
+ALTER TABLE host ADD COLUMN IF NOT EXISTS reserved_memory_mib bigint NOT NULL DEFAULT 0 CHECK(reserved_memory_mib >= 0);
+ALTER TABLE host ADD COLUMN IF NOT EXISTS excess_capacity boolean NOT NULL DEFAULT false;
+DO $$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'host_group_placement' AND conrelid='host'::regclass) THEN
+  ALTER TABLE host ADD CONSTRAINT host_group_placement FOREIGN KEY(node_group_id, node_pool_id, crane_zone)
+   REFERENCES node_groups(id, node_pool_id, zone_id) MATCH FULL;
+ END IF;
+END $$;
+DO $$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'host_lifecycle' AND conrelid='host'::regclass) THEN
+  ALTER TABLE host ADD CONSTRAINT host_lifecycle CHECK(state IN ('REQUESTED','PROVISIONING','BOOTING','REGISTERING','CONVERGING','READY','DRAINING','TERMINATING','TERMINATED','FAILED','UNHEALTHY')) NOT VALID;
+ END IF;
+END $$;
+DO $$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'operations_host' AND conrelid='operations'::regclass) THEN
+  ALTER TABLE operations ADD CONSTRAINT operations_host FOREIGN KEY(host_id) REFERENCES host(id) DEFERRABLE INITIALLY DEFERRED;
+ END IF;
+END $$;
+-- Recovery may change leases/status, but never the launch intent or ClientToken.
+CREATE OR REPLACE FUNCTION crane_immutable_operation() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+ IF ROW(NEW.kind,NEW.zone_id,NEW.group_id,NEW.host_id,NEW.capacity_request_id,NEW.target_revision,NEW.provider_token,NEW.parameters)
+   IS DISTINCT FROM ROW(OLD.kind,OLD.zone_id,OLD.group_id,OLD.host_id,OLD.capacity_request_id,OLD.target_revision,OLD.provider_token,OLD.parameters) THEN
+  RAISE EXCEPTION 'operation intent is immutable';
+ END IF;
+ RETURN NEW;
+END $$;
+CREATE TRIGGER immutable_operation BEFORE UPDATE ON operations FOR EACH ROW EXECUTE FUNCTION crane_immutable_operation();
+CREATE TABLE IF NOT EXISTS credit_reservations (
+ id text PRIMARY KEY, team_id text NOT NULL REFERENCES team_budgets(team_id),
+ group_id text NOT NULL REFERENCES node_groups(id), capacity_request_id text NOT NULL REFERENCES capacity_requests(id),
+ host_id varchar NOT NULL UNIQUE REFERENCES host(id),
+ vcpu bigint NOT NULL CHECK(vcpu > 0), memory_mib bigint NOT NULL CHECK(memory_mib > 0),
+ nodes bigint NOT NULL DEFAULT 1 CHECK(nodes = 1),
+ state text NOT NULL CHECK(state IN ('reserved', 'committed', 'released')),
+ created_at timestamptz NOT NULL DEFAULT clock_timestamp()
+);
+CREATE INDEX IF NOT EXISTS credit_reservations_budget ON credit_reservations(team_id, state);
+CREATE TABLE IF NOT EXISTS zone_bootstrap_operations (
+ operation_id text PRIMARY KEY REFERENCES operations(id), zone_id text NOT NULL REFERENCES zones(id),
+ phase text NOT NULL DEFAULT 'Requested' CHECK(phase IN ('Requested', 'InfrastructureProvisioning',
+ 'ControlPlaneInitializing', 'NetworkInstalling', 'DominatorInstalling', 'Validating', 'Ready', 'Failed'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS zone_bootstrap_active ON zone_bootstrap_operations(zone_id) WHERE phase NOT IN ('Ready','Failed');
+CREATE TABLE IF NOT EXISTS node_removal_operations (
+ operation_id text PRIMARY KEY REFERENCES operations(id), group_id text NOT NULL REFERENCES node_groups(id),
+ host_id varchar NOT NULL REFERENCES host(id), node_name text NOT NULL, provider_id text NOT NULL,
+ reason text NOT NULL CHECK(reason IN ('autoscaler-delete', 'repair', 'maintenance')),
+ preserve_desired_capacity boolean NOT NULL, drain_deadline timestamptz NOT NULL,
+ drain_status text NOT NULL DEFAULT 'pending', provider_termination_status text NOT NULL DEFAULT 'pending',
+ completed_at timestamptz
+);
+CREATE UNIQUE INDEX IF NOT EXISTS node_removal_exclusive ON node_removal_operations(host_id) WHERE completed_at IS NULL;
+-- Compatibility tables for the existing health/action control loops.
+CREATE TABLE IF NOT EXISTS actions (
+ id serial PRIMARY KEY, hostid varchar NOT NULL, status varchar NOT NULL,
+ attempts integer, createdat timestamptz, type varchar NOT NULL,
+ updatedat timestamptz, provider varchar, providerid varchar
+);
+CREATE TABLE IF NOT EXISTS host_problems (
+ id serial PRIMARY KEY, host_id varchar NOT NULL REFERENCES host(id),
+ problem_type varchar NOT NULL, severity varchar NOT NULL, details jsonb,
+ detected_at timestamptz NOT NULL, resolved_at timestamptz
+);
+CREATE TABLE IF NOT EXISTS host_health_trends (
+ id serial PRIMARY KEY, host_id varchar NOT NULL REFERENCES host(id), date date NOT NULL,
+ problems_detected integer NOT NULL DEFAULT 0, health_score decimal(5,2) NOT NULL DEFAULT 100.0
+);
