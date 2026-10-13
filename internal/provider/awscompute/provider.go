@@ -5,10 +5,9 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"time"
-
-	"log"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -64,7 +63,7 @@ func (p *Provider) GetProviderName() string {
 }
 
 func (p *Provider) TerminateHost(ctx context.Context, hostID string) error {
-	log.Println("/ec2/TerminateHost")
+	slog.Info("terminating host", "instance_id", hostID)
 	_, err := p.client.TerminateInstances(ctx, &ec2.TerminateInstancesInput{
 		InstanceIds: []string{hostID},
 	})
@@ -94,7 +93,7 @@ func buildUserData(templatePath string, conn api.DBConnectionInfo) (string, erro
 }
 
 func (p *Provider) ProvisionSpireHost(ctx context.Context, id string, connInfo api.DBConnectionInfo) (string, error) {
-	log.Println("/aws/ProvisionHost")
+	slog.Info("provisioning spire host", "host_id", id)
 
 	userData, err := buildUserData("cloud-init.yaml", connInfo)
 	if err != nil {
@@ -152,7 +151,7 @@ func (p *Provider) ProvisionSpireHost(ctx context.Context, id string, connInfo a
 }
 
 func (p *Provider) ProvisionHost(ctx context.Context, role string, id string) (string, error) {
-	log.Println("/aws/ProvisionHost")
+	slog.Info("provisioning host", "host_id", id, "role", role)
 
 	if role == "" {
 		return "", errors.New("role empty")
@@ -195,7 +194,7 @@ func (p *Provider) ProvisionHost(ctx context.Context, role string, id string) (s
 }
 
 func (p *Provider) ProvisionLB(ctx context.Context, VPCID string, subnetIDs []string, cfg api.LBConfig) (string, error) {
-	log.Printf("[AWSCompute]/ProvisionLB: name=%s, vpc=%s, port=%d, internal=%v", cfg.Name, VPCID, cfg.Port, cfg.Internal)
+	slog.Info("provisioning load balancer", "name", cfg.Name, "vpc_id", VPCID, "port", cfg.Port, "internal", cfg.Internal)
 	var elb *elasticloadbalancingv2.Client
 	if p.elbClient != nil {
 		elb = p.elbClient
@@ -240,12 +239,12 @@ func (p *Provider) ProvisionLB(ctx context.Context, VPCID string, subnetIDs []st
 	if err != nil {
 		var apiErr smithy.APIError
 		if errors.As(err, &apiErr) && apiErr.ErrorCode() == "DuplicateListener" {
-			log.Printf("listener already exists, skipping")
+			slog.Info("listener already exists", "port", cfg.Port, "target_group_arn", tgARN)
 		} else {
 			return "", fmt.Errorf("create listener: %w", err)
 		}
 	}
-	log.Printf("listener created: TCP:%d → %s", cfg.Port, tgARN)
+	slog.Info("listener created", "protocol", "TCP", "port", cfg.Port, "target_group_arn", tgARN)
 
 	return lbDNS, nil
 }
@@ -258,7 +257,7 @@ func (p *Provider) findOrCreateTargetGroup(ctx context.Context, elb *elasticload
 	})
 	if err == nil && len(descOut.TargetGroups) > 0 {
 		tgARN := *descOut.TargetGroups[0].TargetGroupArn
-		log.Printf("target group already exists: %s", tgARN)
+		slog.Info("target group already exists", "target_group_arn", tgARN)
 		return tgARN, nil
 	}
 
@@ -282,7 +281,7 @@ func (p *Provider) findOrCreateTargetGroup(ctx context.Context, elb *elasticload
 		return "", fmt.Errorf("create target group: %w", err)
 	}
 	tgARN := *tgOut.TargetGroups[0].TargetGroupArn
-	log.Printf("target group created: %s", tgARN)
+	slog.Info("target group created", "target_group_arn", tgARN)
 	return tgARN, nil
 }
 
@@ -295,7 +294,7 @@ func (p *Provider) findOrCreateNLB(ctx context.Context, elb *elasticloadbalancin
 	if err == nil && len(descOut.LoadBalancers) > 0 {
 		lb := descOut.LoadBalancers[0]
 		lbARN := *lb.LoadBalancerArn
-		log.Printf("NLB already exists: %s (%s)", *lb.DNSName, lbARN)
+		slog.Info("nlb already exists", "dns", *lb.DNSName, "lb_arn", lbARN)
 		return *lb.DNSName, lbARN, nil
 	}
 
@@ -313,12 +312,12 @@ func (p *Provider) findOrCreateNLB(ctx context.Context, elb *elasticloadbalancin
 	}
 	lb := lbOut.LoadBalancers[0]
 	lbARN := *lb.LoadBalancerArn
-	log.Printf("NLB provisioned: %s (%s)", *lb.DNSName, lbARN)
+	slog.Info("nlb provisioned", "dns", *lb.DNSName, "lb_arn", lbARN)
 	return *lb.DNSName, lbARN, nil
 }
 
 func (p *Provider) ProvisionSpireDB(ctx context.Context, VPCID string, subdnetIDs []string, ec2SecurityGroupID string) (api.DBConnectionInfo, string, error) {
-	log.Println("[AWSCompute]/ProvisionSpireDB")
+	slog.Info("provisioning spire database", "vpc_id", VPCID)
 	awsCfg, err := config.LoadDefaultConfig(ctx)
 	if err != nil {
 		return api.DBConnectionInfo{}, "", fmt.Errorf("load AWS config: %w", err)
@@ -354,10 +353,10 @@ func (p *Provider) ProvisionSpireDB(ctx context.Context, VPCID string, subdnetID
 			return api.DBConnectionInfo{}, "", fmt.Errorf("create RDS security group: %w", err)
 		}
 		rdsSGID = *sgOut.GroupId
-		log.Printf("RDS security group created: %s", rdsSGID)
+		slog.Info("rds security group created", "security_group_id", rdsSGID)
 	} else {
 		rdsSGID = *output.SecurityGroups[0].GroupId
-		log.Printf("Using existing RDS security group: %s", rdsSGID)
+		slog.Info("using existing rds security group", "security_group_id", rdsSGID)
 	}
 
 	// Allow inbound PostgreSQL from the EC2 security group only.
@@ -379,7 +378,7 @@ func (p *Provider) ProvisionSpireDB(ctx context.Context, VPCID string, subdnetID
 	if err != nil {
 		var apiErr smithy.APIError
 		if errors.As(err, &apiErr) && apiErr.ErrorCode() == "InvalidPermission.Duplicate" {
-			log.Printf("RDS ingress rule already exists, skipping")
+			slog.Info("rds ingress rule already exists")
 		} else {
 			return api.DBConnectionInfo{}, "", fmt.Errorf("authorize RDS ingress: %w", err)
 		}
@@ -447,7 +446,7 @@ func (p *Provider) ProvisionSpireDB(ctx context.Context, VPCID string, subdnetID
 	if err != nil {
 		return api.DBConnectionInfo{}, "", fmt.Errorf("create RDS instance: %w", err)
 	}
-	log.Printf("RDS instance creation started: %s", *dbOut.DBInstance.DBInstanceIdentifier)
+	slog.Info("rds instance creation started", "db_instance_id", *dbOut.DBInstance.DBInstanceIdentifier)
 
 	// ── 5. Wait for available ──────────────────────────────────────────────────
 	// RDS PostgreSQL takes ~5-10 minutes to become available.
@@ -455,7 +454,7 @@ func (p *Provider) ProvisionSpireDB(ctx context.Context, VPCID string, subdnetID
 	if err != nil {
 		return api.DBConnectionInfo{}, "", fmt.Errorf("RDS did not become available: %w", err)
 	}
-	log.Printf("RDS available at %s:%d", endpoint, dbPort)
+	slog.Info("rds available", "db_instance_id", dbInstanceID)
 
 	connInfo := api.DBConnectionInfo{
 		Endpoint:  endpoint,
@@ -491,7 +490,7 @@ func waitForRDSAvailable(ctx context.Context, client *rds.Client, instanceID str
 				return "", "", err
 			}
 			db := out.DBInstances[0]
-			log.Printf("RDS status: %s", *db.DBInstanceStatus)
+			slog.Debug("rds status", "db_instance_id", instanceID, "status", *db.DBInstanceStatus)
 			if *db.DBInstanceStatus == "available" && db.Endpoint != nil {
 				var secretARN string
 				if db.MasterUserSecret != nil && db.MasterUserSecret.SecretArn != nil {
@@ -545,7 +544,7 @@ func waitForNLBActive(ctx context.Context, elb *elasticloadbalancingv2.Client, l
 				return err
 			}
 			state := out.LoadBalancers[0].State.Code
-			log.Printf("NLB state: %s", state)
+			slog.Debug("nlb state", "lb_arn", lbARN, "state", string(state))
 			if state == elbv2types.LoadBalancerStateEnumActive {
 				return nil
 			}
@@ -559,7 +558,7 @@ func (p *Provider) DrainHost(ctx context.Context, hostID string) error {
 }
 
 func (p *Provider) RegisterTargets(ctx context.Context, targetGroupName string, instanceID string, port int32) error {
-	log.Printf("/aws/RegisterTargets: instance=%s to targetGroup=%s", instanceID, targetGroupName)
+	slog.Info("registering targets", "instance_id", instanceID, "target_group", targetGroupName)
 
 	awsCfg, err := config.LoadDefaultConfig(ctx)
 	if err != nil {
@@ -569,12 +568,12 @@ func (p *Provider) RegisterTargets(ctx context.Context, targetGroupName string, 
 	ec2Client := ec2.NewFromConfig(awsCfg)
 	elb := elasticloadbalancingv2.NewFromConfig(awsCfg)
 
-	log.Printf("Waiting for EC2 instance %s to be in running state...", instanceID)
+	slog.Debug("waiting for ec2 instance to run", "instance_id", instanceID)
 	err = waitForInstanceRunning(ctx, ec2Client, instanceID)
 	if err != nil {
 		return fmt.Errorf("instance not running: %w", err)
 	}
-	log.Printf("EC2 instance %s is now running", instanceID)
+	slog.Info("ec2 instance running", "instance_id", instanceID)
 
 	descOut, err := elb.DescribeTargetGroups(ctx, &elasticloadbalancingv2.DescribeTargetGroupsInput{
 		Names: []string{targetGroupName},
@@ -597,7 +596,7 @@ func (p *Provider) RegisterTargets(ctx context.Context, targetGroupName string, 
 		return fmt.Errorf("register targets: %w", err)
 	}
 
-	log.Printf("Successfully registered instance %s to target group %s", instanceID, targetGroupName)
+	slog.Info("registered instance to target group", "instance_id", instanceID, "target_group", targetGroupName)
 	return nil
 }
 
@@ -618,15 +617,15 @@ func waitForInstanceRunning(ctx context.Context, client *ec2.Client, instanceID 
 				InstanceIds: []string{instanceID},
 			})
 			if err != nil {
-				log.Printf("Error describing instance %s: %v", instanceID, err)
+				slog.Warn("failed to describe instance", "instance_id", instanceID, "error", err)
 				continue
 			}
 			if len(out.Reservations) == 0 || len(out.Reservations[0].Instances) == 0 {
-				log.Printf("Instance %s not found", instanceID)
+				slog.Debug("instance not found", "instance_id", instanceID)
 				continue
 			}
 			state := out.Reservations[0].Instances[0].State.Name
-			log.Printf("Instance %s state: %s", instanceID, state)
+			slog.Debug("instance state", "instance_id", instanceID, "state", string(state))
 			if state == ec2types.InstanceStateNameRunning {
 				return nil
 			}

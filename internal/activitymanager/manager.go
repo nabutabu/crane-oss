@@ -2,7 +2,7 @@ package activitymanager
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/nabutabu/crane-oss/internal/activitymanager/problemcache"
@@ -32,12 +32,12 @@ func (am *ActivityManager) Run(ctx context.Context) {
 	ticker := time.NewTicker(am.ScanInterval)
 	defer ticker.Stop()
 
-	log.Printf("[ActivityManager] starting")
+	slog.Info("activity manager starting")
 
 	for {
 		select {
 		case <-ctx.Done():
-			log.Println("[ActivityManager] shutting down")
+			slog.Info("activity manager shutting down")
 			return
 
 		case <-ticker.C:
@@ -50,11 +50,11 @@ func (am *ActivityManager) RunHelp(ctx context.Context) {
 	// get problems from ProblemStore
 	problems, err := am.problemStore.GetRecentProblems(ctx, am.contextWindow)
 	if err != nil {
-		log.Println(err)
+		slog.Error("failed to get recent problems", "error", err)
 		return
 	}
 
-	log.Printf("[Info:ActivityManager]/RunHelp: Problems seen: %v", problems)
+	slog.Info("problems seen", "count", len(problems))
 
 	// group problems by host
 	hostProblems := make(map[string][]problem.Problem)
@@ -81,12 +81,12 @@ func (am *ActivityManager) RunHelp(ctx context.Context) {
 			action := Decide(hostID, hostProblemList)
 
 			if action != nil {
-				log.Printf("Host: %s - Action: %s", hostID, action.Type)
+				slog.Info("action decided", "host_id", hostID, "action", action.Type)
 
 				// enqueue the action if one was decided
 				err := am.actionStore.Enqueue(ctx, action)
 				if err != nil {
-					log.Printf("Failed to enqueue action for host %s: %v", hostID, err)
+					slog.Error("failed to enqueue action", "host_id", hostID, "error", err)
 				}
 			}
 		}

@@ -4,9 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -17,12 +21,14 @@ import (
 	"github.com/nabutabu/crane-oss/internal/badhost"
 	"github.com/nabutabu/crane-oss/internal/badhost/checks"
 	"github.com/nabutabu/crane-oss/internal/badhost/problem"
+	"github.com/nabutabu/crane-oss/internal/capacity"
 	intconfig "github.com/nabutabu/crane-oss/internal/config"
 	"github.com/nabutabu/crane-oss/internal/execute"
 	"github.com/nabutabu/crane-oss/internal/hostcatalog/service"
 	"github.com/nabutabu/crane-oss/internal/hostcatalog/store"
 	"github.com/nabutabu/crane-oss/internal/logging"
 	"github.com/nabutabu/crane-oss/internal/provider/awscompute"
+	"github.com/nabutabu/crane-oss/internal/telemetry"
 	"github.com/nabutabu/crane-oss/internal/version"
 )
 
@@ -69,9 +75,34 @@ func BuildChecks(enabled []string, deps checks.Dependencies) ([]checks.Check, er
 }
 
 func main() {
+	if err := run(); err != nil {
+		slog.Error("crane-api stopped", "error", err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
 	logger := logging.New("crane-api")
+	logger.SetDefault()
 	logger.Info("crane-api", "version", version.String())
-	ctx := context.Background()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	telemetryProvider, err := telemetry.New(ctx, telemetry.Config{
+		ServiceName:    "crane-api",
+		ServiceVersion: version.Version,
+		Environment:    intconfig.GetEnv("ENVIRONMENT", ""),
+	})
+	if err != nil {
+		logger.Warn("telemetry disabled; continuing with no-op providers", "error", err)
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := telemetryProvider.Shutdown(shutdownCtx); err != nil {
+			logger.Error("telemetry shutdown failed", "error", err)
+		}
+	}()
 
 	host := intconfig.GetEnv("DB_HOST", "localhost")
 	port := intconfig.GetEnvInt("DB_PORT", 5432)
@@ -85,7 +116,11 @@ func main() {
 		host, port, user, password, dbname)
 	db, err := sql.Open("pgx", psqlInfo)
 	if err != nil {
-		logger.Info("error", "err", err)
+		return fmt.Errorf("open database: %w", err)
+	}
+	defer db.Close()
+	if err := capacity.Migrate(ctx, db); err != nil {
+		return fmt.Errorf("migrate capacity schema: %w", err)
 	}
 
 	actionStore := execute.NewPostgresActionStore(db)
@@ -97,8 +132,7 @@ func main() {
 		config.WithRegion("us-west-2"), // Optional: specify region here
 	)
 	if err != nil {
-		logger.Error("unable to load SDK config", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("load SDK config: %w", err)
 	}
 
 	ec2Client := ec2.NewFromConfig(cfg)
@@ -113,6 +147,7 @@ func main() {
 	executor := execute.NewDefaultExecutor(
 		hostCatalog,
 		provider,
+		logger.Logger,
 	)
 
 	worker := execute.NewWorker(
@@ -124,12 +159,12 @@ func main() {
 
 	bhd_config, err := LoadConfigFromFile(BHD_CONFIG_YAML_PATH)
 	if err != nil {
-		logger.Info("error", "err", err)
+		return fmt.Errorf("load bad host detector config: %w", err)
 	}
 
 	checks, err := BuildChecks(bhd_config.Checks, deps)
 	if err != nil {
-		logger.Info("error", "err", err)
+		return fmt.Errorf("build checks: %w", err)
 	}
 
 	bhd := badhost.New(hostCatalog, problemStore, checks, bhd_config)
@@ -153,10 +188,11 @@ func main() {
 	})
 
 	mux.HandleFunc("/v1/db/health", func(w http.ResponseWriter, r *http.Request) {
-		if err := db.Ping(); err != nil {
+		if err := db.PingContext(r.Context()); err != nil {
+			logger.Error("database health check failed", "error", err)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusServiceUnavailable)
-			fmt.Fprintf(w, `{"status": "unavailable", "error": "%v"}`, err)
+			fmt.Fprint(w, `{"status": "unavailable"}`)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -164,8 +200,22 @@ func main() {
 		fmt.Fprintf(w, `{"status": "available"}`)
 	})
 
-	if err := http.ListenAndServe(":43060", mux); err != nil {
-		logger.Error("listen error", "error", err)
-		os.Exit(1)
+	server := &http.Server{Addr: ":43060", Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+	shutdownDone := make(chan struct{})
+	go func() {
+		defer close(shutdownDone)
+		<-ctx.Done()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			logger.Error("HTTP shutdown failed", "error", err)
+		}
+	}()
+	err = server.ListenAndServe()
+	stop()
+	<-shutdownDone
+	if err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return err
 	}
+	return nil
 }
