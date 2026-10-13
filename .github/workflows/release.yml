@@ -11,8 +11,10 @@
 #   4. Runs goreleaser to cross-compile the subd host agent (linux/amd64 +
 #      linux/arm64), attach it to a GitHub Release, and publish checksums.
 #   5. Builds and pushes multi-arch container images for crane-api and
-#      dominator to both GHCR and ECR, tagged with the version, the git SHA,
-#      and latest.
+#      dominator to GHCR, tagged with the version, the git SHA, and latest.
+#      ECR is an optional secondary target: it is only pushed when the
+#      AWS_ROLE_ARN/AWS_REGION repository variables are configured, and a
+#      failure there never blocks the GHCR publish.
 #
 # Only subd is released as a binary; crane-api and dominator ship as images.
 # This follows the binary-release pattern used by ~/programs/herdr-observr.
@@ -157,8 +159,9 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   # crane-api and dominator are published as multi-arch container images to
-  # both GHCR (via the built-in token) and ECR (via AWS OIDC — no long-lived
-  # keys; see docs/ci-oidc.md for the one-time IAM setup).
+  # GHCR (via the built-in token). ECR (via AWS OIDC — no long-lived keys; see
+  # docs/ci-oidc.md) is optional and only used when its repository variables
+  # are configured.
   images:
     needs: release
     runs-on: ubuntu-latest
@@ -197,7 +200,23 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # ECR is optional: publishing to GHCR must never be blocked by missing or
+      # broken AWS configuration. Every ECR-specific step is gated on the two
+      # repository variables and allowed to fail on its own.
+      - name: Check ECR configuration
+        id: ecr
+        run: |
+          if [[ -n "${{ vars.AWS_ROLE_ARN }}" && -n "${{ vars.AWS_REGION }}" ]]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::AWS_ROLE_ARN/AWS_REGION not set — publishing to GHCR only."
+          fi
+
       - name: Configure AWS credentials (OIDC)
+        id: aws-creds
+        if: steps.ecr.outputs.enabled == 'true'
+        continue-on-error: true
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
@@ -206,7 +225,28 @@ jobs:
 
       - name: Log in to Amazon ECR
         id: login-ecr
+        if: steps.ecr.outputs.enabled == 'true' && steps.aws-creds.outcome == 'success'
+        continue-on-error: true
         uses: aws-actions/amazon-ecr-login@v2
+
+      # Build the tag list here so the single build/push below always includes
+      # GHCR and only adds ECR when its login actually succeeded.
+      - name: Compute image tags
+        id: tags
+        run: |
+          set -euo pipefail
+          {
+            echo "tags<<EOF"
+            echo "${{ matrix.ghcr_image }}:${{ needs.release.outputs.version }}"
+            echo "${{ matrix.ghcr_image }}:${{ needs.release.outputs.sha }}"
+            echo "${{ matrix.ghcr_image }}:latest"
+            if [[ "${{ steps.login-ecr.outcome }}" == "success" ]]; then
+              echo "${{ steps.login-ecr.outputs.registry }}/${{ matrix.ecr_repo }}:${{ needs.release.outputs.version }}"
+              echo "${{ steps.login-ecr.outputs.registry }}/${{ matrix.ecr_repo }}:${{ needs.release.outputs.sha }}"
+              echo "${{ steps.login-ecr.outputs.registry }}/${{ matrix.ecr_repo }}:latest"
+            fi
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Build and push ${{ matrix.service }}
         id: build
@@ -220,13 +260,7 @@ jobs:
             VERSION=${{ needs.release.outputs.version }}
             COMMIT=${{ needs.release.outputs.sha }}
             BUILD_DATE=${{ needs.release.outputs.date }}
-          tags: |
-            ${{ matrix.ghcr_image }}:${{ needs.release.outputs.version }}
-            ${{ matrix.ghcr_image }}:${{ needs.release.outputs.sha }}
-            ${{ matrix.ghcr_image }}:latest
-            ${{ steps.login-ecr.outputs.registry }}/${{ matrix.ecr_repo }}:${{ needs.release.outputs.version }}
-            ${{ steps.login-ecr.outputs.registry }}/${{ matrix.ecr_repo }}:${{ needs.release.outputs.sha }}
-            ${{ steps.login-ecr.outputs.registry }}/${{ matrix.ecr_repo }}:latest
+          tags: ${{ steps.tags.outputs.tags }}
 
       # Print the immutable digest so a deployment can pin by digest rather than
       # a mutable tag.
