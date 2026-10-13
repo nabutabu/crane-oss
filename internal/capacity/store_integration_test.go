@@ -1,0 +1,432 @@
+package capacity
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"os"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/stdlib"
+	"github.com/nabutabu/crane-oss/internal/hostcatalog/service"
+	"github.com/nabutabu/crane-oss/internal/hostcatalog/store"
+	"github.com/nabutabu/crane-oss/pkg/api"
+)
+
+// Every test gets an isolated schema. CI always supplies the database URL;
+// local developers can opt in without altering their operational inventory.
+func database(t *testing.T, legacy ...bool) *sql.DB {
+	t.Helper()
+	dsn := os.Getenv("CRANE_TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("set CRANE_TEST_DATABASE_URL to run PostgreSQL integration tests")
+	}
+	cfg, err := pgx.ParseConfig(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	admin := stdlib.OpenDB(*cfg)
+	schema := "phase1_" + uuid.New().String()[:8]
+	if _, err = admin.Exec(`CREATE SCHEMA ` + schema); err != nil {
+		admin.Close()
+		t.Fatal(err)
+	}
+	cfg.RuntimeParams["search_path"] = schema
+	db := stdlib.OpenDB(*cfg)
+	t.Cleanup(func() {
+		db.Close()
+		if _, err := admin.Exec(`DROP SCHEMA ` + schema + ` CASCADE`); err != nil {
+			t.Error(err)
+		}
+		admin.Close()
+	})
+	if len(legacy) > 0 && legacy[0] {
+		mustExec(t, db, `CREATE TABLE host(id varchar PRIMARY KEY,role varchar,zone varchar,imageid varchar,state varchar NOT NULL,health varchar,createdat timestamptz,updatedat timestamptz,provider varchar,providerid varchar,lastseenheartbeat timestamptz,endpoint varchar,port int4,dbname varchar,username varchar,secretarn varchar,rdssgid varchar);
+CREATE TABLE actions(id serial,hostid varchar NOT NULL,status varchar NOT NULL,attempts int4,createdat timestamptz,type varchar NOT NULL,updatedat timestamptz,provider varchar,providerid varchar);
+INSERT INTO host(id,state,zone) VALUES('legacy-host','READY','legacy-zone');
+INSERT INTO actions(hostid,status,type) VALUES('legacy-host','pending','legacy-action');`)
+	}
+	if err = Migrate(context.Background(), db); err != nil {
+		t.Fatal(err)
+	}
+	if err = Migrate(context.Background(), db); err != nil {
+		t.Fatalf("migration replay: %v", err)
+	}
+	_, err = db.Exec(`
+INSERT INTO zones(id,provider,account_id,region,provider_zone_id,lifecycle_state) VALUES('zone','aws','account','us-west-2','us-west-2a','ready');
+INSERT INTO clusters(id,zone_id,kubeadm_version,kubelet_version,container_runtime,cni,lifecycle_state) VALUES('cluster','zone','1.35.0','1.35.0','containerd','cilium','ready');
+INSERT INTO team_budgets(team_id,vcpu,memory_mib,nodes) VALUES('team',32,65536,8);
+INSERT INTO node_pools(id,team_id,max_vcpu,max_memory_mib,max_nodes) VALUES('pool','team',32,65536,8);
+INSERT INTO node_groups(id,cluster_id,zone_id,node_pool_id,capacity_class,provider_zone_id,min_nodes,max_nodes,template_revision,vcpu,memory_mib,launch_parameters) VALUES('group','cluster','zone','pool','general','us-west-2a',0,8,'template-1',4,8192,'{"image_id":"ami-pinned","instance_type":"m7i.xlarge"}');`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return db
+}
+
+func request(id string, revision, target int64) api.CapacityRequest {
+	return api.CapacityRequest{NodeGroupID: "group", ClusterID: "cluster", RequestID: id, ExpectedTargetRevision: revision, DesiredTarget: target, TemplateRevision: "template-1"}
+}
+func mustExec(t *testing.T, db *sql.DB, query string, args ...any) {
+	t.Helper()
+	if _, err := db.Exec(query, args...); err != nil {
+		t.Fatal(err)
+	}
+}
+func count(t *testing.T, db *sql.DB, table string) int {
+	t.Helper()
+	var n int
+	if err := db.QueryRow(`SELECT count(*) FROM ` + table).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+func TestPostgresAtomicMutationReplayAndEqualDeltas(t *testing.T) {
+	db := database(t)
+	s := NewStore(db)
+	ctx := context.Background()
+	r, err := s.SetTarget(ctx, request("first", 0, 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayed, err := s.SetTarget(ctx, request("first", 0, 1))
+	if err != nil || replayed != r {
+		t.Fatalf("replay: %#v, %v", replayed, err)
+	}
+	if _, err = s.SetTarget(ctx, request("first", 0, 2)); !errors.Is(err, ErrReplayMismatch) {
+		t.Fatalf("mismatched replay: %v", err)
+	}
+	if _, err = s.SetTarget(ctx, request("second", 1, 2)); err != nil {
+		t.Fatal(err)
+	}
+	for _, table := range []string{"capacity_requests", "operations", "host", "credit_reservations"} {
+		if n := count(t, db, table); n != 2 {
+			t.Errorf("%s count=%d", table, n)
+		}
+	}
+	r, err = s.Target(ctx, "cluster", "group")
+	if err != nil || r.TargetNodes != 2 || r.TargetRevision != 2 {
+		t.Fatalf("restart target refresh: %#v %v", r, err)
+	}
+	if _, err = s.SetTarget(ctx, request("stale", 0, 3)); !errors.Is(err, ErrConflict) {
+		t.Fatalf("CAS: %v", err)
+	}
+	bad := request("foreign", 2, 3)
+	bad.ClusterID = "other"
+	if _, err = s.SetTarget(ctx, bad); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("cluster isolation: %v", err)
+	}
+	bad = request("template", 2, 3)
+	bad.TemplateRevision = "new"
+	if _, err = s.SetTarget(ctx, bad); !errors.Is(err, ErrTemplate) {
+		t.Fatalf("template validation: %v", err)
+	}
+}
+
+func TestPostgresNoPartialWrites(t *testing.T) {
+	for _, table := range []string{"capacity_requests", "node_groups", "operations", "host", "credit_reservations"} {
+		t.Run(table, func(t *testing.T) {
+			db := database(t)
+			s := NewStore(db)
+			mustExec(t, db, `CREATE FUNCTION reject_write() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected failure'; END $$`)
+			mustExec(t, db, `CREATE TRIGGER reject BEFORE INSERT OR UPDATE ON `+table+` FOR EACH ROW EXECUTE FUNCTION reject_write()`)
+			if _, err := s.SetTarget(context.Background(), request("fail", 0, 2)); err == nil || !strings.Contains(err.Error(), "injected failure") {
+				t.Fatalf("expected injected failure at %s, got %v", table, err)
+			}
+			for _, name := range []string{"capacity_requests", "operations", "host", "credit_reservations"} {
+				if n := count(t, db, name); n != 0 {
+					t.Errorf("partial %s writes: %d", name, n)
+				}
+			}
+			r, err := s.Target(context.Background(), "cluster", "group")
+			if err != nil || r.TargetNodes != 0 || r.TargetRevision != 0 {
+				t.Fatalf("partial target mutation: %#v %v", r, err)
+			}
+		})
+	}
+}
+
+func TestPostgresConcurrentTeamAdmission(t *testing.T) {
+	db := database(t)
+	s := NewStore(db)
+	mustExec(t, db, `UPDATE team_budgets SET nodes=1; INSERT INTO node_groups SELECT 'group2',cluster_id,zone_id,node_pool_id,capacity_class,provider_zone_id,target_nodes,target_revision,min_nodes,max_nodes,template_revision,lifecycle_state,vcpu,memory_mib,launch_parameters FROM node_groups WHERE id='group'`)
+	start := make(chan struct{})
+	results := make(chan error, 2)
+	var wg sync.WaitGroup
+	for _, id := range []string{"group", "group2"} {
+		wg.Add(1)
+		go func(id string) {
+			defer wg.Done()
+			<-start
+			req := request(id, 0, 1)
+			req.NodeGroupID = id
+			_, err := s.SetTarget(context.Background(), req)
+			results <- err
+		}(id)
+	}
+	close(start)
+	wg.Wait()
+	close(results)
+	success, denied := 0, 0
+	for err := range results {
+		if err == nil {
+			success++
+		} else if errors.Is(err, ErrLimit) {
+			denied++
+		} else {
+			t.Fatal(err)
+		}
+	}
+	if success != 1 || denied != 1 || count(t, db, "credit_reservations") != 1 {
+		t.Fatalf("success=%d denied=%d", success, denied)
+	}
+}
+
+func TestPostgresConcurrentCASAndReplay(t *testing.T) {
+	for _, sameID := range []bool{false, true} {
+		t.Run(fmt.Sprint(sameID), func(t *testing.T) {
+			db := database(t)
+			s := NewStore(db)
+			start := make(chan struct{})
+			results := make(chan error, 2)
+			for i := 0; i < 2; i++ {
+				go func(i int) {
+					<-start
+					id := fmt.Sprint(i)
+					if sameID {
+						id = "same"
+					}
+					_, err := s.SetTarget(context.Background(), request(id, 0, 1))
+					results <- err
+				}(i)
+			}
+			close(start)
+			e1, e2 := <-results, <-results
+			if sameID {
+				if e1 != nil || e2 != nil {
+					t.Fatalf("replay concurrency: %v %v", e1, e2)
+				}
+			} else if !((e1 == nil && errors.Is(e2, ErrConflict)) || (e2 == nil && errors.Is(e1, ErrConflict))) {
+				t.Fatalf("CAS concurrency: %v %v", e1, e2)
+			}
+			if count(t, db, "operations") != 1 || count(t, db, "credit_reservations") != 1 {
+				t.Fatal("duplicate allocation")
+			}
+		})
+	}
+}
+
+func TestPostgresCancellationAndFencing(t *testing.T) {
+	db := database(t)
+	s := NewStore(db)
+	ctx := context.Background()
+	if _, err := s.SetTarget(ctx, request("up", 0, 2)); err != nil {
+		t.Fatal(err)
+	}
+	op, err := s.Claim(ctx, "zone", "provision", "old", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.SetTarget(ctx, request("down", 1, 0)); err != nil {
+		t.Fatal(err)
+	}
+	var released, retained int
+	if err = db.QueryRow(`SELECT count(*) FILTER(WHERE state='released'),count(*) FILTER(WHERE state='reserved') FROM credit_reservations`).Scan(&released, &retained); err != nil {
+		t.Fatal(err)
+	}
+	if released != 1 || retained != 1 {
+		t.Fatalf("released=%d retained=%d", released, retained)
+	}
+	h, err := s.Host(ctx, op.HostID)
+	if err != nil || !h.ExcessCapacity || h.State != api.HostRequested || h.Reserved.VCPU != 4 || h.DesiredStateVersion != "template-1" {
+		t.Fatalf("excess host: %#v %v", h, err)
+	}
+	if err = s.BeginLaunch(ctx, op); err != nil {
+		t.Fatal(err)
+	}
+	mustExec(t, db, `UPDATE operations SET lease_until=clock_timestamp()-interval '1 second' WHERE id=$1`, op.ID)
+	if err = s.Renew(ctx, op, time.Minute); !errors.Is(err, ErrFenced) {
+		t.Fatalf("expired renew: %v", err)
+	}
+	newOp, err := s.Claim(ctx, "zone", "provision", "new", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if newOp.Fence <= op.Fence || newOp.ID != op.ID || newOp.ProviderToken != op.ProviderToken || string(newOp.Parameters) != string(op.Parameters) {
+		t.Fatal("recovery changed immutable provider intent")
+	}
+	if err = s.BeginLaunch(ctx, op); !errors.Is(err, ErrFenced) {
+		t.Fatalf("stale launch: %v", err)
+	}
+	if err = s.RecordLaunch(ctx, op, "i-old"); !errors.Is(err, ErrFenced) {
+		t.Fatalf("stale completion: %v", err)
+	}
+	if err = s.BeginLaunch(ctx, newOp); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.RecordLaunch(ctx, newOp, "i-confirmed"); err != nil {
+		t.Fatal(err)
+	}
+	h, err = s.Host(ctx, op.HostID)
+	if err != nil || h.State != api.HostBooting || h.ProviderID != "i-confirmed" || h.Provider != "aws" {
+		t.Fatalf("provider completion: %#v %v", h, err)
+	}
+}
+
+func TestPostgresDecreaseCannotRemoveReadyNode(t *testing.T) {
+	db := database(t)
+	s := NewStore(db)
+	ctx := context.Background()
+	if _, err := s.SetTarget(ctx, request("up", 0, 1)); err != nil {
+		t.Fatal(err)
+	}
+	mustExec(t, db, `UPDATE host SET state='READY'`)
+	if _, err := s.SetTarget(ctx, request("down", 1, 0)); !errors.Is(err, ErrFulfilled) {
+		t.Fatalf("ready node reduction: %v", err)
+	}
+	if count(t, db, "capacity_requests") != 1 {
+		t.Fatal("failed decrease persisted")
+	}
+}
+
+func TestPostgresMigrationPreservesLegacyInventory(t *testing.T) {
+	db := database(t, true)
+	if count(t, db, "host") != 1 || count(t, db, "actions") != 1 {
+		t.Fatal("migration lost legacy inventory")
+	}
+	h, err := NewStore(db).Host(context.Background(), "legacy-host")
+	if err != nil || h.State != api.HostReady || h.Zone != "legacy-zone" || h.NodeGroupID != "" {
+		t.Fatalf("legacy host: %#v %v", h, err)
+	}
+}
+
+func TestPostgresOperationIntentIsImmutable(t *testing.T) {
+	db := database(t)
+	s := NewStore(db)
+	ctx := context.Background()
+	if _, err := s.SetTarget(ctx, request("first", 0, 1)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE operations SET provider_token='replacement-token'`); err == nil {
+		t.Fatal("provider token changed")
+	}
+	if _, err := db.Exec(`UPDATE operations SET parameters='{}'`); err == nil {
+		t.Fatal("launch parameters changed")
+	}
+	mustExec(t, db, `UPDATE node_groups SET template_revision='template-2',launch_parameters='{"image_id":"other"}'`)
+	op, err := s.Claim(ctx, "zone", "provision", "controller", time.Minute)
+	if err != nil || !strings.Contains(string(op.Parameters), "ami-pinned") {
+		t.Fatalf("old intent inherited new template: %#v %v", op, err)
+	}
+}
+
+func TestPostgresLegacyLifecycleCannotMutateManagedCapacity(t *testing.T) {
+	db := database(t)
+	s := NewStore(db)
+	ctx := context.Background()
+	if _, err := s.SetTarget(ctx, request("up", 0, 1)); err != nil {
+		t.Fatal(err)
+	}
+	var hostID string
+	if err := db.QueryRow(`SELECT id FROM host`).Scan(&hostID); err != nil {
+		t.Fatal(err)
+	}
+	catalog := service.NewHostCatalogService(store.NewPostgresHostStore(db))
+	for _, err := range []error{catalog.TransitionState(ctx, hostID, api.HostReady), catalog.UpdateState(ctx, hostID, string(api.HostTerminated)), catalog.UpdateHostProviderID(ctx, hostID, "other"), catalog.DeleteHost(ctx, hostID)} {
+		if !errors.Is(err, service.ErrManagedCapacity) {
+			t.Fatalf("legacy mutation did not respect operation authority: %v", err)
+		}
+	}
+	h, err := s.Host(ctx, hostID)
+	if err != nil || h.State != api.HostRequested || h.ProviderID != "" {
+		t.Fatalf("legacy mutation altered managed host: %#v %v", h, err)
+	}
+}
+
+func TestPostgresAdmissionPolicy(t *testing.T) {
+	for _, test := range []struct {
+		name, sql string
+		expected  error
+	}{
+		{"team_cpu", `UPDATE team_budgets SET vcpu=3`, ErrLimit},
+		{"team_memory", `UPDATE team_budgets SET memory_mib=8191`, ErrLimit},
+		{"pool_nodes", `UPDATE node_pools SET max_nodes=0`, ErrLimit},
+		{"zone_disabled", `UPDATE zones SET enabled=false`, ErrInactive},
+		{"cluster_not_ready", `UPDATE clusters SET lifecycle_state='requested'`, ErrInactive},
+		{"pool_disabled", `UPDATE node_pools SET enabled=false`, ErrInactive},
+		{"group_not_active", `UPDATE node_groups SET lifecycle_state='disabled'`, ErrInactive},
+		{"group_max", `UPDATE node_groups SET max_nodes=0`, ErrLimit},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			db := database(t)
+			mustExec(t, db, test.sql)
+			if _, err := NewStore(db).SetTarget(context.Background(), request("denied", 0, 1)); !errors.Is(err, test.expected) {
+				t.Fatalf("expected %v, got %v", test.expected, err)
+			}
+			if count(t, db, "capacity_requests") != 0 || count(t, db, "operations") != 0 {
+				t.Fatal("denied admission left durable writes")
+			}
+		})
+	}
+}
+
+func TestPostgresBootstrapAndRemovalOwnership(t *testing.T) {
+	db := database(t)
+	s := NewStore(db)
+	ctx := context.Background()
+	id, err := s.CreateZoneBootstrap(ctx, "zone", []byte(`{"image":"pinned"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.CreateZoneBootstrap(ctx, "zone", []byte(`{}`)); err == nil {
+		t.Fatal("duplicate active bootstrap")
+	}
+	if count(t, db, "operations") != 1 {
+		t.Fatal("orphan bootstrap operation")
+	}
+	op, err := s.Claim(ctx, "zone", "create_zone", "bootstrap", time.Minute)
+	if err != nil || op.ID != id {
+		t.Fatalf("claim bootstrap: %v", err)
+	}
+	for _, phase := range []api.ZoneBootstrapPhase{api.ZoneInfrastructureProvisioning, api.ZoneControlPlaneInitializing, api.ZoneNetworkInstalling, api.ZoneDominatorInstalling, api.ZoneValidating} {
+		if err = s.BootstrapPhase(ctx, op, phase, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = s.BootstrapPhase(ctx, op, api.ZoneReady, false); err == nil {
+		t.Fatal("unvalidated bootstrap handoff")
+	}
+	if err = s.BootstrapPhase(ctx, op, api.ZoneReady, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.SetTarget(ctx, request("up", 0, 1)); err != nil {
+		t.Fatal(err)
+	}
+	provision, err := s.Claim(ctx, "zone", "provision", "worker", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.BeginLaunch(ctx, provision); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.RecordLaunch(ctx, provision, "i-node"); err != nil {
+		t.Fatal(err)
+	}
+	removal := api.NodeRemovalOperation{Operation: api.Operation{NodeGroupID: "group", HostID: provision.HostID}, NodeName: "node", ProviderID: "i-node", Reason: "maintenance", PreserveDesiredCapacity: true, DrainDeadline: time.Now().Add(time.Hour)}
+	if _, err = s.CreateRemoval(ctx, "cluster", 1, removal); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.CreateRemoval(ctx, "cluster", 1, removal); err == nil {
+		t.Fatal("duplicate removal ownership")
+	}
+	if count(t, db, "node_removal_operations") != 1 || count(t, db, "operations") != 3 {
+		t.Fatal("partial duplicate removal")
+	}
+}
