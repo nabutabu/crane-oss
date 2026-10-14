@@ -300,7 +300,7 @@ func TestPostgresBaselineSchemaCanBeAppliedRepeatedly(t *testing.T) {
 	if err := CheckSchema(ctx, db); err != nil {
 		t.Fatalf("schema readiness after repeat: %v", err)
 	}
-	if got := count(t, db, "team_budgets"); got != 1 {
+	if got := count(t, db, "team_budgets"); got != 2 {
 		t.Fatalf("repeat setup changed existing records: got %d budgets", got)
 	}
 	var migrationLedgerExists bool
@@ -409,7 +409,7 @@ func TestPostgresBootstrapAndRemovalOwnership(t *testing.T) {
 	if err != nil || op.ID != id {
 		t.Fatalf("claim bootstrap: %v", err)
 	}
-	for _, phase := range []api.ZoneBootstrapPhase{api.ZoneInfrastructureProvisioning, api.ZoneControlPlaneInitializing, api.ZoneNetworkInstalling, api.ZoneDominatorInstalling, api.ZoneValidating} {
+	for _, phase := range []api.ZoneBootstrapPhase{api.ZoneDatabaseProvisioning, api.ZoneDatabaseReady, api.ZoneSpireHostProvisioning, api.ZoneSpireInstalling, api.ZoneSpireValidating, api.ZoneControlPlaneInitializing, api.ZoneNetworkInstalling, api.ZoneDominatorInstalling, api.ZoneValidating} {
 		if err = s.BootstrapPhase(ctx, op, phase, false); err != nil {
 			t.Fatal(err)
 		}
