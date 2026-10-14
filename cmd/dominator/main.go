@@ -80,8 +80,8 @@ func run() error {
 		return fmt.Errorf("open database: %w", err)
 	}
 	defer db.Close()
-	if err := capacity.Migrate(ctx, db); err != nil {
-		return fmt.Errorf("migrate capacity schema: %w", err)
+	if err := capacity.CheckSchema(ctx, db); err != nil {
+		return fmt.Errorf("Crane database is not ready: %w", err)
 	}
 	hostStore := store.NewPostgresHostStore(db)
 

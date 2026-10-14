@@ -5,11 +5,12 @@ services:
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: REDACTED_DB_PASSWORD
-      POSTGRES_DB: sampledb
+      POSTGRES_DB: crane
     ports:
       - "43544:5432"
     volumes:
-      - postgres_data:/home/nabutabu/programs/crane-oss/postgres_data
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres_data/init.sql:/docker-entrypoint-initdb.d/01-databases.sql:ro
 
   localstack:
     image: localstack/localstack:latest
@@ -79,7 +80,9 @@ services:
     container_name: crane-spire-agent
     entrypoint: ["/opt/spire/bin/spire-agent"]
     pid: host
-    command: ["run", "-config", "/opt/spire/conf/agent/agent.conf", "-joinToken", "<join_token>"]
+    command: ["sh", "-c", "/opt/spire/bin/spire-agent run -config /opt/spire/conf/agent/agent.conf -joinToken \"$${SPIRE_JOIN_TOKEN}\""]
+    environment:
+      SPIRE_JOIN_TOKEN: ${SPIRE_JOIN_TOKEN:?set SPIRE_JOIN_TOKEN for the local SPIRE agent}
     depends_on:
       - spire-server
     volumes:

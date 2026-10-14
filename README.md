@@ -37,7 +37,7 @@ The system consists of several key components:
 
 ### Database Setup
 
-Create a PostgreSQL database named `crane` and ensure it's accessible. The default connection is:
+Create an initially empty PostgreSQL database named `crane` and ensure it's accessible. The default connection is:
 - Host: localhost (or `db` when using Docker)
 - Port: 5432
 - User: postgres
@@ -82,6 +82,10 @@ The crane-api service will start on port 43060 and begin monitoring hosts in the
 
 - `GET /health` - Health check endpoint
 - `GET /v1/db/health` - Database health check
+- `POST /v1/zones`, `/v1/clusters`, `/v1/node-pools`, `/v1/node-groups` - authenticated platform topology creation (`Authorization: Bearer $CRANE_ADMIN_TOKEN`)
+- `POST /v1/first-zone` - atomically seeds the platform team's first ready topology; it leaves capacity at target revision 0
+- `POST /v1/capacity` - capacity admission; cluster identity comes from `X-Crane-Cluster-ID`
+- `POST /v1/bootstrap` - creates a durable layer-zero bootstrap operation
 
 ### dominator (Port 44000)
 
@@ -139,6 +143,21 @@ The Activity Manager uses the following decision logic:
 | AWS_ACCESS_KEY_ID | - | AWS access key |
 | AWS_SECRET_ACCESS_KEY | - | AWS secret key |
 | AWS_REGION | us-west-2 | AWS region |
+| CRANE_ADMIN_TOKEN | - | Required bearer token for topology/bootstrap mutations |
+| CRANE_ADAPTER_TOKEN | - | Required bearer token for capacity admission |
+
+For a deterministic first-zone initialization, use `cmd/crane-bootstrap` with a
+JSON file containing `zone`, `cluster`, `budget`, `pool`, and `group` objects:
+
+```bash
+go run ./cmd/crane-bootstrap -dsn "$CRANE_DATABASE_URL" -config first-zone.json
+```
+
+The command initializes the repeatable first-go schema before seeding topology
+and is safe to rerun against the dedicated Crane database. It does not create a
+provisioning operation; an explicit `/v1/capacity` request is still required.
+`crane-api` and Dominator check that bootstrap initialized the schema and never
+change it at startup. The baseline does not upgrade earlier POC schemas.
 
 ## Contributing
 

@@ -246,13 +246,14 @@ Repair and maintenance use explicit host identities and the same drain coordinat
 
 ### Phase 1 — Control-plane data model & structured logging foundation
 - Models: `Zone`, `NodeGroup`, `NodePool`, `CapacityRequest`, `CreditReservation`. Host Catalog schema with lifecycle states, desired/observed versions, allocatable/reserved, operations.
+- Define the canonical repeatable PostgreSQL first-go schema. `crane-bootstrap` initializes it before seeding the first zone; `crane-api` and Dominator only verify schema readiness. Do not add a migration ledger or POC schema upgrade path.
 - Add `ZoneBootstrapOperation` and `NodeRemovalOperation`; enforce `(group_id, request_id)` uniqueness and target revisioning in persistence.
 - Implement the single-transaction mutation boundary: one PostgreSQL transaction writes target revision + credit reservation + host intent + executable operation; operation leases, stale-controller fencing, supersede cancellation, and provider idempotency token persisted with the operation.
-- slog migration with redaction, OTLP init (no-op fallback), `gofmt`/`go vet`/`go test` in CI.
-- Exit: durable state models compile; the atomic mutation boundary is proven by tests (no partial writes); control-plane binaries use structured redaction-safe logging.
+- Adopt slog with redaction, OTLP init (no-op fallback), `gofmt`/`go vet`/`go test` in CI.
+- Exit: durable state models compile; the atomic mutation boundary is proven by tests (no partial writes); the first-go schema initializes repeatedly on an empty database; control-plane binaries use structured redaction-safe logging.
 
 ### Phase 2 — One zone end-to-end
-- Assume layer zero exists (SPIRE + Postgres + a running `crane-api` in the platform team's first zone); subsequent zones are created via the Crane API.
+- Start from the first-go layer-zero setup (SPIRE + Postgres, then `crane-bootstrap` initializes the Crane schema and seeds the platform team's first zone); subsequent zones are created via the Crane API.
 - Implement adapter-to-Crane target protocol (handler `RequestID`, target revision CAS, replay, lost-response and adapter-crash recovery).
 - Provider-backed create/delete, per-zone cluster record, zone-scoped Dominator reconciler, Subd enrollment via `kubeadm join` (Cilium), endpoint/reporting.
 - Implement the Zone Bootstrap Controller and use it to create one subsequent zone: provision control plane, run `kubeadm init`, install Cilium/Dominator, validate, and hand off.

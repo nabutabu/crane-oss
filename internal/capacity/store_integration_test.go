@@ -19,9 +19,9 @@ import (
 	"github.com/nabutabu/crane-oss/pkg/api"
 )
 
-// Every test gets an isolated schema. CI always supplies the database URL;
+// Every test gets an isolated empty schema. CI supplies the database URL;
 // local developers can opt in without altering their operational inventory.
-func database(t *testing.T, legacy ...bool) *sql.DB {
+func database(t *testing.T) *sql.DB {
 	t.Helper()
 	dsn := os.Getenv("CRANE_TEST_DATABASE_URL")
 	if dsn == "" {
@@ -46,17 +46,11 @@ func database(t *testing.T, legacy ...bool) *sql.DB {
 		}
 		admin.Close()
 	})
-	if len(legacy) > 0 && legacy[0] {
-		mustExec(t, db, `CREATE TABLE host(id varchar PRIMARY KEY,role varchar,zone varchar,imageid varchar,state varchar NOT NULL,health varchar,createdat timestamptz,updatedat timestamptz,provider varchar,providerid varchar,lastseenheartbeat timestamptz,endpoint varchar,port int4,dbname varchar,username varchar,secretarn varchar,rdssgid varchar);
-CREATE TABLE actions(id serial,hostid varchar NOT NULL,status varchar NOT NULL,attempts int4,createdat timestamptz,type varchar NOT NULL,updatedat timestamptz,provider varchar,providerid varchar);
-INSERT INTO host(id,state,zone) VALUES('legacy-host','READY','legacy-zone');
-INSERT INTO actions(hostid,status,type) VALUES('legacy-host','pending','legacy-action');`)
-	}
-	if err = Migrate(context.Background(), db); err != nil {
+	if err = InitializeSchema(context.Background(), db); err != nil {
 		t.Fatal(err)
 	}
-	if err = Migrate(context.Background(), db); err != nil {
-		t.Fatalf("migration replay: %v", err)
+	if err = CheckSchema(context.Background(), db); err != nil {
+		t.Fatalf("schema readiness: %v", err)
 	}
 	_, err = db.Exec(`
 INSERT INTO zones(id,provider,account_id,region,provider_zone_id,lifecycle_state) VALUES('zone','aws','account','us-west-2','us-west-2a','ready');
@@ -296,14 +290,34 @@ func TestPostgresDecreaseCannotRemoveReadyNode(t *testing.T) {
 	}
 }
 
-func TestPostgresMigrationPreservesLegacyInventory(t *testing.T) {
-	db := database(t, true)
-	if count(t, db, "host") != 1 || count(t, db, "actions") != 1 {
-		t.Fatal("migration lost legacy inventory")
+func TestPostgresBaselineSchemaCanBeAppliedRepeatedly(t *testing.T) {
+	db := database(t)
+	ctx := context.Background()
+	mustExec(t, db, `INSERT INTO team_budgets(team_id,vcpu,memory_mib,nodes) VALUES('existing-record',4,8192,1)`)
+	if err := InitializeSchema(ctx, db); err != nil {
+		t.Fatalf("repeat baseline schema setup: %v", err)
 	}
-	h, err := NewStore(db).Host(context.Background(), "legacy-host")
-	if err != nil || h.State != api.HostReady || h.Zone != "legacy-zone" || h.NodeGroupID != "" {
-		t.Fatalf("legacy host: %#v %v", h, err)
+	if err := CheckSchema(ctx, db); err != nil {
+		t.Fatalf("schema readiness after repeat: %v", err)
+	}
+	if got := count(t, db, "team_budgets"); got != 1 {
+		t.Fatalf("repeat setup changed existing records: got %d budgets", got)
+	}
+	var migrationLedgerExists bool
+	if err := db.QueryRow(`SELECT to_regclass('crane_schema_migrations') IS NOT NULL`).Scan(&migrationLedgerExists); err != nil {
+		t.Fatal(err)
+	}
+	if migrationLedgerExists {
+		t.Fatal("first-go schema setup created a migration ledger")
+	}
+}
+
+func TestPostgresSchemaCheckExplainsMissingBootstrap(t *testing.T) {
+	db := database(t)
+	mustExec(t, db, `DROP TABLE zones CASCADE`)
+	err := CheckSchema(context.Background(), db)
+	if err == nil || !strings.Contains(err.Error(), "zones") || !strings.Contains(err.Error(), "run crane-bootstrap") {
+		t.Fatalf("schema readiness error did not explain bootstrap requirement: %v", err)
 	}
 }
 

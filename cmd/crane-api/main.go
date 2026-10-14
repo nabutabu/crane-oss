@@ -119,8 +119,8 @@ func run() error {
 		return fmt.Errorf("open database: %w", err)
 	}
 	defer db.Close()
-	if err := capacity.Migrate(ctx, db); err != nil {
-		return fmt.Errorf("migrate capacity schema: %w", err)
+	if err := capacity.CheckSchema(ctx, db); err != nil {
+		return fmt.Errorf("Crane database is not ready: %w", err)
 	}
 
 	actionStore := execute.NewPostgresActionStore(db)
@@ -129,7 +129,7 @@ func run() error {
 	hostCatalog := service.NewHostCatalogService(hostStore)
 
 	cfg, err := config.LoadDefaultConfig(context.TODO(),
-		config.WithRegion("us-west-2"), // Optional: specify region here
+		config.WithRegion(intconfig.GetEnv("AWS_REGION", "us-west-2")),
 	)
 	if err != nil {
 		return fmt.Errorf("load SDK config: %w", err)
@@ -199,6 +199,10 @@ func run() error {
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprintf(w, `{"status": "available"}`)
 	})
+	// Platform topology and capacity admission endpoints. The topology routes
+	// require CRANE_ADMIN_TOKEN; capacity derives identity from the cluster
+	// adapter header and is never authorized by a client-supplied team ID.
+	mux.Handle("/v1/", capacity.API(capacity.NewStore(db), intconfig.GetEnv("CRANE_ADMIN_TOKEN", ""), intconfig.GetEnv("CRANE_ADAPTER_TOKEN", "")))
 
 	server := &http.Server{Addr: ":43060", Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	shutdownDone := make(chan struct{})

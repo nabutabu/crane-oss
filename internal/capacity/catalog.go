@@ -3,12 +3,81 @@ package capacity
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/nabutabu/crane-oss/pkg/api"
 )
+
+// SeedFirstZone atomically creates the platform team's initial topology. It is
+// intentionally idempotent by durable IDs, making it safe to rerun after a
+// lost command response. Records are left ready, but no capacity operation is
+// created until a client explicitly changes a target.
+func (s *Store) SeedFirstZone(ctx context.Context, z api.ZoneInput, c api.ClusterInput, budget api.Resources, p api.NodePoolInput, g api.NodeGroupInput) error {
+	if z.ID == "" || c.ID == "" || p.ID == "" || g.ID == "" || c.ZoneID != z.ID || g.ClusterID != c.ID || g.ZoneID != z.ID || g.NodePoolID != p.ID || budget.VCPU < 0 || budget.MemoryMiB < 0 || budget.Nodes < 0 || p.Limits.VCPU < 0 || p.Limits.MemoryMiB < 0 || p.Limits.Nodes < 0 || g.MinNodes < 0 || g.MaxNodes < g.MinNodes || g.PerNode.VCPU <= 0 || g.PerNode.MemoryMiB <= 0 || !json.Valid(g.LaunchParameters) {
+		return errors.New("invalid first-zone topology")
+	}
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	_, err = tx.ExecContext(ctx, `INSERT INTO zones(id,provider,account_id,region,provider_zone_id,enabled,lifecycle_state) VALUES($1,$2,$3,$4,$5,true,'ready') ON CONFLICT (id) DO UPDATE SET provider=EXCLUDED.provider,account_id=EXCLUDED.account_id,region=EXCLUDED.region,provider_zone_id=EXCLUDED.provider_zone_id`, z.ID, z.Provider, z.AccountID, z.Region, z.ProviderZoneID)
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO clusters(id,zone_id,api_server_endpoint,ca_cert_hash,kubeadm_version,kubelet_version,container_runtime,cni,lifecycle_state) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'ready') ON CONFLICT (id) DO UPDATE SET zone_id=EXCLUDED.zone_id,api_server_endpoint=EXCLUDED.api_server_endpoint,ca_cert_hash=EXCLUDED.ca_cert_hash,kubeadm_version=EXCLUDED.kubeadm_version,kubelet_version=EXCLUDED.kubelet_version,container_runtime=EXCLUDED.container_runtime,cni=EXCLUDED.cni,lifecycle_state='ready'`, c.ID, c.ZoneID, c.APIServerEndpoint, c.CACertHash, c.KubeadmVersion, c.KubeletVersion, c.ContainerRuntime, c.CNI)
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO team_budgets(team_id,vcpu,memory_mib,nodes) VALUES($1,$2,$3,$4) ON CONFLICT (team_id) DO UPDATE SET vcpu=EXCLUDED.vcpu,memory_mib=EXCLUDED.memory_mib,nodes=EXCLUDED.nodes`, p.TeamID, budget.VCPU, budget.MemoryMiB, budget.Nodes)
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO node_pools(id,team_id,enabled,max_vcpu,max_memory_mib,max_nodes) VALUES($1,$2,true,$3,$4,$5) ON CONFLICT (id) DO UPDATE SET team_id=EXCLUDED.team_id,max_vcpu=EXCLUDED.max_vcpu,max_memory_mib=EXCLUDED.max_memory_mib,max_nodes=EXCLUDED.max_nodes`, p.ID, p.TeamID, p.Limits.VCPU, p.Limits.MemoryMiB, p.Limits.Nodes)
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO node_groups(id,cluster_id,zone_id,node_pool_id,capacity_class,provider_zone_id,min_nodes,max_nodes,template_revision,vcpu,memory_mib,launch_parameters,lifecycle_state) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'active') ON CONFLICT (id) DO UPDATE SET cluster_id=EXCLUDED.cluster_id,zone_id=EXCLUDED.zone_id,node_pool_id=EXCLUDED.node_pool_id,capacity_class=EXCLUDED.capacity_class,provider_zone_id=EXCLUDED.provider_zone_id,min_nodes=EXCLUDED.min_nodes,max_nodes=EXCLUDED.max_nodes,template_revision=EXCLUDED.template_revision,vcpu=EXCLUDED.vcpu,memory_mib=EXCLUDED.memory_mib,launch_parameters=EXCLUDED.launch_parameters`, g.ID, g.ClusterID, g.ZoneID, g.NodePoolID, g.CapacityClass, g.ProviderZoneID, g.MinNodes, g.MaxNodes, g.TemplateRevision, g.PerNode.VCPU, g.PerNode.MemoryMiB, []byte(g.LaunchParameters))
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Store) CreateZone(ctx context.Context, z api.ZoneInput) error {
+	if z.ID == "" || z.Provider == "" || z.AccountID == "" || z.Region == "" || z.ProviderZoneID == "" {
+		return errors.New("invalid zone")
+	}
+	_, err := s.DB.ExecContext(ctx, `INSERT INTO zones(id,provider,account_id,region,provider_zone_id,lifecycle_state) VALUES($1,$2,$3,$4,$5,'ready') ON CONFLICT (id) DO NOTHING`, z.ID, z.Provider, z.AccountID, z.Region, z.ProviderZoneID)
+	return err
+}
+
+func (s *Store) CreateCluster(ctx context.Context, c api.ClusterInput) error {
+	if c.ID == "" || c.ZoneID == "" || c.KubeadmVersion == "" || c.KubeletVersion == "" || c.ContainerRuntime == "" || c.CNI != "cilium" {
+		return errors.New("invalid cluster")
+	}
+	_, err := s.DB.ExecContext(ctx, `INSERT INTO clusters(id,zone_id,api_server_endpoint,ca_cert_hash,kubeadm_version,kubelet_version,container_runtime,cni,lifecycle_state) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'ready') ON CONFLICT (id) DO NOTHING`, c.ID, c.ZoneID, c.APIServerEndpoint, c.CACertHash, c.KubeadmVersion, c.KubeletVersion, c.ContainerRuntime, c.CNI)
+	return err
+}
+
+func (s *Store) CreateNodePool(ctx context.Context, p api.NodePoolInput) error {
+	if p.ID == "" || p.TeamID == "" || p.Limits.VCPU < 0 || p.Limits.MemoryMiB < 0 || p.Limits.Nodes < 0 {
+		return errors.New("invalid node pool")
+	}
+	_, err := s.DB.ExecContext(ctx, `INSERT INTO node_pools(id,team_id,max_vcpu,max_memory_mib,max_nodes) VALUES($1,$2,$3,$4,$5) ON CONFLICT (id) DO NOTHING`, p.ID, p.TeamID, p.Limits.VCPU, p.Limits.MemoryMiB, p.Limits.Nodes)
+	return err
+}
+
+func (s *Store) CreateNodeGroup(ctx context.Context, g api.NodeGroupInput) error {
+	if g.ID == "" || g.ClusterID == "" || g.ZoneID == "" || g.NodePoolID == "" || g.TemplateRevision == "" || g.MinNodes < 0 || g.MaxNodes < g.MinNodes || g.PerNode.VCPU <= 0 || g.PerNode.MemoryMiB <= 0 || !json.Valid(g.LaunchParameters) {
+		return errors.New("invalid node group")
+	}
+	_, err := s.DB.ExecContext(ctx, `INSERT INTO node_groups(id,cluster_id,zone_id,node_pool_id,capacity_class,provider_zone_id,min_nodes,max_nodes,template_revision,vcpu,memory_mib,launch_parameters) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT (id) DO NOTHING`, g.ID, g.ClusterID, g.ZoneID, g.NodePoolID, g.CapacityClass, g.ProviderZoneID, g.MinNodes, g.MaxNodes, g.TemplateRevision, g.PerNode.VCPU, g.PerNode.MemoryMiB, []byte(g.LaunchParameters))
+	return err
+}
 
 // Host reads the extended durable catalog. Legacy hosts have empty placement;
 // only control-plane admission assigns group, pool, zone and operation identity.
@@ -108,7 +177,7 @@ func (s *Store) BootstrapPhase(ctx context.Context, op api.Operation, next api.Z
 	if err != nil {
 		return err
 	}
-	sequence := map[api.ZoneBootstrapPhase]api.ZoneBootstrapPhase{api.ZoneRequested: api.ZoneInfrastructureProvisioning, api.ZoneInfrastructureProvisioning: api.ZoneControlPlaneInitializing, api.ZoneControlPlaneInitializing: api.ZoneNetworkInstalling, api.ZoneNetworkInstalling: api.ZoneDominatorInstalling, api.ZoneDominatorInstalling: api.ZoneValidating, api.ZoneValidating: api.ZoneReady}
+	sequence := map[api.ZoneBootstrapPhase]api.ZoneBootstrapPhase{api.ZoneRequested: api.ZoneDatabaseProvisioning, api.ZoneDatabaseProvisioning: api.ZoneDatabaseReady, api.ZoneDatabaseReady: api.ZoneSpireHostProvisioning, api.ZoneSpireHostProvisioning: api.ZoneSpireInstalling, api.ZoneSpireInstalling: api.ZoneSpireValidating, api.ZoneSpireValidating: api.ZoneControlPlaneInitializing, api.ZoneControlPlaneInitializing: api.ZoneNetworkInstalling, api.ZoneNetworkInstalling: api.ZoneDominatorInstalling, api.ZoneDominatorInstalling: api.ZoneValidating, api.ZoneValidating: api.ZoneReady}
 	if next != api.ZoneFailed && sequence[phase] != next {
 		return errors.New("invalid bootstrap phase transition")
 	}
