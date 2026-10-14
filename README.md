@@ -153,6 +153,10 @@ JSON file containing `zone`, `cluster`, `budget`, `pool`, and `group` objects:
 go run ./cmd/crane-bootstrap -dsn "$CRANE_DATABASE_URL" -config first-zone.json
 ```
 
+For AWS layer-zero automation, provide `-bootstrap-config bootstrap.json` and
+omit `-dsn` once the RDS provider integration is enabled. Use `-dry-run` to
+validate configuration and `-json` for one machine-readable event per phase.
+
 The command initializes the repeatable first-go schema before seeding topology
 and is safe to rerun against the dedicated Crane database. It does not create a
 provisioning operation; an explicit `/v1/capacity` request is still required.

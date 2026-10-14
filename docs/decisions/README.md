@@ -7,3 +7,4 @@ Phase 0 decisions:
 - ADR-004: Credits, identity, tenancy
 - ADR-005: Zone placement, scale-down, failure handling
 - ADR-006: Observability defaults (control/data plane split)
+- ADR-007: Layer-zero bootstrap progress is owned by the CLI

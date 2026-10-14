@@ -1,0 +1,56 @@
+{
+  "zone": {
+    "id": "us-west-2a",
+    "provider": "aws",
+    "account_id": "123456789012",
+    "region": "us-west-2",
+    "provider_zone_id": "usw2-az1"
+  },
+  "cluster": {
+    "id": "platform-us-west-2",
+    "zone_id": "us-west-2a",
+    "api_server_endpoint": "https://api.platform.us-west-2.crane.internal:6443",
+    "ca_cert_hash": "REPLACE_WITH_CA_CERT_HASH",
+    "kubeadm_version": "v1.31.0",
+    "kubelet_version": "v1.31.0",
+    "container_runtime": "containerd://1.7.22",
+    "cni": "cilium"
+  },
+  "budget": {
+    "vcpu": 256,
+    "memory_mib": 524288,
+    "nodes": 32
+  },
+  "pool": {
+    "id": "platform-general",
+    "team_id": "platform",
+    "limits": {
+      "vcpu": 256,
+      "memory_mib": 524288,
+      "nodes": 32
+    }
+  },
+  "group": {
+    "id": "platform-general-us-west-2a",
+    "cluster_id": "platform-us-west-2",
+    "node_pool_id": "platform-general",
+    "zone_id": "us-west-2a",
+    "capacity_class": "on-demand",
+    "provider_zone_id": "usw2-az1",
+    "min_nodes": 3,
+    "max_nodes": 12,
+    "template_revision": "v1",
+    "per_node": {
+      "vcpu": 8,
+      "memory_mib": 32768
+    },
+    "launch_parameters": {
+      "ami_id": "ami-0123456789abcdef0",
+      "instance_type": "m7i.2xlarge",
+      "subnet_id": "subnet-0123456789abcdef0",
+      "security_group_ids": ["sg-0123456789abcdef0"],
+      "iam_instance_profile": "crane-node",
+      "key_name": "crane-platform"
+    }
+  }
+}

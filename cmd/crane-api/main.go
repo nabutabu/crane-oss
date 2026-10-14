@@ -74,6 +74,29 @@ func BuildChecks(enabled []string, deps checks.Dependencies) ([]checks.Check, er
 	return res, nil
 }
 
+// healthHandler serves the liveness and database-readiness probes.
+type healthHandler struct {
+	logger *slog.Logger
+	db     *sql.DB
+}
+
+func (h *healthHandler) health(w http.ResponseWriter, r *http.Request) {
+	h.logger.Info("healthy", "path", r.URL.Path)
+	fmt.Fprintf(w, `{"status": "available"}`)
+}
+
+func (h *healthHandler) dbHealth(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if err := h.db.PingContext(r.Context()); err != nil {
+		h.logger.Error("database health check failed", "error", err)
+		w.WriteHeader(http.StatusServiceUnavailable)
+		fmt.Fprint(w, `{"status": "unavailable"}`)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	fmt.Fprintf(w, `{"status": "available"}`)
+}
+
 func main() {
 	if err := run(); err != nil {
 		slog.Error("crane-api stopped", "error", err)
@@ -180,29 +203,17 @@ func run() error {
 	// Worker to put the hosts in appropriate states once detected by BHD
 	go worker.Run(ctx)
 
+	health := &healthHandler{logger: logger.Logger, db: db}
+
 	mux := http.NewServeMux()
+	mux.HandleFunc("/health", health.health)
+	mux.HandleFunc("/v1/db/health", health.dbHealth)
 
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		logger.Info("healthy", "path", r.URL.Path)
-		fmt.Fprintf(w, `{"status": "available"}`)
-	})
-
-	mux.HandleFunc("/v1/db/health", func(w http.ResponseWriter, r *http.Request) {
-		if err := db.PingContext(r.Context()); err != nil {
-			logger.Error("database health check failed", "error", err)
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusServiceUnavailable)
-			fmt.Fprint(w, `{"status": "unavailable"}`)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		fmt.Fprintf(w, `{"status": "available"}`)
-	})
 	// Platform topology and capacity admission endpoints. The topology routes
 	// require CRANE_ADMIN_TOKEN; capacity derives identity from the cluster
 	// adapter header and is never authorized by a client-supplied team ID.
-	mux.Handle("/v1/", capacity.API(capacity.NewStore(db), intconfig.GetEnv("CRANE_ADMIN_TOKEN", ""), intconfig.GetEnv("CRANE_ADAPTER_TOKEN", "")))
+	capacityAPI := capacity.NewAPI(capacity.NewStore(db), intconfig.GetEnv("CRANE_ADMIN_TOKEN", ""), intconfig.GetEnv("CRANE_ADAPTER_TOKEN", ""))
+	mux.Handle("/v1/", capacityAPI.Handler())
 
 	server := &http.Server{Addr: ":43060", Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	shutdownDone := make(chan struct{})

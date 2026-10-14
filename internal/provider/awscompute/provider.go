@@ -285,7 +285,14 @@ func (p *Provider) findOrCreateTargetGroup(ctx context.Context, elb *elasticload
 	return tgARN, nil
 }
 
-func (p *Provider) findOrCreateNLB(ctx context.Context, elb *elasticloadbalancingv2.Client, VPCID string, subnetIDs []string, name string, scheme elbv2types.LoadBalancerSchemeEnum) (string, string, error) {
+func (p *Provider) findOrCreateNLB(
+	ctx context.Context,
+	elb *elasticloadbalancingv2.Client,
+	VPCID string,
+	subnetIDs []string,
+	name string,
+	scheme elbv2types.LoadBalancerSchemeEnum,
+) (string, string, error) {
 	lbName := name + "-nlb"
 
 	descOut, err := elb.DescribeLoadBalancers(ctx, &elasticloadbalancingv2.DescribeLoadBalancersInput{
@@ -467,6 +474,13 @@ func (p *Provider) ProvisionSpireDB(ctx context.Context, VPCID string, subdnetID
 
 	spireConfig := buildSpireDatastoreConfig(connInfo)
 	return connInfo, spireConfig, nil
+}
+
+// EnsurePostgres is the configurable entry point. The legacy method remains
+// available for existing action executors while callers migrate to specs.
+func (p *Provider) EnsurePostgres(ctx context.Context, spec provider.PostgresSpec) (api.DBConnectionInfo, error) {
+	info, _, err := p.ProvisionSpireDB(ctx, spec.VPCID, spec.SubnetIDs, spec.IngressSecurityGroupID)
+	return info, err
 }
 
 // waitForRDSAvailable polls DescribeDBInstances until status == "available".

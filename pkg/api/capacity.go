@@ -60,6 +60,16 @@ type NodeGroupInput struct {
 	LaunchParameters json.RawMessage `json:"launch_parameters"`
 }
 
+// FirstZoneInput is the complete layer-zero topology seeded by both the
+// crane-bootstrap command and the /v1/first-zone endpoint.
+type FirstZoneInput struct {
+	Zone    ZoneInput      `json:"zone"`
+	Cluster ClusterInput   `json:"cluster"`
+	Budget  Resources      `json:"budget"`
+	Pool    NodePoolInput  `json:"pool"`
+	Group   NodeGroupInput `json:"group"`
+}
+
 // Cluster holds discovery configuration, never a plaintext bootstrap token.
 type Cluster struct {
 	ID, ZoneID, APIServerEndpoint, CACertHash                             string
