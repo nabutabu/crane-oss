@@ -128,7 +128,7 @@ jobs:
           else
             git add internal/version/version.go
             git commit -m "Release v$VERSION [skip ci]"
-            git push origin HEAD:${{ github.ref_name }}
+            git push origin HEAD:main
           fi
 
       # Always create + push the tag (even when the version was hand-edited —
