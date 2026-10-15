@@ -1,5 +1,0 @@
-- Hosts are immutable
-- Hosts are fungible within a fleet
-- Humans do not SSH into hosts
-- Desired state drives all actions
-- All mutations go through the Host Catalog
