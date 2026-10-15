@@ -63,7 +63,7 @@ jobs:
           exit 1
         fi
 
-    - name: Check formatting
+    - name: Lint
       run: |
         unformatted="$(gofmt -l .)"
         if [ -n "$unformatted" ]; then
@@ -71,9 +71,7 @@ jobs:
           echo "$unformatted"
           exit 1
         fi
-
-    - name: Vet
-      run: go vet ./...
+        go vet ./...
 
     - name: Build
       run: go build -v ./...

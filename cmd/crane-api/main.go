@@ -127,17 +127,7 @@ func run() error {
 		}
 	}()
 
-	host := intconfig.GetEnv("DB_HOST", "localhost")
-	port := intconfig.GetEnvInt("DB_PORT", 5432)
-	user := intconfig.GetEnv("DB_USER", "postgres")
-	password := intconfig.GetEnv("DB_PASSWORD", "REDACTED_DB_PASSWORD")
-	dbname := intconfig.GetEnv("DB_NAME", "crane")
-
-	// 2. Create the connection string
-	// The sslmode parameter is often set to 'disable' for local development.
-	psqlInfo := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
-		host, port, user, password, dbname)
-	db, err := sql.Open("pgx", psqlInfo)
+	db, err := sql.Open("pgx", intconfig.DatabaseURL(5432))
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
 	}

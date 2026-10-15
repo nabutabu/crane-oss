@@ -4,51 +4,87 @@ packer {
       version = ">= 1.2.8"
       source  = "github.com/hashicorp/amazon"
     }
-    git = {
-      version = ">= 0.6.2"
-      source  = "github.com/ethanmdavidson/git"
-    }
   }
 }
 
-data "git-commit" "test" {}
-
-variable "aws_access_key" {
-  type        = string
-  description = "AWS access key ID"
-  sensitive   = true
+variable "aws_region" {
+  type = string
+  validation {
+    condition     = can(regex("^[a-z]{2}(-[a-z]+)+-[0-9]+$", var.aws_region))
+    error_message = "Provide a valid commercial AWS region."
+  }
 }
-
-variable "aws_secret_key" {
+variable "spire_server_address" {
   type        = string
-  description = "AWS secret access key"
-  sensitive   = true
+  description = "Internal NLB DNS hostname returned by crane-bootstrap -prepare-images"
+  validation {
+    condition     = can(regex("^[a-zA-Z0-9.-]+[.]elb[.][a-z0-9-]+[.]amazonaws[.]com$", var.spire_server_address))
+    error_message = "Use the prepared private NLB hostname, never an instance IP."
+  }
 }
-
+variable "spire_bundle_parameter" {
+  type = string
+  validation {
+    condition     = can(regex("^/crane/[a-z][a-z0-9-]{2,29}/spire-bundle$", var.spire_bundle_parameter))
+    error_message = "Use the deployment bundle parameter returned by -prepare-images."
+  }
+}
+variable "trust_domain" {
+  type    = string
+  default = "crane.internal"
+  validation {
+    condition     = can(regex("^[a-z0-9][a-z0-9.-]*[a-z0-9]$", var.trust_domain))
+    error_message = "Provide a valid SPIFFE trust domain."
+  }
+}
 variable "spire_version" {
-  type        = string
-  default     = "1.9.1"
-  description = "SPIRE version to install"
+  type    = string
+  default = "1.9.3"
+  validation {
+    condition     = can(regex("^[0-9]+[.][0-9]+[.][0-9]+$", var.spire_version))
+    error_message = "Pin an exact SPIRE release version."
+  }
 }
-
-variable "spire_server_ip" {
-  type        = string
-  description = "Private IP of the SPIRE server"
+variable "kubernetes_version" {
+  type    = string
+  default = "v1.35.0"
+  validation {
+    condition     = can(regex("^v[0-9]+[.][0-9]+[.][0-9]+$", var.kubernetes_version))
+    error_message = "Pin an exact Kubernetes release version."
+  }
 }
-
-locals {
-  hash = data.git-commit.test.hash
+variable "crane_version" {
+  type        = string
+  description = "Release version without v; release must include bootstrap-tools and subd archives"
+  validation {
+    condition     = can(regex("^[0-9]+[.][0-9]+[.][0-9]+$", var.crane_version))
+    error_message = "Pin an exact Crane release version without v."
+  }
+}
+variable "architecture" {
+  type    = string
+  default = "amd64"
+  validation {
+    condition     = contains(["amd64", "arm64"], var.architecture)
+    error_message = "Architecture must be amd64 or arm64."
+  }
+}
+variable "instance_type" {
+  type    = string
+  default = "t3.small"
+}
+variable "git_sha" {
+  type    = string
+  default = "unknown"
 }
 
 source "amazon-ebs" "ubuntu" {
-  ami_name      = "crane-golden-linux-aws-curl-${formatdate("YYYY-MM-DD-hhmm", timestamp())}"
-  instance_type = "t4g.micro"
-  region        = "us-west-2"
-  access_key    = var.aws_access_key
-  secret_key    = var.aws_secret_key
+  ami_name      = "crane-golden-${var.architecture}-${formatdate("YYYY-MM-DD-hhmmss", timestamp())}"
+  instance_type = var.instance_type
+  region        = var.aws_region
   source_ami_filter {
     filters = {
-      name                = "ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-arm64-server-*"
+      name                = "ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-${var.architecture}-server-*"
       root-device-type    = "ebs"
       virtualization-type = "hvm"
     }
@@ -57,79 +93,59 @@ source "amazon-ebs" "ubuntu" {
   }
   ssh_username = "ubuntu"
   tags = {
-    OS_Version = "Ubuntu"
-    Git_SHA    = local.hash
-    TimeStamp  = formatdate("YYYY-MM-DD-hhmm", timestamp())
-    Role       = "MicroWeb"
+    CraneImage           = "v2"
+    Git_SHA              = var.git_sha
+    CraneVersion         = var.crane_version
+    AWSRegion            = var.aws_region
+    SpireServerAddress   = var.spire_server_address
+    SpireTrustDomain     = var.trust_domain
+    SpireBundleParameter = var.spire_bundle_parameter
+    SpireVersion         = var.spire_version
+    KubernetesVersion    = var.kubernetes_version
   }
 }
 
 build {
-  name = "crane-golden-image-build"
-  sources = [
-    "source.amazon-ebs.ubuntu"
-  ]
+  sources = ["source.amazon-ebs.ubuntu"]
   provisioner "shell" {
-    inline = ["sudo apt-get update", "sudo apt-get install -y curl"]
+    script = "${path.root}/setup-host.sh"
+  }
+  provisioner "shell" {
+    environment_vars = ["KUBERNETES_VERSION=${var.kubernetes_version}"]
+    script           = "${path.root}/setup-k8s.sh"
   }
   provisioner "file" {
-    source = "${path.root}/spire-agent.conf"
+    content = templatefile(abspath("${path.root}/spire-agent.conf"), {
+      spire_server_address = var.spire_server_address
+      trust_domain         = var.trust_domain
+    })
     destination = "/tmp/spire-agent.conf"
   }
   provisioner "file" {
-    source = "${path.root}/spire-agent.service"
+    content = templatefile(abspath("${path.root}/spire-agent.service"), {
+      aws_region             = var.aws_region
+      spire_bundle_parameter = var.spire_bundle_parameter
+    })
     destination = "/tmp/spire-agent.service"
   }
-  provisioner "shell" {
-    inline = [
-      "wget -q https://github.com/spiffe/spire/releases/download/v${var.spire_version}/spire-${var.spire_version}-linux-arm64-musl.tar.gz",
-      "tar zvxf spire-${var.spire_version}-linux-arm64-musl.tar.gz",
-      "sudo cp -r spire-${var.spire_version}/. /opt/spire/",
-      "rm -rf spire-${var.spire_version}*",
-      "sudo mkdir -p /opt/spire/data",
-      "sudo chown root:root /opt/spire/data",
-      "sudo chmod 700 /opt/spire/data",
-      "sudo mkdir -p /etc/spire",
-      "sudo cp /tmp/spire-agent.conf /etc/spire/agent.conf",
-      "sudo cp /tmp/spire-agent.service /etc/systemd/system/spire-agent.service"
-    ]
-  }
-  provisioner "shell" {
-    inline = [
-      "sudo sed -i 's/<SPIRE_SERVER_IP>/${var.spire_server_ip}/g' /etc/spire/agent.conf"
-    ]
-  }
-  provisioner "shell" {
-    script = "${path.root}/setup-k8s.sh"
+  provisioner "file" {
+    source      = "${path.root}/fetch-spire-bundle.sh"
+    destination = "/tmp/crane-fetch-spire-bundle"
   }
   provisioner "file" {
-    source = "${path.root}/subd"
-    destination = "/tmp/subd"
-  }
-  provisioner "file" {
-    source = "${path.root}/subd-appsettings.json"
-    destination = "/tmp/appsettings.json"
-  }
-  provisioner "file" {
-    source = "${path.root}/subd.service"
+    source      = "${path.root}/subd.service"
     destination = "/tmp/subd.service"
   }
-  provisioner "shell" {
-    inline = [
-      "sudo mv /tmp/subd /usr/local/bin/subd",
-      "sudo chmod +x /usr/local/bin/subd",
-      "sudo mv /tmp/appsettings.json /usr/local/bin/appsettings.json",
-      "sudo mv /tmp/subd.service /etc/systemd/system/subd.service",
-      "sudo systemctl enable subd",
-      "sudo systemctl start subd"
-    ]
+  provisioner "file" {
+    source      = "${path.root}/../../policy/os.star"
+    destination = "/tmp/os.star"
   }
   provisioner "shell" {
-    inline = [
-      "sudo cp /tmp/spire-agent.conf /etc/spire/agent.conf",
-      "sudo cp /tmp/spire-agent.service /etc/systemd/system/spire-agent.service",
-      "sudo systemctl enable spire-agent",
-      "sudo systemctl start spire-agent"
+    environment_vars = [
+      "SPIRE_VERSION=${var.spire_version}",
+      "CRANE_VERSION=${var.crane_version}",
+      "CRANE_ARCH=${var.architecture}"
     ]
+    script = "${path.root}/setup-crane.sh"
   }
 }

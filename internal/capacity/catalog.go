@@ -23,6 +23,16 @@ func (s *Store) SeedFirstZone(
 	p api.NodePoolInput,
 	g api.NodeGroupInput,
 ) error {
+	return s.seedFirstZone(ctx, z, c, budget, p, g, true)
+}
+
+// SeedFirstZonePending initializes topology before services start without
+// admitting capacity until the bootstrap's health checks have passed.
+func (s *Store) SeedFirstZonePending(ctx context.Context, z api.ZoneInput, c api.ClusterInput, budget api.Resources, p api.NodePoolInput, g api.NodeGroupInput) error {
+	return s.seedFirstZone(ctx, z, c, budget, p, g, false)
+}
+
+func (s *Store) seedFirstZone(ctx context.Context, z api.ZoneInput, c api.ClusterInput, budget api.Resources, p api.NodePoolInput, g api.NodeGroupInput, ready bool) error {
 	if z.ID == "" || c.ID == "" || p.ID == "" || g.ID == "" ||
 		c.ZoneID != z.ID || g.ClusterID != c.ID || g.ZoneID != z.ID || g.NodePoolID != p.ID ||
 		budget.VCPU < 0 || budget.MemoryMiB < 0 || budget.Nodes < 0 ||
@@ -38,17 +48,22 @@ func (s *Store) SeedFirstZone(
 		return err
 	}
 	defer tx.Rollback()
+	lifecycle := "ready"
+	if !ready {
+		lifecycle = "initializing"
+	}
 
 	_, err = tx.ExecContext(
 		ctx,
 		`INSERT INTO zones(id,provider,account_id,region,provider_zone_id,enabled,lifecycle_state)
-		 VALUES($1,$2,$3,$4,$5,true,'ready')
+		 VALUES($1,$2,$3,$4,$5,true,$6)
 		 ON CONFLICT (id) DO UPDATE SET
 		   provider=EXCLUDED.provider,
 		   account_id=EXCLUDED.account_id,
 		   region=EXCLUDED.region,
-		   provider_zone_id=EXCLUDED.provider_zone_id`,
-		z.ID, z.Provider, z.AccountID, z.Region, z.ProviderZoneID,
+		   provider_zone_id=EXCLUDED.provider_zone_id,
+		   lifecycle_state=EXCLUDED.lifecycle_state`,
+		z.ID, z.Provider, z.AccountID, z.Region, z.ProviderZoneID, lifecycle,
 	)
 	if err != nil {
 		return err
@@ -57,7 +72,7 @@ func (s *Store) SeedFirstZone(
 	_, err = tx.ExecContext(
 		ctx,
 		`INSERT INTO clusters(id,zone_id,api_server_endpoint,ca_cert_hash,kubeadm_version,kubelet_version,container_runtime,cni,lifecycle_state)
-		 VALUES($1,$2,$3,$4,$5,$6,$7,$8,'ready')
+		 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)
 		 ON CONFLICT (id) DO UPDATE SET
 		   zone_id=EXCLUDED.zone_id,
 		   api_server_endpoint=EXCLUDED.api_server_endpoint,
@@ -66,9 +81,9 @@ func (s *Store) SeedFirstZone(
 		   kubelet_version=EXCLUDED.kubelet_version,
 		   container_runtime=EXCLUDED.container_runtime,
 		   cni=EXCLUDED.cni,
-		   lifecycle_state='ready'`,
+		   lifecycle_state=EXCLUDED.lifecycle_state`,
 		c.ID, c.ZoneID, c.APIServerEndpoint, c.CACertHash,
-		c.KubeadmVersion, c.KubeletVersion, c.ContainerRuntime, c.CNI,
+		c.KubeadmVersion, c.KubeletVersion, c.ContainerRuntime, c.CNI, lifecycle,
 	)
 	if err != nil {
 		return err

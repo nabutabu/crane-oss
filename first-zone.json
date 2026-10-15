@@ -1,15 +1,15 @@
 {
   "zone": {
-    "id": "us-west-2a",
+    "id": "us-west-1a",
     "provider": "aws",
     "account_id": "123456789012",
-    "region": "us-west-2",
-    "provider_zone_id": "usw2-az1"
+    "region": "us-west-1",
+    "provider_zone_id": "usw1-az1"
   },
   "cluster": {
-    "id": "platform-us-west-2",
-    "zone_id": "us-west-2a",
-    "api_server_endpoint": "https://api.platform.us-west-2.crane.internal:6443",
+    "id": "platform-us-west-1",
+    "zone_id": "us-west-1a",
+    "api_server_endpoint": "https://api.platform.us-west-1.crane.internal:6443",
     "ca_cert_hash": "REPLACE_WITH_CA_CERT_HASH",
     "kubeadm_version": "v1.31.0",
     "kubelet_version": "v1.31.0",
@@ -31,12 +31,12 @@
     }
   },
   "group": {
-    "id": "platform-general-us-west-2a",
-    "cluster_id": "platform-us-west-2",
+    "id": "platform-general-us-west-1a",
+    "cluster_id": "platform-us-west-1",
     "node_pool_id": "platform-general",
-    "zone_id": "us-west-2a",
+    "zone_id": "us-west-1a",
     "capacity_class": "on-demand",
-    "provider_zone_id": "usw2-az1",
+    "provider_zone_id": "usw1-az1",
     "min_nodes": 3,
     "max_nodes": 12,
     "template_revision": "v1",

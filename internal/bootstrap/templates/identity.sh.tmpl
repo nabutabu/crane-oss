@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+# Registers the platform host's workload identities on the SPIRE server.
+# Runs on the SPIRE host after the server is healthy and before the platform
+# script, so the parent ID is deterministic.
+set -euo pipefail
+
+export AWS_REGION="[[ .Region ]]"
+export PATH="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+
+readonly BUNDLE_PARAMETER="[[ .BundleParameter ]]"
+readonly TRUST_DOMAIN="[[ .TrustDomain ]]"
+readonly ACCOUNT_ID="[[ .AccountID ]]"
+readonly PLATFORM_INSTANCE_ID="[[ .PlatformInstanceID ]]"
+readonly CONTAINER="crane-spire-server"
+readonly SOCKET_PATH="/tmp/spire-server/private/api.sock"
+
+readonly PARENT_ID="spiffe://[[ .TrustDomain ]]/spire/agent/aws_iid/[[ .AccountID ]]/[[ .Region ]]/[[ .PlatformInstanceID ]]"
+
+umask 077
+step() { echo "[identities] $1"; }
+step "waiting for SPIRE trust bundle"
+
+# Sequence after the SPIRE server: the trust bundle must already be published.
+bundle_ready=0
+for _ in $(seq 1 60); do
+  if aws ssm get-parameter --name "$BUNDLE_PARAMETER" >/dev/null 2>&1; then
+    bundle_ready=1
+    break
+  fi
+  sleep 5
+done
+if [ "$bundle_ready" != "1" ]; then
+  echo "SPIRE trust bundle is not available yet" >&2
+  exit 1
+fi
+
+server_ready=0
+step "waiting for SPIRE server health"
+for _ in $(seq 1 60); do
+  if docker exec "$CONTAINER" /opt/spire/bin/spire-server healthcheck -socketPath "$SOCKET_PATH" >/dev/null 2>&1; then
+    server_ready=1
+    break
+  fi
+  sleep 5
+done
+if [ "$server_ready" != "1" ]; then
+  echo "SPIRE server is not healthy" >&2
+  exit 1
+fi
+
+ensure_entry() {
+  local spiffe_id="$1" uid="$2"
+  local all matched count
+  all="$(docker exec "$CONTAINER" /opt/spire/bin/spire-server entry show \
+      -socketPath "$SOCKET_PATH" -spiffeID "$spiffe_id")"
+  count="$(printf '%s\n' "$all" | awk '/Entry ID/{n++} END{print n+0}')"
+  if [ "$count" -gt 1 ]; then
+    echo "duplicate SPIRE entries for $spiffe_id" >&2
+    return 1
+  fi
+  if [ "$count" = "1" ]; then
+    matched="$(docker exec "$CONTAINER" /opt/spire/bin/spire-server entry show \
+      -socketPath "$SOCKET_PATH" -spiffeID "$spiffe_id" -parentID "$PARENT_ID" \
+      -selector "unix:uid:$uid" -matchSelectorsOn exact)"
+    if ! printf '%s\n' "$matched" | grep -q "Entry ID"; then
+      echo "existing SPIRE entry has a different parent or workload selector" >&2
+      return 1
+    fi
+    echo "SPIRE entry already registered for $spiffe_id"
+    return 0
+  fi
+  docker exec "$CONTAINER" /opt/spire/bin/spire-server entry create \
+    -socketPath "$SOCKET_PATH" \
+    -parentID "$PARENT_ID" \
+    -spiffeID "$spiffe_id" \
+    -selector "unix:uid:$uid"
+  echo "registered SPIRE entry for $spiffe_id"
+}
+
+# Dominator workload (runs as UID 10002) and the bootstrap probe (UID 10003).
+step "reconciling Dominator and probe workload identities"
+ensure_entry "spiffe://[[ .TrustDomain ]]/dominator" 10002
+ensure_entry "spiffe://[[ .TrustDomain ]]/subd" 10003
+
+echo "platform workload identities are registered; parent ID $PARENT_ID"
