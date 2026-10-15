@@ -116,8 +116,8 @@ Adapter responsibilities: expose only groups belonging to its Kubernetes cluster
 
 Layer zero is identity plus the control-plane bootstrap, brought up **before any zone exists**:
 
-1. **SPIRE server + its PostgreSQL (RDS)** — provisioned manually from a developer's machine per [`docs/spire-server-ec2-setup.md`](spire-server-ec2-setup.md). No cloud hosts exist beforehand. This remains the one manual step whenever no infrastructure exists.
-2. **The first zone** — a Kubernetes cluster built with kubeadm that hosts `crane-api` and the Dominator that owns that zone. The first zone is always the **platform team's cluster**.
+1. **IAM bootstrap identity** — the operator creates an IAM user with the documented provisioning permissions and makes its credentials available locally. This is the only manual AWS infrastructure prerequisite.
+2. **Full platform bootstrap** — `crane-bootstrap` creates AWS networking, runtime roles, RDS, SPIRE server, and the first kubeadm cluster with Cilium, `crane-api`, and its Dominator. It initializes Crane's schema and seeds the platform team's topology while admission remains closed, then validates identity, database, cluster and service health before opening admission. See [`docs/aws-bootstrap.md`](aws-bootstrap.md).
 3. Once at least one `crane-api` is running, **subsequent zones are brought up by calling the Crane API**. A Zone Bootstrap Controller running on protected layer-zero/platform capacity executes the operation; the destination Dominator cannot bootstrap the cluster in which it will run.
 
 Layer-zero components (SPIRE, Postgres, `crane-api`) must not run on capacity being provisioned, preserving an independent bootstrap path (cf. Uber's Crane, which keeps layer-zero dependencies outside the zone being assembled).
@@ -246,13 +246,14 @@ Repair and maintenance use explicit host identities and the same drain coordinat
 
 ### Phase 1 — Control-plane data model & structured logging foundation
 - Models: `Zone`, `NodeGroup`, `NodePool`, `CapacityRequest`, `CreditReservation`. Host Catalog schema with lifecycle states, desired/observed versions, allocatable/reserved, operations.
+- Define the canonical repeatable PostgreSQL first-go schema. `crane-bootstrap` initializes it before seeding the first zone; `crane-api` and Dominator only verify schema readiness. Do not add a migration ledger or POC schema upgrade path.
 - Add `ZoneBootstrapOperation` and `NodeRemovalOperation`; enforce `(group_id, request_id)` uniqueness and target revisioning in persistence.
 - Implement the single-transaction mutation boundary: one PostgreSQL transaction writes target revision + credit reservation + host intent + executable operation; operation leases, stale-controller fencing, supersede cancellation, and provider idempotency token persisted with the operation.
-- slog migration with redaction, OTLP init (no-op fallback), `gofmt`/`go vet`/`go test` in CI.
-- Exit: durable state models compile; the atomic mutation boundary is proven by tests (no partial writes); control-plane binaries use structured redaction-safe logging.
+- Adopt slog with redaction, OTLP init (no-op fallback), `gofmt`/`go vet`/`go test` in CI.
+- Exit: durable state models compile; the atomic mutation boundary is proven by tests (no partial writes); the first-go schema initializes repeatedly on an empty database; control-plane binaries use structured redaction-safe logging.
 
 ### Phase 2 — One zone end-to-end
-- Assume layer zero exists (SPIRE + Postgres + a running `crane-api` in the platform team's first zone); subsequent zones are created via the Crane API.
+- Bootstrap layer zero and the platform team's first zone from the operator IAM identity using `crane-bootstrap`; SPIRE and Postgres are included. Subsequent zones are created via the Crane API.
 - Implement adapter-to-Crane target protocol (handler `RequestID`, target revision CAS, replay, lost-response and adapter-crash recovery).
 - Provider-backed create/delete, per-zone cluster record, zone-scoped Dominator reconciler, Subd enrollment via `kubeadm join` (Cilium), endpoint/reporting.
 - Implement the Zone Bootstrap Controller and use it to create one subsequent zone: provision control plane, run `kubeadm init`, install Cilium/Dominator, validate, and hand off.

@@ -1,0 +1,185 @@
+package bootstrap
+
+import (
+	"bytes"
+	"embed"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
+	"text/template"
+)
+
+// Bootstrap scripts are rendered on the operator machine and executed on the
+// layer-zero hosts through SSM. They are idempotent, never echo secrets, and
+// use tooling installed by the golden-image generator.
+//
+//go:embed templates/*.tmpl
+var scriptTemplates embed.FS
+
+const spireServerImageRepo = "ghcr.io/spiffe/spire-server"
+
+// scriptData is the union of values every template may reference. Templates
+// use the [[ ]] delimiters so shell/Python brace syntax stays literal.
+type scriptData struct {
+	Config Config
+	Infra  Infrastructure
+
+	TrustDomain        string
+	Region             string
+	AccountID          string
+	BundleParameter    string
+	FirstZoneBase64    string
+	BHDBase64          string
+	SpireImage         string
+	KubernetesVersion  string
+	CiliumVersion      string
+	PodCIDR            string
+	SpireAddress       string
+	PlatformInstanceID string
+}
+
+// baseScriptData normalizes the configuration and derives shared values.
+func baseScriptData(cfg Config, infra Infrastructure) (scriptData, error) {
+	cfg = cfg.WithDefaults()
+	if strings.TrimSpace(cfg.SPIRE.TrustDomain) == "" {
+		return scriptData{}, errors.New("spire.trust_domain is required to render bootstrap scripts")
+	}
+	image := strings.TrimSpace(cfg.SPIRE.Image)
+	if image == "" {
+		image = spireServerImageRepo + ":" + cfg.SPIRE.Version
+	}
+	return scriptData{
+		Config:            cfg,
+		Infra:             infra,
+		TrustDomain:       cfg.SPIRE.TrustDomain,
+		Region:            cfg.AWS.Region,
+		AccountID:         cfg.AWS.AccountID,
+		BundleParameter:   bundleParameter(cfg),
+		SpireImage:        image,
+		KubernetesVersion: cfg.Platform.KubernetesVersion,
+		CiliumVersion:     cfg.Platform.CiliumVersion,
+		PodCIDR:           cfg.Platform.PodCIDR,
+	}, nil
+}
+
+func renderScript(name string, data scriptData) (string, error) {
+	tmpl, err := template.New(name).Delims("[[", "]]").ParseFS(scriptTemplates, "templates/"+name)
+	if err != nil {
+		return "", fmt.Errorf("parse %s: %w", name, err)
+	}
+	var buf bytes.Buffer
+	if err := tmpl.ExecuteTemplate(&buf, name, data); err != nil {
+		return "", fmt.Errorf("render %s: %w", name, err)
+	}
+	script := buf.String()
+	if !strings.HasPrefix(script, "#!") {
+		return "", fmt.Errorf("%s: rendered script is missing a shebang", name)
+	}
+	return script, nil
+}
+
+// RenderSpireScript renders the layer-zero SPIRE server bootstrap that runs on
+// the dedicated SPIRE host. It creates the spire and crane PostgreSQL
+// databases with the runtime credentials, runs the pinned SPIRE server outside
+// Kubernetes, and publishes the trust bundle to IAM-protected Parameter Store.
+func RenderSpireScript(cfg Config, infra Infrastructure) (string, error) {
+	data, err := baseScriptData(cfg, infra)
+	if err != nil {
+		return "", err
+	}
+	if err := requireInfra(infra, "DBEndpoint", "DBSecretARN", "RuntimeSecretARN"); err != nil {
+		return "", err
+	}
+	return renderScript("spire.sh.tmpl", data)
+}
+
+// RenderPlatformScript renders the first cluster's platform host bootstrap:
+// SPIRE agent, kubeadm, Cilium, the pending schema seed, and the crane-api and
+// dominator Deployments. It must run after RenderIdentityScript has registered
+// the platform node's parent ID on the SPIRE host.
+func RenderPlatformScript(cfg Config, infra Infrastructure, spireAddress string) (string, error) {
+	if strings.TrimSpace(spireAddress) == "" {
+		return "", errors.New("spireAddress is required to render the platform script")
+	}
+	data, err := baseScriptData(cfg, infra)
+	if err != nil {
+		return "", err
+	}
+	if err := requireInfra(infra, "DBEndpoint", "RuntimeSecretARN"); err != nil {
+		return "", err
+	}
+	if spireAddress != infra.SpireAddress || spireAddress == "" {
+		return "", errors.New("platform requires the prepared SPIRE load balancer hostname")
+	}
+	data.SpireAddress = spireAddress
+	in, err := topology(cfg, infra)
+	if err != nil {
+		return "", err
+	}
+	first, err := json.Marshal(in)
+	if err != nil {
+		return "", err
+	}
+	data.FirstZoneBase64 = base64.StdEncoding.EncodeToString(first)
+	bhd, _ := json.Marshal(map[string]any{"zone": in.Zone.ID, "scan_interval": 5, "checks": []string{"aws.ec2.unhealthy"}})
+	data.BHDBase64 = base64.StdEncoding.EncodeToString(bhd)
+	return renderScript("platform.sh.tmpl", data)
+}
+
+// RenderIdentityScript renders the registration step executed on the SPIRE
+// host. It binds the deterministically known platform agent parent ID to the
+// dominator (UID 10002) and probe (UID 10003) workload identities.
+func RenderIdentityScript(cfg Config, infra Infrastructure, platformInstanceID string) (string, error) {
+	if strings.TrimSpace(platformInstanceID) == "" {
+		return "", errors.New("platformInstanceID is required to render the identity script")
+	}
+	data, err := baseScriptData(cfg, infra)
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(cfg.AWS.AccountID) == "" || strings.TrimSpace(cfg.AWS.Region) == "" {
+		return "", errors.New("aws.account_id and aws.region are required to render the identity script")
+	}
+	data.PlatformInstanceID = platformInstanceID
+	return renderScript("identity.sh.tmpl", data)
+}
+
+// RenderValidateScript renders the post-deployment gate. It fails on any
+// unhealthy component, exercises real SPIFFE mTLS against the dominator as the
+// probe workload, and only then marks the zone and cluster ready.
+func RenderValidateScript(cfg Config, infra Infrastructure) (string, error) {
+	data, err := baseScriptData(cfg, infra)
+	if err != nil {
+		return "", err
+	}
+	if err := requireInfra(infra, "DBEndpoint", "RuntimeSecretARN"); err != nil {
+		return "", err
+	}
+	return renderScript("validate.sh.tmpl", data)
+}
+
+func requireInfra(infra Infrastructure, fields ...string) error {
+	missing := make([]string, 0, len(fields))
+	for _, field := range fields {
+		var value string
+		switch field {
+		case "DBEndpoint":
+			value = infra.DBEndpoint
+		case "DBSecretARN":
+			value = infra.DBSecretARN
+		case "RuntimeSecretARN":
+			value = infra.RuntimeSecretARN
+		default:
+			return fmt.Errorf("unknown infrastructure field %q", field)
+		}
+		if strings.TrimSpace(value) == "" {
+			missing = append(missing, field)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("infrastructure is missing %s required to render scripts", strings.Join(missing, ", "))
+	}
+	return nil
+}

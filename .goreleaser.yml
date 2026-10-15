@@ -4,7 +4,7 @@
 # cross-compiles the subd host agent, archives it, and attaches it (plus
 # checksums) to a GitHub Release.
 #
-# Only subd is released as a binary. crane-api and dominator are released as
+# Host binaries (subd and bootstrap tools) are baked into AMIs. API services are
 # container images (see the `images` job in release.yml).
 #
 # See ~/programs/herdr-observr/.goreleaser.yml for the pattern this follows.
@@ -23,19 +23,41 @@ builds:
     # targets — amd64 and the ARM-based t4g instances.
     goos: [linux]
     goarch: [amd64, arm64]
-    ldflags:
+    ldflags: &release_ldflags
       - -s -w
       - -X github.com/nabutabu/crane-oss/internal/version.Version={{ .Version }}
       - -X github.com/nabutabu/crane-oss/internal/version.Commit={{ .Commit }}
       - -X github.com/nabutabu/crane-oss/internal/version.Date={{ .CommitDate }}
 
+  - id: crane-bootstrap
+    binary: crane-bootstrap
+    main: ./cmd/crane-bootstrap
+    env: [CGO_ENABLED=0]
+    goos: [linux]
+    goarch: [amd64, arm64]
+    ldflags: *release_ldflags
+  - id: crane-bootstrap-probe
+    binary: crane-bootstrap-probe
+    main: ./cmd/crane-bootstrap-probe
+    env: [CGO_ENABLED=0]
+    goos: [linux]
+    goarch: [amd64, arm64]
+    ldflags: *release_ldflags
+
 archives:
   - id: subd
+    ids: [subd]
     name_template: "subd_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     formats: [tar.gz]
     files:
       - LICENSE*
       - README*
+
+  - id: bootstrap-tools
+    ids: [crane-bootstrap, crane-bootstrap-probe]
+    name_template: "bootstrap-tools_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
+    files: [LICENSE*, README*]
 
 checksum:
   name_template: "checksums.txt"

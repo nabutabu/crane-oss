@@ -1,10 +1,11 @@
 [Unit]
 Description=subd agent
 After=spire-agent.service
+ConditionPathExists=/usr/local/bin/appsettings.json
 Requires=spire-agent.service
 
 [Service]
-Environment="SPIFFE_ENDPOINT_SOCKET=unix:///tmp/spire-agent/public/api.sock"
+Environment="SPIFFE_ENDPOINT_SOCKET=unix:///run/spire/sockets/agent.sock"
 WorkingDirectory=/usr/local/bin
 User=root
 ExecStart=/usr/local/bin/subd

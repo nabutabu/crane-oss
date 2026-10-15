@@ -1,10 +1,17 @@
 [Unit]
 Description=SPIRE Agent
-After=network.target
+After=network-online.target
+Wants=network-online.target
 
 [Service]
-ExecStart=/opt/spire/bin/spire-agent run -config /etc/spire/agent.conf
+Environment=AWS_REGION=${aws_region}
+Environment=SPIRE_BUNDLE_PARAMETER=${spire_bundle_parameter}
+RuntimeDirectory=spire/sockets
+RuntimeDirectoryMode=0755
+ExecStartPre=/usr/local/bin/crane-fetch-spire-bundle
+ExecStart=/usr/local/bin/spire-agent run -config /etc/spire/agent.conf
 Restart=always
+RestartSec=5
 
 [Install]
 WantedBy=multi-user.target

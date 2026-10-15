@@ -1,5 +1,9 @@
 # Setting Up SPIRE-Server on AWS EC2 with RDS PostgreSQL
 
+This is a historical manual setup guide. The supported automated entry point
+is now [`crane-bootstrap`](aws-bootstrap.md), which includes SPIRE server and
+RDS with only an operator IAM identity as the AWS infrastructure prerequisite.
+
 This guide covers setting up SPIRE-Server on an AWS EC2 instance with a PostgreSQL database on AWS RDS.
 
 ## Prerequisites

@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+# Post-deployment validation for the first cluster. Fails on any unhealthy
+# component. The zone and cluster are marked ready only after every gate,
+# including real SPIFFE mTLS to the dominator, has passed.
+set -euo pipefail
+
+export AWS_REGION="[[ .Region ]]"
+export PATH="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+export KUBECONFIG="/etc/kubernetes/admin.conf"
+
+readonly TRUST_DOMAIN="[[ .TrustDomain ]]"
+readonly RUNTIME_SECRET_ARN="[[ .Infra.RuntimeSecretARN ]]"
+readonly DB_ENDPOINT="[[ .Infra.DBEndpoint ]]"
+readonly DB_PORT="[[ .Config.RDS.Port ]]"
+readonly CA_BUNDLE="/etc/crane/rds-ca.pem"
+readonly CRANE_DIR="/opt/crane"
+readonly SECRET_DIR="/var/lib/crane"
+
+umask 077
+step() { echo "[validate] $1"; }
+step "waiting for Kubernetes and Cilium workloads"
+install -d -m 0755 "$SECRET_DIR"
+aws secretsmanager get-secret-value --secret-id "$RUNTIME_SECRET_ARN" --query SecretString --output text > "$SECRET_DIR/runtime-secret.json"
+chmod 600 "$SECRET_DIR/runtime-secret.json"
+
+# ---- Kubernetes and Cilium readiness --------------------------------------
+kubectl -n crane-system rollout status deployment/crane-api --timeout=600s
+kubectl -n crane-system rollout status deployment/dominator --timeout=600s
+kubectl -n kube-system rollout status daemonset/cilium --timeout=600s
+kubectl wait --for=condition=Ready node --all --timeout=600s
+
+# ---- SPIRE workload attestation and dominator mTLS/database health ---------
+step "validating SPIFFE workload attestation and Dominator mTLS"
+setpriv --reuid=10003 --regid=10003 --clear-groups env \
+  SPIFFE_ENDPOINT_SOCKET=unix:///run/spire/sockets/agent.sock \
+  SPIFFE_TRUST_DOMAIN="$TRUST_DOMAIN" \
+  "$CRANE_DIR/bin/crane-bootstrap-probe"
+
+# ---- Mark the validated zone and cluster ready (single transaction) --------
+step "marking the validated zone and cluster ready"
+readonly FIRST_ZONE="/etc/crane/first-zone.rendered.json"
+ZONE_ID="$(jq -r '.zone.id' "$FIRST_ZONE")"
+CLUSTER_ID="$(jq -r '.cluster.id' "$FIRST_ZONE")"
+DB_USER="$(jq -r '.crane_username' "$SECRET_DIR/runtime-secret.json")"
+export PGPASSWORD="$(jq -r '.crane_password' "$SECRET_DIR/runtime-secret.json")"
+
+psql \
+  "host=$DB_ENDPOINT port=$DB_PORT user=$DB_USER dbname=crane sslmode=verify-full sslrootcert=$CA_BUNDLE" \
+  -v ON_ERROR_STOP=1 \
+  -v zone="$ZONE_ID" -v cluster="$CLUSTER_ID" <<'SQL'
+BEGIN;
+SELECT id FROM zones WHERE id = :'zone' FOR UPDATE;
+SELECT id FROM clusters WHERE id = :'cluster' AND zone_id = :'zone' FOR UPDATE;
+SELECT (SELECT count(*) FROM zones WHERE id = :'zone') = 1
+   AND (SELECT count(*) FROM clusters WHERE id = :'cluster' AND zone_id = :'zone') = 1 AS topology_valid \gset
+\if :topology_valid
+UPDATE zones SET lifecycle_state = 'ready' WHERE id = :'zone';
+UPDATE clusters SET lifecycle_state = 'ready' WHERE id = :'cluster';
+COMMIT;
+\else
+ROLLBACK;
+\echo 'bootstrap topology is missing or mismatched'
+\quit 1
+\endif
+SQL
+unset PGPASSWORD
+
+API_ENDPOINT="$(jq -r '.cluster.api_server_endpoint' "$FIRST_ZONE")"
+CA_CERT_HASH="$(jq -r '.cluster.ca_cert_hash' "$FIRST_ZONE")"
+ZONE_ID="$ZONE_ID" CLUSTER_ID="$CLUSTER_ID" API_ENDPOINT="$API_ENDPOINT" CA_CERT_HASH="$CA_CERT_HASH" python3 - <<'PY'
+import json, os
+print(json.dumps(dict(zone=os.environ['ZONE_ID'], cluster=os.environ['CLUSTER_ID'],
+    api_server_endpoint=os.environ['API_ENDPOINT'], ca_cert_hash=os.environ['CA_CERT_HASH'], status='ready')))
+PY
+
+echo "first zone validated and marked ready"
