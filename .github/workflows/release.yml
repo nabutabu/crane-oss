@@ -16,7 +16,7 @@
 #      AWS_ROLE_ARN/AWS_REGION repository variables are configured, and a
 #      failure there never blocks the GHCR publish.
 #
-# Only subd is released as a binary; crane-api and dominator ship as images.
+# subd and bootstrap tools ship as binaries for golden AMIs; API services ship as images.
 # This follows the binary-release pattern used by ~/programs/herdr-observr.
 
 name: Release

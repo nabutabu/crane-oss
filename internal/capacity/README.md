@@ -1,11 +1,13 @@
 # Phase 1 capacity persistence
 
-`capacity.Migrate(ctx, db)` installs the embedded, versioned PostgreSQL schema in
-one transaction under an advisory lock. Both control-plane binaries run it at
-startup. It preserves existing hosts and action records and creates compatibility
-tables on an empty database. Use the `crane` database on the existing RDS instance.
-The old `postgres_data/createtablescripts.sql` is a historical bootstrap script
-with destructive DROP statements; it is not the migration path.
+`capacity.InitializeSchema(ctx, db)` installs the canonical first-go PostgreSQL
+schema from `schema.sql` in one transaction under an advisory lock. The explicit
+`crane-bootstrap` command initializes the schema before seeding the first zone.
+`crane-api` and Dominator only call `capacity.CheckSchema` at startup and fail
+with instructions to run bootstrap when the schema is missing. The baseline is
+repeatable on the dedicated, initially empty `crane` database; it does not keep a
+version ledger or upgrade earlier POC schemas. It includes the host/action and
+health tables required by the current control loops.
 
 Platform configuration seeds `team_budgets`, `zones`, `clusters`, `node_pools`, and
 `node_groups`. Memory entitlement is in MiB, CPU in integer vCPUs, and node count
@@ -51,6 +53,15 @@ without accepting placement or readiness. The bootstrap executor, drain and
 termination executor, trusted readiness watcher, and authenticated adapter
 transport are Phase 2 work. Launch JSON and bootstrap JSON must not contain
 plaintext join tokens or cloud credentials.
+
+The Phase 0 adapter HTTP boundary adds a cluster-scoped target read and atomic
+named-node removal admission. Configure `CRANE_ADAPTER_TOKEN` together with
+`CRANE_ADAPTER_CLUSTER_ID`; headers cannot choose a different cluster. Removal
+batches store the handler request in immutable operation parameters under the
+group lock, so a lost-response replay cannot lower the target twice. Every node
+must match catalog group/provider identity, and all operations roll back together.
+An active drain owns the host exclusively; admission retains all credits and
+uses a 30-minute drain deadline. Executors are still supplied by later phases.
 
 Run the transaction tests against a disposable PostgreSQL database:
 

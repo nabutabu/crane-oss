@@ -1,0 +1,188 @@
+#!/usr/bin/env bash
+# Layer-zero SPIRE server bootstrap. Idempotent; run on the dedicated SPIRE host.
+# AWS credentials come from the instance profile. No secret is ever printed.
+set -euo pipefail
+
+export AWS_REGION="[[ .Region ]]"
+export PATH="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+
+readonly BUNDLE_PARAMETER="[[ .BundleParameter ]]"
+readonly TRUST_DOMAIN="[[ .TrustDomain ]]"
+readonly SPIRE_IMAGE="[[ .SpireImage ]]"
+readonly DB_ENDPOINT="[[ .Infra.DBEndpoint ]]"
+readonly DB_PORT="[[ .Config.RDS.Port ]]"
+readonly RDS_MASTER_SECRET_ARN="[[ .Infra.DBSecretARN ]]"
+readonly RUNTIME_SECRET_ARN="[[ .Infra.RuntimeSecretARN ]]"
+readonly CA_BUNDLE="/etc/crane/rds-ca.pem"
+readonly CONF_DIR="/etc/crane"
+readonly SECRET_DIR="/var/lib/crane"
+readonly DATA_DIR="/var/lib/crane/spire"
+readonly ADMIN_SOCKET_DIR="/tmp/spire-server"
+readonly CONTAINER="crane-spire-server"
+readonly SOCKET_PATH="/tmp/spire-server/private/api.sock"
+
+umask 077
+step() { echo "[spire] $1"; }
+step "preparing protected directories and credentials"
+install -d -m 0755 "$CONF_DIR" "$SECRET_DIR"
+install -d -m 0755 "$DATA_DIR/data" "$DATA_DIR/keys"
+install -d -m 0755 "$ADMIN_SOCKET_DIR/private"
+
+fetch_secret() {
+  local arn="$1" dest="$2"
+  aws secretsmanager get-secret-value --secret-id "$arn" --query SecretString --output text > "$dest"
+  chmod 600 "$dest"
+}
+
+fetch_secret "$RDS_MASTER_SECRET_ARN" "$SECRET_DIR/rds-master.json"
+fetch_secret "$RUNTIME_SECRET_ARN" "$SECRET_DIR/runtime-secret.json"
+step "credentials fetched; initializing runtime databases"
+
+RDS_USER="$(jq -r '.username' "$SECRET_DIR/rds-master.json")"
+RDS_PASSWORD="$(jq -r '.password' "$SECRET_DIR/rds-master.json")"
+SPIRE_USER="$(jq -r '.spire_username' "$SECRET_DIR/runtime-secret.json")"
+SPIRE_PASSWORD="$(jq -r '.spire_password' "$SECRET_DIR/runtime-secret.json")"
+CRANE_USER="$(jq -r '.crane_username' "$SECRET_DIR/runtime-secret.json")"
+CRANE_PASSWORD="$(jq -r '.crane_password' "$SECRET_DIR/runtime-secret.json")"
+
+# Create the runtime-owned roles and databases. The master credentials are used
+# only for this initialization step; applications use the runtime secret.
+export PGPASSWORD="$RDS_PASSWORD"
+export SPIRE_PASSWORD CRANE_PASSWORD
+psql \
+  "host=$DB_ENDPOINT port=$DB_PORT user=$RDS_USER dbname=postgres sslmode=verify-full sslrootcert=$CA_BUNDLE" \
+  -v ON_ERROR_STOP=1 \
+  -v spire_user="$SPIRE_USER" -v crane_user="$CRANE_USER" -v master_user="$RDS_USER" <<'SQL'
+\getenv spire_pw SPIRE_PASSWORD
+\getenv crane_pw CRANE_PASSWORD
+SELECT format('CREATE ROLE %I LOGIN', :'spire_user')
+ WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'spire_user') \gexec
+ALTER ROLE :"spire_user" WITH LOGIN PASSWORD :'spire_pw';
+SELECT format('CREATE ROLE %I LOGIN', :'crane_user')
+ WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'crane_user') \gexec
+ALTER ROLE :"crane_user" WITH LOGIN PASSWORD :'crane_pw';
+-- RDS master users are not PostgreSQL superusers. Membership is required to
+-- assign database ownership to the two newly created runtime roles.
+GRANT :"spire_user", :"crane_user" TO :"master_user";
+SELECT format('CREATE DATABASE spire OWNER %I', :'spire_user')
+ WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'spire') \gexec
+ALTER DATABASE spire OWNER TO :"spire_user";
+SELECT format('CREATE DATABASE crane OWNER %I', :'crane_user')
+ WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'crane') \gexec
+ALTER DATABASE crane OWNER TO :"crane_user";
+SQL
+unset PGPASSWORD
+unset RDS_PASSWORD SPIRE_PASSWORD CRANE_PASSWORD
+
+# Render the protected SPIRE server configuration. The datastore password is
+# read from the runtime secret file at runtime so it never appears in the
+# rendered script or in process arguments.
+python3 - <<'PY'
+import json, os
+secret = json.load(open('/var/lib/crane/runtime-secret.json'))
+conf = (
+    'server {{\n'
+    '    bind_address = "0.0.0.0"\n'
+    '    bind_port = "8081"\n'
+    '    socket_path = "/tmp/spire-server/private/api.sock"\n'
+    '    trust_domain = "[[ .TrustDomain ]]"\n'
+    '    data_dir = "/opt/spire/data"\n'
+    '    log_level = "INFO"\n'
+    '}}\n\n'
+    'plugins {{\n'
+    '    DataStore "sql" {{\n'
+    '        plugin_data {{\n'
+    '            database_type = "postgres"\n'
+    '            connection_string = "host=[[ .Infra.DBEndpoint ]] port=[[ .Config.RDS.Port ]] dbname=spire user={user} password={pw} sslmode=verify-full sslrootcert=/etc/crane/rds-ca.pem"\n'
+    '        }}\n'
+    '    }}\n'
+    '    NodeAttestor "aws_iid" {{\n'
+    '        plugin_data {{\n'
+    '            disable_instance_profile_selectors = true\n'
+    '        }}\n'
+    '    }}\n'
+    '    KeyManager "disk" {{\n'
+    '        plugin_data {{\n'
+    '            keys_path = "/opt/spire/data/keys"\n'
+    '        }}\n'
+    '    }}\n'
+    '}}\n'
+).format(user=secret['spire_username'], pw=secret['spire_password'])
+path = '/etc/crane/spire-server.conf'
+with open(path, 'w') as handle:
+    handle.write(conf)
+os.chmod(path, 0o600)
+PY
+chmod 600 "$CONF_DIR/spire-server.conf"
+step "SPIRE configuration rendered"
+
+# Run the pinned SPIRE server outside Kubernetes. Host networking lets the
+# container reach IMDS at the standard single hop and binds 8081 directly.
+if docker inspect "$CONTAINER" >/dev/null 2>&1; then
+	step "restarting existing SPIRE server container"
+  docker restart "$CONTAINER" >/dev/null
+else
+	step "starting SPIRE server container"
+  docker run -d --name "$CONTAINER" --restart always \
+    --user 0:0 \
+    --network host \
+    --entrypoint /opt/spire/bin/spire-server \
+    -e AWS_REGION="$AWS_REGION" \
+    -v "$CONF_DIR/spire-server.conf:/opt/spire/conf/server/server.conf:ro" \
+    -v "$DATA_DIR/data:/opt/spire/data" \
+    -v "$CA_BUNDLE:$CA_BUNDLE:ro" \
+    -v "$ADMIN_SOCKET_DIR:$ADMIN_SOCKET_DIR" \
+    "$SPIRE_IMAGE" run -config /opt/spire/conf/server/server.conf
+fi
+
+# Fail the phase if the server never becomes healthy.
+healthy=0
+for _ in $(seq 1 60); do
+  if docker exec "$CONTAINER" /opt/spire/bin/spire-server healthcheck -socketPath "$SOCKET_PATH" >/dev/null 2>&1; then
+    healthy=1
+    break
+  fi
+  sleep 5
+done
+if [ "$healthy" != "1" ]; then
+  echo "SPIRE server did not become healthy" >&2
+  exit 1
+fi
+step "SPIRE server is healthy; publishing trust bundle"
+
+# Republish the current public CA bundle after CA rotation as well as on the
+# initial run. Only this deployment's SPIRE role can write the parameter.
+cat > /usr/local/bin/crane-publish-spire-bundle <<'PUBLISH'
+#!/bin/bash
+set -euo pipefail
+umask 077
+bundle="$(mktemp)"
+trap 'rm -f "$bundle"' EXIT
+docker exec crane-spire-server /opt/spire/bin/spire-server bundle show \
+  -socketPath /tmp/spire-server/private/api.sock -format pem > "$bundle"
+openssl x509 -in "$bundle" -noout >/dev/null
+aws ssm put-parameter --region '[[ .Region ]]' --name '[[ .BundleParameter ]]' \
+  --type String --tier Advanced --overwrite --value "file://$bundle" >/dev/null
+PUBLISH
+chmod 0755 /usr/local/bin/crane-publish-spire-bundle
+/usr/local/bin/crane-publish-spire-bundle
+cat > /etc/systemd/system/crane-publish-spire-bundle.service <<'UNIT'
+[Unit]
+Description=Publish current SPIRE public trust bundle
+After=docker.service network-online.target
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/crane-publish-spire-bundle
+UNIT
+cat > /etc/systemd/system/crane-publish-spire-bundle.timer <<'UNIT'
+[Unit]
+Description=Refresh SPIRE bootstrap trust bundle after CA rotation
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=5min
+[Install]
+WantedBy=timers.target
+UNIT
+systemctl daemon-reload
+systemctl enable --now crane-publish-spire-bundle.timer
+echo "SPIRE server is healthy and published its trust bundle"

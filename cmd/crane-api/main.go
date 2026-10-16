@@ -74,6 +74,29 @@ func BuildChecks(enabled []string, deps checks.Dependencies) ([]checks.Check, er
 	return res, nil
 }
 
+// healthHandler serves the liveness and database-readiness probes.
+type healthHandler struct {
+	logger *slog.Logger
+	db     *sql.DB
+}
+
+func (h *healthHandler) health(w http.ResponseWriter, r *http.Request) {
+	h.logger.Info("healthy", "path", r.URL.Path)
+	fmt.Fprintf(w, `{"status": "available"}`)
+}
+
+func (h *healthHandler) dbHealth(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if err := h.db.PingContext(r.Context()); err != nil {
+		h.logger.Error("database health check failed", "error", err)
+		w.WriteHeader(http.StatusServiceUnavailable)
+		fmt.Fprint(w, `{"status": "unavailable"}`)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	fmt.Fprintf(w, `{"status": "available"}`)
+}
+
 func main() {
 	if err := run(); err != nil {
 		slog.Error("crane-api stopped", "error", err)
@@ -104,23 +127,13 @@ func run() error {
 		}
 	}()
 
-	host := intconfig.GetEnv("DB_HOST", "localhost")
-	port := intconfig.GetEnvInt("DB_PORT", 5432)
-	user := intconfig.GetEnv("DB_USER", "postgres")
-	password := intconfig.GetEnv("DB_PASSWORD", "REDACTED_DB_PASSWORD")
-	dbname := intconfig.GetEnv("DB_NAME", "crane")
-
-	// 2. Create the connection string
-	// The sslmode parameter is often set to 'disable' for local development.
-	psqlInfo := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
-		host, port, user, password, dbname)
-	db, err := sql.Open("pgx", psqlInfo)
+	db, err := sql.Open("pgx", intconfig.DatabaseURL(5432))
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
 	}
 	defer db.Close()
-	if err := capacity.Migrate(ctx, db); err != nil {
-		return fmt.Errorf("migrate capacity schema: %w", err)
+	if err := capacity.CheckSchema(ctx, db); err != nil {
+		return fmt.Errorf("Crane database is not ready: %w", err)
 	}
 
 	actionStore := execute.NewPostgresActionStore(db)
@@ -129,7 +142,7 @@ func run() error {
 	hostCatalog := service.NewHostCatalogService(hostStore)
 
 	cfg, err := config.LoadDefaultConfig(context.TODO(),
-		config.WithRegion("us-west-2"), // Optional: specify region here
+		config.WithRegion(intconfig.GetEnv("AWS_REGION", "us-west-2")),
 	)
 	if err != nil {
 		return fmt.Errorf("load SDK config: %w", err)
@@ -180,25 +193,17 @@ func run() error {
 	// Worker to put the hosts in appropriate states once detected by BHD
 	go worker.Run(ctx)
 
+	health := &healthHandler{logger: logger.Logger, db: db}
+
 	mux := http.NewServeMux()
+	mux.HandleFunc("/health", health.health)
+	mux.HandleFunc("/v1/db/health", health.dbHealth)
 
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		logger.Info("healthy", "path", r.URL.Path)
-		fmt.Fprintf(w, `{"status": "available"}`)
-	})
-
-	mux.HandleFunc("/v1/db/health", func(w http.ResponseWriter, r *http.Request) {
-		if err := db.PingContext(r.Context()); err != nil {
-			logger.Error("database health check failed", "error", err)
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusServiceUnavailable)
-			fmt.Fprint(w, `{"status": "unavailable"}`)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		fmt.Fprintf(w, `{"status": "available"}`)
-	})
+	// Platform topology and capacity admission endpoints. The topology routes
+	// require CRANE_ADMIN_TOKEN; adapter credentials are bound to one cluster,
+	// and a caller cannot choose its own team identity.
+	capacityAPI := capacity.NewAPI(capacity.NewStore(db), intconfig.GetEnv("CRANE_ADMIN_TOKEN", ""), intconfig.GetEnv("CRANE_ADAPTER_TOKEN", ""), intconfig.GetEnv("CRANE_ADAPTER_CLUSTER_ID", ""))
+	mux.Handle("/v1/", capacityAPI.Handler())
 
 	server := &http.Server{Addr: ":43060", Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	shutdownDone := make(chan struct{})

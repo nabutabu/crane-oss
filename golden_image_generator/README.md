@@ -1,17 +1,53 @@
 # Golden Image Generator (GIG)
 
-GIG is a Packer enabled Virtual Machine image generator for Crane-OSS.
-It's purpose is to store the image all newly provisioned Crane hosts should have. Most importantly it will create a VM that already
-contains subd - which is the program that would then communicate with Crane in order to inform it of any issues with the Host.
+Packer builds the Crane host AMI. The image includes the SPIRE agent, subd,
+Crane bootstrap/probe release binaries, policy, AWS CLI, SSM agent, containerd,
+Docker, Helm and pinned Kubernetes packages. `templates/setup-k8s.sh` installs
+shared prerequisites; cluster initialization belongs to runtime bootstrap.
+No Kind cluster, agent keys, SVIDs or Kubernetes identity are baked into images.
 
-## Usage
-Run at project root:
+Create the private SPIRE endpoint with `crane-bootstrap -prepare-images`
+first; see [AWS bootstrap](../docs/aws-bootstrap.md). Create a local
+`image.auto.pkrvars.hcl` (ignored by Git), using its output:
+
+```hcl
+aws_region             = "us-west-2"
+spire_server_address   = "internal-PREPARED-NLB.elb.us-west-2.amazonaws.com"
+spire_bundle_parameter = "/crane/crane-platform/spire-bundle"
+trust_domain           = "crane.internal"
+spire_version          = "1.9.3"
+kubernetes_version     = "v1.35.0"
+crane_version          = "0.2.0" # Replace with a release containing bootstrap-tools.
+git_sha                = "RELEASE_COMMIT"
 ```
-packer validate -var-file=aws-credentials.auto.pkrvars.hcl ./templates/aws-ami.pkr.hcl
+
+The build identity needs the EC2 image-build permissions in
+[`docs/golden-image-iam-policy.json`](../docs/golden-image-iam-policy.json)
+(replace `REGION`), in addition to the bootstrap operator policy. Attach it to
+the same profile used below.
+
+From the repository root:
+
+```sh
+packer init golden_image_generator/templates/aws-ami.pkr.hcl
+AWS_PROFILE=crane-ami-creator packer validate -var-file=image.auto.pkrvars.hcl golden_image_generator/templates/aws-ami.pkr.hcl
+AWS_PROFILE=crane-ami-creator packer build -var-file=image.auto.pkrvars.hcl golden_image_generator/templates/aws-ami.pkr.hcl
 ```
-where the file `aws-credentials.auto.pkrvars.hcl` contains your AWS access key and secret key like this:
-```
-aws_access_key  = "..."
-aws_secret_key  = "..."
-spire_server_ip = "..."
-```
+
+Use the same release for the AMI's bootstrap tools and the bootstrap config's
+Crane API/Dominator images. Host binary archives are downloaded from GitHub
+Releases and verified against the release checksums while building the image.
+Registry image tags follow the release pipeline's unprefixed version, for
+example `:0.2.0`; digest pinning is preferred when available.
+
+amd64/`t3.small` is the default and is required by the initial platform
+bootstrap. For other arm64 consumers, set `architecture = "arm64"` and an
+appropriate build instance such as `instance_type = "t4g.small"`.
+
+The NLB hostname is stable across server maintenance. The bundle parameter name
+and region are baked into the agent service. On boot, its pre-start helper uses
+the instance role to fetch the current public CA bundle before starting the
+agent; image creation never starts or enrolls it. Fleet instance roles require
+`ssm:GetParameter` on the exact bundle parameter ARN. Worker deployment must
+also supply subd's `/usr/local/bin/appsettings.json` and registration entries;
+the generic image does not invent host IDs or tokens.
