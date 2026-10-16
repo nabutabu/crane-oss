@@ -32,7 +32,8 @@ the command from this checkout. Packer builds the deployment AMI.
    and matching SPIRE/Kubernetes versions. The existing setup scripts run at
    image creation time. Agents and Kubernetes clusters are never started on the
    temporary build machine.
-4. Set `spire.ami_id` and `platform.ami_id` to the resulting AMI. Both initial
+4. Set `spire.ami_id` and `platform.ami_id` to the resulting AMI in 
+   `bootstrap.example.json` in sections `spire` and `platform` sections. Both initial
    hosts currently use amd64 images; the generator also supports arm64 for other
    consumers. Bootstrap verifies the AMI tags against the prepared endpoint and
    configured versions.
@@ -44,10 +45,11 @@ the command from this checkout. Packer builds the deployment AMI.
    ```
 
 Packer uses the normal AWS credential chain, for example
-`AWS_PROFILE=crane-bootstrap`; never store AWS keys in the template. Its image
-build identity also needs the usual Packer EC2 image, temporary-instance, key
-pair, and security-group permissions; the bootstrap operator policy alone does
-not grant an image-build workflow.
+`AWS_PROFILE=crane-bootstrap`; never store AWS keys in the template. Attach the
+image-build policy alongside the bootstrap operator policy:
+[golden-image-iam-policy.json](golden-image-iam-policy.json). It grants the
+Packer EC2 image, temporary-instance, key pair, and security-group permissions
+that the bootstrap operator policy alone does not.
 
 Use `-dry-run -json` for a local phase preview. It does not contact AWS or
 verify AMIs, registry access or permissions. `-operation-timeout` defaults to
@@ -143,6 +145,11 @@ Secrets Manager access, Systems Manager host commands, and ELBv2 creation,
 target registration and discovery. First use may create RDS and ELB
 service-linked roles. No S3 permissions are needed. Runtime hosts use instance
 roles, never operator keys.
+
+Building the golden image with Packer uses the same operator identity and needs
+the additional EC2 image-build permissions in
+[golden-image-iam-policy.json](golden-image-iam-policy.json). Attach both
+policies to the image-build identity; replace `REGION` in both.
 
 ## Database-only setup
 

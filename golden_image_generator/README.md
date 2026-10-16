@@ -21,12 +21,17 @@ crane_version          = "0.2.0" # Replace with a release containing bootstrap-t
 git_sha                = "RELEASE_COMMIT"
 ```
 
+The build identity needs the EC2 image-build permissions in
+[`docs/golden-image-iam-policy.json`](../docs/golden-image-iam-policy.json)
+(replace `REGION`), in addition to the bootstrap operator policy. Attach it to
+the same profile used below.
+
 From the repository root:
 
 ```sh
 packer init golden_image_generator/templates/aws-ami.pkr.hcl
-AWS_PROFILE=crane-bootstrap packer validate -var-file=image.auto.pkrvars.hcl golden_image_generator/templates/aws-ami.pkr.hcl
-AWS_PROFILE=crane-bootstrap packer build -var-file=image.auto.pkrvars.hcl golden_image_generator/templates/aws-ami.pkr.hcl
+AWS_PROFILE=crane-ami-creator packer validate -var-file=image.auto.pkrvars.hcl golden_image_generator/templates/aws-ami.pkr.hcl
+AWS_PROFILE=crane-ami-creator packer build -var-file=image.auto.pkrvars.hcl golden_image_generator/templates/aws-ami.pkr.hcl
 ```
 
 Use the same release for the AMI's bootstrap tools and the bootstrap config's

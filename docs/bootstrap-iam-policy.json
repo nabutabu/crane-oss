@@ -121,7 +121,7 @@
       "Resource": "arn:aws:ec2:REGION:ACCOUNT_ID:instance/*",
       "Condition": {
         "StringEquals": {
-          "aws:ResourceTag/CraneBootstrap": "DEPLOYMENT_NAME"
+          "ssm:resourceTag/CraneBootstrap": "DEPLOYMENT_NAME"
         }
       }
     },
@@ -130,6 +130,12 @@
       "Effect": "Allow",
       "Action": "ssm:SendCommand",
       "Resource": "arn:aws:ssm:REGION::document/AWS-RunShellScript"
+    },
+    {
+      "Sid": "ReadBootstrapCommandResults",
+      "Effect": "Allow",
+      "Action": "ssm:GetCommandInvocation",
+      "Resource": "*"
     },
     {
       "Sid": "ManagePrivateSpireEndpoint",

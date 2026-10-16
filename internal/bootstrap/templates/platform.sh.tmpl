@@ -48,6 +48,7 @@ test "$(kubeadm version -o short)" = "$K8S_VERSION"
 printf %s '[[ .FirstZoneBase64 ]]' | base64 -d > "$CRANE_DIR/first-zone.json"
 printf %s '[[ .BHDBase64 ]]' | base64 -d > "$CRANE_DIR/bhd.json"
 chmod 600 "$CRANE_DIR/first-zone.json"
+chmod 644 "$CRANE_DIR/bhd.json"
 systemctl enable spire-agent.service >/dev/null
 systemctl restart spire-agent.service
 
@@ -90,9 +91,15 @@ helm upgrade --install cilium cilium/cilium \
   --set 'tolerations[0].key=node-role.kubernetes.io/control-plane' \
   --set 'tolerations[0].operator=Exists' \
   --set 'tolerations[0].effect=NoSchedule' \
+  --set 'tolerations[1].key=node.kubernetes.io/not-ready' \
+  --set 'tolerations[1].operator=Exists' \
+  --set 'tolerations[1].effect=NoSchedule' \
   --set 'operator.tolerations[0].key=node-role.kubernetes.io/control-plane' \
   --set 'operator.tolerations[0].operator=Exists' \
   --set 'operator.tolerations[0].effect=NoSchedule' \
+  --set 'operator.tolerations[1].key=node.kubernetes.io/not-ready' \
+  --set 'operator.tolerations[1].operator=Exists' \
+  --set 'operator.tolerations[1].effect=NoSchedule' \
   --wait --timeout 10m
 
 kubectl -n kube-system rollout status daemonset/cilium --timeout=600s

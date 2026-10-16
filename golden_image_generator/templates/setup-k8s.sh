@@ -16,14 +16,14 @@ sudo modprobe br_netfilter
 printf '%s\n' 'net.bridge.bridge-nf-call-iptables = 1' 'net.bridge.bridge-nf-call-ip6tables = 1' 'net.ipv4.ip_forward = 1' | sudo tee /etc/sysctl.d/k8s.conf >/dev/null
 sudo sysctl --system >/dev/null
 sudo apt-get update
-sudo apt-get install -y ca-certificates curl containerd docker.io
+sudo apt-get install -y ca-certificates curl gpg containerd docker.io
 sudo mkdir -p /etc/containerd /etc/apt/keyrings
 containerd config default | sudo tee /etc/containerd/config.toml >/dev/null
 sudo sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
 sudo systemctl enable --now containerd docker
 sudo systemctl restart containerd
-curl -fsSL "https://pkgs.k8s.io/core:/stable/${K8S_MINOR}/deb/Release.key" | sudo tee /etc/apt/keyrings/kubernetes-apt-keyring.asc >/dev/null
-printf '%s\n' "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.asc] https://pkgs.k8s.io/core:/stable/${K8S_MINOR}/deb/ /" | sudo tee /etc/apt/sources.list.d/kubernetes.list >/dev/null
+curl -fsSL "https://pkgs.k8s.io/core:/stable:/${K8S_MINOR}/deb/Release.key" | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+printf '%s\n' "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/${K8S_MINOR}/deb/ /" | sudo tee /etc/apt/sources.list.d/kubernetes.list >/dev/null
 sudo apt-get update
 K8S_DEB_VERSION="$(apt-cache madison kubeadm | awk -F'|' '{gsub(/ /,"",$2); print $2}' | grep -F "$K8S_DEB_PREFIX" | sort -V | tail -n1)"
 test -n "$K8S_DEB_VERSION"
