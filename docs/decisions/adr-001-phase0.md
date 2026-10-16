@@ -1,22 +1,79 @@
 # ADR-001: Phase 0 - Architecture and Compatibility Spike
 
-Status: Draft
+Status: Accepted
+
+Date: 2026-10-16
+
+## 0. Compatibility baseline
+
+Phase 0 uses the latest common GA minor line documented by Kubernetes and
+Cluster Autoscaler, rather than selecting a newer Kubernetes minor before the
+matching autoscaler release is available:
+
+| Component | Baseline | Pinning rule |
+|---|---|---|
+| Kubernetes control plane and node components | 1.35.9 | Pin the exact patch and image digests in each deployment. |
+| kubeadm, kubelet, kubectl | 1.35.9 | Keep the minor version equal to the control plane; kubelet may not be newer than the API server. |
+| Cluster Autoscaler | 1.35.x; start with 1.35.0 | Use the newest published 1.35.x image whose release notes and compatibility tests pass. |
+| External provider protocol | CA 1.35 external cloud-provider gRPC contract | Generate bindings from the pinned CA source; do not invent a Crane-specific CA protocol. |
+| Container runtime | containerd 2.3.5 | Use CRI v1; keep the runtime version independently pinned and test it with Kubernetes 1.35. |
+| CNI | Cilium 1.20.3 | Pin the chart/image digests; Cilium is the only supported first-milestone CNI. |
+
+Kubernetes 1.37 is intentionally deferred. It becomes eligible for a later
+compatibility update only after Cluster Autoscaler publishes and Crane passes
+the corresponding 1.37 matrix. Patch updates within the locked minor are
+security/maintenance updates, not automatic floating tags.
 
 ## 1. Versions and Interfaces
-- Target Kubernetes: to be confirmed (recommend 1.30+ for Cluster Autoscaler compatibility)
-- Cluster Autoscaler: pin exact release (e.g. v1.30.x). Do not rely on generic interface.
+- Target Kubernetes: 1.35.x, with the exact baseline above.
+- Cluster Autoscaler: 1.35.x, with the exact baseline above. Do not rely on a generic interface.
 - CRD API: use `platform.crane.io/v1alpha1` (proposed). Treat as alpha; plan for conversion if needed.
-- External provider: implement Cluster Autoscaler external gRPC cloud provider interface as a separately deployable adapter service (not embedded in crane-api). Keeps boundary narrow and replaceable.
+- External provider: implement the Cluster Autoscaler external gRPC cloud-provider interface as a separately deployable adapter service, not embedded in crane-api. The adapter is the only component that speaks the CA contract.
 
 ## 2. Node Group Topology
 - Node groups: per-zone and per-profile (hybrid). Rationale: allows zone-scoped placement, correct zone-specific node templates, safer scale-down per zone, and balanced placement policies.
 - Node templates must be zone-specific; never advertise cross-zone templates.
 - Node bootstrap must set standard labels: `topology.kubernetes.io/region`, `topology.kubernetes.io/zone`, `platform.crane.io/node-pool`. Cloud metadata (region/zone) must be sourced from provider/instance identity or bootstrap config.
 
+## 2.1 Cluster and bootstrap contracts
+
+- A `Cluster` is one Kubernetes cluster for exactly one Crane `Zone`. Its
+  durable record contains the API endpoint, CA discovery hash, Kubernetes
+  component versions, runtime, CNI, lifecycle state, and join configuration.
+  It never stores a plaintext kubeadm token.
+- A `ZoneBootstrapOperation` is owned by the layer-zero controller until the
+  destination cluster is validated. Its phases are:
+  `Requested → InfrastructureProvisioning → ControlPlaneInitializing →
+  NetworkInstalling → DominatorInstalling → Validating → Ready`, with
+  `Failed` reachable from every non-terminal phase.
+- The operation is advanced under a lease/fence. `Ready` is legal only after
+  the destination Kubernetes API, Cilium, Dominator SPIFFE identity, database,
+  and health checks pass. Only then may the zone admit worker capacity.
+- The bootstrap controller creates a short-lived kubeadm token Secret through
+  the authenticated destination Kubernetes API. Dominator delivers the token
+  over the authenticated control-plane-to-host channel; Subd consumes it and
+  does not persist plaintext token material.
+
 ## 3. Identity, Tenancy, Credits
 - Team identity: derived from trusted source (platform team registry/namespace ownership/workload identity). Service-name-only authorization is rejected.
 - Pool tenancy: team-dedicated by default; shared pools only if explicitly configured with appropriate RBAC.
 - Credits: capacity entitlement (simultaneous vCPU/memory/nodes) is the initial enforcement model (admission control). Cost-based metering (instance-hours) may be added later; do not conflate units. Reconciliation: track reservations/commitments in ledger; release credits only after actual termination (not on target reduction).
+- Bootstrap identity: AWS instance-identity attestation to SPIRE is the host
+  enrollment root. SPIRE-issued identities are then used for service mTLS and
+  authorization; a hostname, request field, or service name is never sufficient.
+
+## 3.1 Request and provider-token definitions
+
+- `RequestID` is a UUID generated by one adapter external-RPC handler. It is
+  stable only for retries of that handler invocation and is unique per
+  `(NodeGroupID, RequestID)` in PostgreSQL. It is not an autoscaler decision ID
+  and must not be derived from a delta.
+- `TargetRevision` is a monotonically increasing per-node-group CAS revision.
+  Every accepted target mutation records the expected revision, desired target,
+  request ID, and resulting revision in one transaction.
+- `ProviderToken` is a new UUID persisted with immutable launch parameters for
+  one provisioning operation. Provider retries reuse that exact token and
+  parameters; a recovery controller never generates a replacement token.
 
 ## 4. Placement, Scale-down, Authority
 - Authority: Crane API owns global placement/policy/credits; Dominator owns zone execution; Subd owns host enforcement and drain.
@@ -30,6 +87,18 @@ Status: Draft
 - Boundary: control-plane (crane-api, dominator) full telemetry/audit; data-plane (subd) logs locally to journald, reports outcome via heartbeat (no open listener for telemetry).
 
 ## 6. Prototype & Exit Criteria
-- Implement minimal external provider adapter prototype reporting >=1 static node group with valid zone-specific node template.
-- ADRs stored under `docs/decisions/`.
-- Exit: design decisions recorded + prototype validates discovery/template semantics against chosen autoscaler interface.
+- Implement a minimal adapter contract test that reports at least one static,
+  cluster-scoped node group with a valid zone-specific template and standard
+  topology labels.
+- Verify that `NodeGroupForNode` returns the owning group and that an unknown
+  node/group is an explicit not-found error, never a nil success.
+- Test the adapter's Crane translation with a fake Crane endpoint: one handler
+  request UUID is reused for downstream retries, while two later equal deltas
+  receive different UUIDs.
+- Test target refresh after an adapter restart and verify that the adapter
+  reports the committed target/revision without replaying the delta.
+- ADRs stored under `docs/decisions/` and the compatibility matrix is checked
+  into the repository.
+- Exit: the pinned CA contract, static discovery/template behavior, request
+  identity, target-refresh recovery, and CAS/error mapping are all covered by
+  executable tests.

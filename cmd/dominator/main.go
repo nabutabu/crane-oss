@@ -33,12 +33,6 @@ func run() error {
 	logger := logging.New("dominator")
 	logger.SetDefault()
 	logger.Info("dominator", "version", version.String())
-	host := config.GetEnv("DB_HOST", "localhost")
-	port := config.GetEnvInt("DB_PORT", 43544)
-	user := config.GetEnv("DB_USER", "postgres")
-	password := config.GetEnv("DB_PASSWORD", "REDACTED_DB_PASSWORD")
-	dbname := config.GetEnv("DB_NAME", "crane")
-
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -71,17 +65,13 @@ func run() error {
 
 	logger.Info("SPIFFE ID", "spiffe_id", svid.ID.String())
 
-	// 2. Create the connection string
-	// The sslmode parameter is often set to 'disable' for local development.
-	psqlInfo := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
-		host, port, user, password, dbname)
-	db, err := sql.Open("pgx", psqlInfo)
+	db, err := sql.Open("pgx", config.DatabaseURL(43544))
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
 	}
 	defer db.Close()
-	if err := capacity.Migrate(ctx, db); err != nil {
-		return fmt.Errorf("migrate capacity schema: %w", err)
+	if err := capacity.CheckSchema(ctx, db); err != nil {
+		return fmt.Errorf("Crane database is not ready: %w", err)
 	}
 	hostStore := store.NewPostgresHostStore(db)
 

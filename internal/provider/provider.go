@@ -2,8 +2,9 @@ package provider
 
 import (
 	"context"
-	"github.com/nabutabu/crane-oss/pkg/api"
 	"time"
+
+	"github.com/nabutabu/crane-oss/pkg/api"
 )
 
 type InstanceStatus struct {
@@ -11,10 +12,22 @@ type InstanceStatus struct {
 	InstanceStatus string
 	Events         []InstanceEvent
 }
+
 type InstanceEvent struct {
 	Code        string
 	Description string
 	NotBefore   time.Time
+}
+
+// PostgresSpec is the provider-facing shape for configurable RDS provisioning.
+// It is intentionally separate from bootstrap.Config so providers do not depend
+// on the CLI configuration package.
+type PostgresSpec struct {
+	VPCID, DBSubnetGroup, SecurityGroupName, IngressSecurityGroupID               string
+	Identifier, Engine, EngineVersion, InstanceClass, MasterUsername, StorageType string
+	SubnetIDs                                                                     []string
+	Port, StorageGiB                                                              int32
+	MultiAZ, DeletionProtection, ManageMasterUserPassword                         bool
 }
 
 type Provider interface {

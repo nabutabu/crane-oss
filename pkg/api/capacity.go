@@ -19,6 +19,57 @@ type Zone struct {
 	LifecycleState                                  string
 }
 
+// TopologyInput types are used by the authenticated platform API. They keep
+// provisioning intent explicit and version-pinned at the admission boundary.
+type ZoneInput struct {
+	ID             string `json:"id"`
+	Provider       string `json:"provider"`
+	AccountID      string `json:"account_id"`
+	Region         string `json:"region"`
+	ProviderZoneID string `json:"provider_zone_id"`
+}
+
+type ClusterInput struct {
+	ID                string `json:"id"`
+	ZoneID            string `json:"zone_id"`
+	APIServerEndpoint string `json:"api_server_endpoint"`
+	CACertHash        string `json:"ca_cert_hash"`
+	KubeadmVersion    string `json:"kubeadm_version"`
+	KubeletVersion    string `json:"kubelet_version"`
+	ContainerRuntime  string `json:"container_runtime"`
+	CNI               string `json:"cni"`
+}
+
+type NodePoolInput struct {
+	ID     string    `json:"id"`
+	TeamID string    `json:"team_id"`
+	Limits Resources `json:"limits"`
+}
+
+type NodeGroupInput struct {
+	ID               string          `json:"id"`
+	ClusterID        string          `json:"cluster_id"`
+	NodePoolID       string          `json:"node_pool_id"`
+	ZoneID           string          `json:"zone_id"`
+	CapacityClass    string          `json:"capacity_class"`
+	ProviderZoneID   string          `json:"provider_zone_id"`
+	MinNodes         int64           `json:"min_nodes"`
+	MaxNodes         int64           `json:"max_nodes"`
+	TemplateRevision string          `json:"template_revision"`
+	PerNode          Resources       `json:"per_node"`
+	LaunchParameters json.RawMessage `json:"launch_parameters"`
+}
+
+// FirstZoneInput is the complete layer-zero topology seeded by both the
+// crane-bootstrap command and the /v1/first-zone endpoint.
+type FirstZoneInput struct {
+	Zone    ZoneInput      `json:"zone"`
+	Cluster ClusterInput   `json:"cluster"`
+	Budget  Resources      `json:"budget"`
+	Pool    NodePoolInput  `json:"pool"`
+	Group   NodeGroupInput `json:"group"`
+}
+
 // Cluster holds discovery configuration, never a plaintext bootstrap token.
 type Cluster struct {
 	ID, ZoneID, APIServerEndpoint, CACertHash                             string
@@ -75,8 +126,14 @@ type Operation struct {
 type ZoneBootstrapPhase string
 
 const (
-	ZoneRequested                  ZoneBootstrapPhase = "Requested"
-	ZoneInfrastructureProvisioning ZoneBootstrapPhase = "InfrastructureProvisioning"
+	ZoneRequested             ZoneBootstrapPhase = "Requested"
+	ZoneDatabaseProvisioning  ZoneBootstrapPhase = "DatabaseProvisioning"
+	ZoneDatabaseReady         ZoneBootstrapPhase = "DatabaseReady"
+	ZoneSpireHostProvisioning ZoneBootstrapPhase = "SpireHostProvisioning"
+	ZoneSpireInstalling       ZoneBootstrapPhase = "SpireInstalling"
+	ZoneSpireValidating       ZoneBootstrapPhase = "SpireValidating"
+	// Kept as an alias for callers compiled against the original phase name.
+	ZoneInfrastructureProvisioning ZoneBootstrapPhase = ZoneDatabaseProvisioning
 	ZoneControlPlaneInitializing   ZoneBootstrapPhase = "ControlPlaneInitializing"
 	ZoneNetworkInstalling          ZoneBootstrapPhase = "NetworkInstalling"
 	ZoneDominatorInstalling        ZoneBootstrapPhase = "DominatorInstalling"

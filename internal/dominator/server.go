@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nabutabu/crane-oss/internal/config"
 	"github.com/nabutabu/crane-oss/internal/hostcatalog/service"
 	"github.com/nabutabu/crane-oss/pkg/api"
 	"github.com/spiffe/go-spiffe/v2/spiffeid"
@@ -54,7 +55,10 @@ func (s *Server) StartContext(ctx context.Context, source *workloadapi.X509Sourc
 
 	s.logger.Info("dominator listening", "addr", s.addr)
 
-	allowedID := spiffeid.RequireFromString("spiffe://crane-oss/subd")
+	allowedID, err := spiffeid.FromString("spiffe://" + config.GetEnv("SPIFFE_TRUST_DOMAIN", "crane-oss") + "/subd")
+	if err != nil {
+		return fmt.Errorf("invalid SPIFFE trust domain: %w", err)
+	}
 
 	tlsConfig := tlsconfig.MTLSServerConfig(source, source, tlsconfig.AuthorizeOneOf(allowedID))
 	server := &http.Server{

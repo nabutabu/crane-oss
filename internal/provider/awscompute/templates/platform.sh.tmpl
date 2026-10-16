@@ -1,0 +1,362 @@
+#!/usr/bin/env bash
+# First-cluster platform host bootstrap. Idempotent; run after the SPIRE
+# identity entries exist. Uses golden-image tools, installs Cilium, seeds the
+# pending first-zone schema, and deploys crane-api and dominator.
+set -euo pipefail
+
+export AWS_REGION="[[ .Region ]]"
+export PATH="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+
+readonly TRUST_DOMAIN="[[ .TrustDomain ]]"
+readonly K8S_VERSION="[[ .KubernetesVersion ]]"
+readonly CILIUM_VERSION="[[ .CiliumVersion ]]"
+readonly POD_CIDR="[[ .PodCIDR ]]"
+readonly RUNTIME_SECRET_ARN="[[ .Infra.RuntimeSecretARN ]]"
+readonly DB_ENDPOINT="[[ .Infra.DBEndpoint ]]"
+readonly DB_PORT="[[ .Config.RDS.Port ]]"
+readonly CA_BUNDLE="/etc/crane/rds-ca.pem"
+readonly CRANE_DIR="/opt/crane"
+readonly SECRET_DIR="/var/lib/crane"
+readonly KUBECONFIG_FILE="/etc/kubernetes/admin.conf"
+
+
+umask 077
+step() { echo "[platform] $1"; }
+step "discovering host identity and installing runtime secret"
+install -d -m 0755 /etc/crane "$SECRET_DIR"
+install -d -m 0755 /opt/crane
+chmod 0644 "$CA_BUNDLE"
+
+# Discover this host's private IP through IMDSv2.
+IMDS_TOKEN="$(curl -fsS -X PUT 'http://169.254.169.254/latest/api/token' -H 'X-aws-ec2-metadata-token-ttl-seconds: 300')"
+PRIVATE_IP="$(curl -fsS -H "X-aws-ec2-metadata-token: $IMDS_TOKEN" http://169.254.169.254/latest/meta-data/local-ipv4)"
+
+# Runtime secret (owned root, mode 600, never printed).
+aws secretsmanager get-secret-value --secret-id "$RUNTIME_SECRET_ARN" --query SecretString --output text > "$SECRET_DIR/runtime-secret.json"
+chmod 600 "$SECRET_DIR/runtime-secret.json"
+
+# Tools, policy, SPIRE configuration and service are installed by Packer.
+# Only deployment data is delivered through SSM.
+step "verifying golden image and starting SPIRE agent"
+for executable in kubeadm kubectl kubelet helm aws spire-agent; do command -v "$executable" >/dev/null; done
+test -x "$CRANE_DIR/bin/crane-bootstrap"
+test -x "$CRANE_DIR/bin/crane-bootstrap-probe"
+test -r "$CRANE_DIR/policy/os.star"
+grep -Fx '    server_address = "[[ .SpireAddress ]]"' /etc/spire/agent.conf >/dev/null
+grep -Fx '    trust_domain = "[[ .TrustDomain ]]"' /etc/spire/agent.conf >/dev/null
+test "$(kubeadm version -o short)" = "$K8S_VERSION"
+printf %s '[[ .FirstZoneBase64 ]]' | base64 -d > "$CRANE_DIR/first-zone.json"
+printf %s '[[ .BHDBase64 ]]' | base64 -d > "$CRANE_DIR/bhd.json"
+chmod 600 "$CRANE_DIR/first-zone.json"
+chmod 644 "$CRANE_DIR/bhd.json"
+systemctl enable spire-agent.service >/dev/null
+systemctl restart spire-agent.service
+
+agent_ready=0
+for _ in $(seq 1 60); do
+  if /usr/local/bin/spire-agent healthcheck -socketPath /run/spire/sockets/agent.sock >/dev/null 2>&1; then
+    agent_ready=1
+    break
+  fi
+  sleep 5
+done
+if [ "$agent_ready" != "1" ]; then
+  echo "SPIRE agent did not attest" >&2
+  exit 1
+fi
+
+# ---- kubeadm init (never reset an existing control plane) ------------------
+step "initializing Kubernetes control plane"
+if [ ! -f "$KUBECONFIG_FILE" ]; then
+  kubeadm init \
+    --kubernetes-version "$K8S_VERSION" \
+    --pod-network-cidr "$POD_CIDR" \
+    --apiserver-advertise-address "$PRIVATE_IP" \
+    --cri-socket unix:///run/containerd/containerd.sock
+fi
+install -d -m 0700 /root/.kube
+cp -f "$KUBECONFIG_FILE" /root/.kube/config
+chmod 600 /root/.kube/config
+export KUBECONFIG="$KUBECONFIG_FILE"
+
+# ---- Cilium (pinned chart) -------------------------------------------------
+step "installing and waiting for Cilium"
+helm repo add cilium https://helm.cilium.io/ --force-update >/dev/null
+helm repo update >/dev/null
+helm upgrade --install cilium cilium/cilium \
+  --namespace kube-system \
+  --version "$CILIUM_VERSION" \
+  --set ipam.mode=kubernetes \
+  --set operator.replicas=1 \
+  --set 'tolerations[0].key=node-role.kubernetes.io/control-plane' \
+  --set 'tolerations[0].operator=Exists' \
+  --set 'tolerations[0].effect=NoSchedule' \
+  --set 'tolerations[1].key=node.kubernetes.io/not-ready' \
+  --set 'tolerations[1].operator=Exists' \
+  --set 'tolerations[1].effect=NoSchedule' \
+  --set 'operator.tolerations[0].key=node-role.kubernetes.io/control-plane' \
+  --set 'operator.tolerations[0].operator=Exists' \
+  --set 'operator.tolerations[0].effect=NoSchedule' \
+  --set 'operator.tolerations[1].key=node.kubernetes.io/not-ready' \
+  --set 'operator.tolerations[1].operator=Exists' \
+  --set 'operator.tolerations[1].effect=NoSchedule' \
+  --wait --timeout 10m
+
+kubectl -n kube-system rollout status daemonset/cilium --timeout=600s
+kubectl -n kube-system rollout status deployment/cilium-operator --timeout=600s
+kubectl wait --for=condition=Ready node --all --timeout=600s
+
+# ---- Seed the pending first zone (schema + initializing zone/cluster) -------
+step "initializing Crane schema and pending first zone"
+API_ENDPOINT="$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}')"
+CA_CERT_HASH="sha256:$(openssl x509 -in /etc/kubernetes/pki/ca.crt -pubkey -noout | openssl pkey -pubin -outform DER | openssl dgst -sha256 | awk '{print $2}')"
+
+API_ENDPOINT="$API_ENDPOINT" CA_CERT_HASH="$CA_CERT_HASH" python3 - <<'PY'
+import json, os
+path = '/opt/crane/first-zone.json'
+with open(path) as handle:
+    data = json.load(handle)
+data['zone']['region'] = '[[ .Region ]]'
+data['zone']['account_id'] = '[[ .AccountID ]]'
+data['cluster']['api_server_endpoint'] = os.environ['API_ENDPOINT']
+data['cluster']['ca_cert_hash'] = os.environ['CA_CERT_HASH']
+data['cluster']['kubeadm_version'] = '[[ .KubernetesVersion ]]'
+data['cluster']['kubelet_version'] = '[[ .KubernetesVersion ]]'
+with open('/etc/crane/first-zone.rendered.json', 'w') as handle:
+    json.dump(data, handle, indent=2)
+PY
+chmod 600 /etc/crane/first-zone.rendered.json
+
+DB_USER="$(jq -r '.crane_username' "$SECRET_DIR/runtime-secret.json")"
+DB_PASSWORD="$(jq -r '.crane_password' "$SECRET_DIR/runtime-secret.json")"
+DB_URL="$(DB_USER="$DB_USER" DB_PASSWORD="$DB_PASSWORD" python3 - <<'PY'
+import os, urllib.parse
+user = urllib.parse.quote(os.environ['DB_USER'], safe='')
+password = urllib.parse.quote(os.environ['DB_PASSWORD'], safe='')
+print('postgres://%s:%s@[[ .Infra.DBEndpoint ]]:[[ .Config.RDS.Port ]]/crane?sslmode=verify-full&sslrootcert=/etc/crane/rds-ca.pem' % (user, password))
+PY
+)"
+export CRANE_DATABASE_URL="$DB_URL"
+"$CRANE_DIR/bin/crane-bootstrap" -config /etc/crane/first-zone.rendered.json -pending
+unset CRANE_DATABASE_URL
+
+# ---- Runtime secret + Deployments ------------------------------------------
+step "deploying Crane API and Dominator"
+kubectl apply -f - <<'NS'
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: crane-system
+NS
+
+SECRET_FILE="$(mktemp)"
+DB_URL="$DB_URL" python3 - "$SECRET_FILE" <<'PY'
+import base64, json, os, sys
+with open('/var/lib/crane/runtime-secret.json') as handle:
+    secret = json.load(handle)
+values = {
+    'CRANE_DATABASE_URL': os.environ['DB_URL'],
+    'CRANE_ADMIN_TOKEN': secret['admin_token'],
+    'CRANE_ADAPTER_TOKEN': secret['adapter_token'],
+    'DB_HOST': '[[ .Infra.DBEndpoint ]]',
+    'DB_PORT': '[[ .Config.RDS.Port ]]',
+    'DB_USER': secret['crane_username'],
+    'DB_PASSWORD': secret['crane_password'],
+    'DB_NAME': 'crane',
+    'DB_SSLMODE': 'verify-full',
+    'DB_SSLROOTCERT': '/etc/crane/rds-ca.pem',
+    'SPIFFE_TRUST_DOMAIN': '[[ .TrustDomain ]]',
+}
+manifest = {
+    'apiVersion': 'v1',
+    'kind': 'Secret',
+    'metadata': {'name': 'crane-runtime', 'namespace': 'crane-system'},
+    'type': 'Opaque',
+    'data': {k: base64.b64encode(v.encode()).decode() for k, v in values.items()},
+}
+with open(sys.argv[1], 'w') as handle:
+    json.dump(manifest, handle)
+PY
+chmod 600 "$SECRET_FILE"
+kubectl apply -f "$SECRET_FILE"
+rm -f "$SECRET_FILE"
+
+kubectl apply -f - <<YAML
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: crane-api
+  namespace: crane-system
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: crane-api
+  template:
+    metadata:
+      labels:
+        app: crane-api
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+      securityContext:
+        runAsUser: 10001
+        runAsGroup: 10001
+      containers:
+        - name: crane-api
+          image: [[ .Config.Platform.CraneAPIImage ]]
+          command: ["/app/crane-api"]
+          workingDir: /app
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+          envFrom:
+            - secretRef:
+                name: crane-runtime
+          env:
+            - name: AWS_REGION
+              value: "[[ .Region ]]"
+            - name: SPIFFE_ENDPOINT_SOCKET
+              value: "unix:///run/spire/sockets/agent.sock"
+          ports:
+            - name: http
+              containerPort: 43060
+          readinessProbe:
+            httpGet:
+              path: /v1/db/health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          volumeMounts:
+            - name: etc-crane
+              mountPath: /etc/crane
+              readOnly: true
+            - name: spire-sockets
+              mountPath: /run/spire/sockets
+            - name: bhd-config
+              mountPath: /app/bhd.json
+              readOnly: true
+            - name: host-certs
+              mountPath: /etc/ssl/certs
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: etc-crane
+          hostPath:
+            path: /etc/crane
+        - name: spire-sockets
+          hostPath:
+            path: /run/spire/sockets
+        - name: bhd-config
+          hostPath:
+            path: /opt/crane/bhd.json
+            type: File
+        - name: host-certs
+          hostPath:
+            path: /etc/ssl/certs
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dominator
+  namespace: crane-system
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: dominator
+  template:
+    metadata:
+      labels:
+        app: dominator
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+      securityContext:
+        runAsUser: 10002
+        runAsGroup: 10002
+      containers:
+        - name: dominator
+          image: [[ .Config.Platform.DominatorImage ]]
+          command: ["/app/dominator"]
+          workingDir: /app
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+          envFrom:
+            - secretRef:
+                name: crane-runtime
+          env:
+            - name: AWS_REGION
+              value: "[[ .Region ]]"
+            - name: SPIFFE_ENDPOINT_SOCKET
+              value: "unix:///run/spire/sockets/agent.sock"
+          ports:
+            - name: mtls
+              containerPort: 44000
+          readinessProbe:
+            tcpSocket:
+              port: mtls
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: mtls
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          volumeMounts:
+            - name: etc-crane
+              mountPath: /etc/crane
+              readOnly: true
+            - name: spire-sockets
+              mountPath: /run/spire/sockets
+            - name: bhd-config
+              mountPath: /app/bhd.json
+              readOnly: true
+            - name: host-certs
+              mountPath: /etc/ssl/certs
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: etc-crane
+          hostPath:
+            path: /etc/crane
+        - name: spire-sockets
+          hostPath:
+            path: /run/spire/sockets
+        - name: bhd-config
+          hostPath:
+            path: /opt/crane/bhd.json
+            type: File
+        - name: host-certs
+          hostPath:
+            path: /etc/ssl/certs
+        - name: tmp
+          emptyDir: {}
+YAML
+
+kubectl -n crane-system rollout restart deployment/crane-api deployment/dominator
+
+echo "platform cluster initialized; run the validate script to gate readiness"

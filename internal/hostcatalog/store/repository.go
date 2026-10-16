@@ -290,7 +290,16 @@ func (store *PostgresHostStore) UpdateLastSeenHeartbeat(ctx context.Context, hos
 	return err
 }
 
-func (store *PostgresHostStore) UpdateDBConnectionInfo(ctx context.Context, hostID string, endpoint string, port int32, dbname string, username string, secretarn string, rdssgid string) error {
+func (store *PostgresHostStore) UpdateDBConnectionInfo(
+	ctx context.Context,
+	hostID string,
+	endpoint string,
+	port int32,
+	dbname string,
+	username string,
+	secretarn string,
+	rdssgid string,
+) error {
 	slog.Debug("updating db connection info", "host_id", hostID)
 	query := "UPDATE host SET endpoint = $1, port = $2, dbname = $3, username = $4, secretarn = $5, rdssgid = $6 WHERE id = $7"
 

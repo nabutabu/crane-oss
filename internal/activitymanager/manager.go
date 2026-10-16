@@ -18,7 +18,13 @@ type ActivityManager struct {
 	ScanInterval  time.Duration // run the activity manager every ScanInterval minutes
 }
 
-func NewActivityManager(pStore problem.ProblemStore, aStore execute.ActionStore, cache problemcache.SeenProblemCache, window time.Duration, interval time.Duration) *ActivityManager {
+func NewActivityManager(
+	pStore problem.ProblemStore,
+	aStore execute.ActionStore,
+	cache problemcache.SeenProblemCache,
+	window time.Duration,
+	interval time.Duration,
+) *ActivityManager {
 	return &ActivityManager{
 		problemStore:  pStore,
 		actionStore:   aStore,
