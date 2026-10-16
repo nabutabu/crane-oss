@@ -10,3 +10,5 @@ Phase 0 decisions:
 - ADR-007: Layer-zero bootstrap progress is owned by the CLI
 
 - ADR-008: Private SPIRE endpoint and golden-image bootstrap
+- ADR-009: Pinned external adapter contract provenance
+- ADR-010: Durable adapter mutation and recovery semantics
