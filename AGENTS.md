@@ -20,7 +20,8 @@ The main services are:
   desired host state. It uses SPIFFE mTLS for the `subd` client.
 - `subd`: the host agent. It reports heartbeats and applies the desired state
   returned by Dominator.
-- `crane-bootstrap`: an operator CLI for repeatable first-zone AWS bootstrap.
+- `crane-bootstrap`: an operator CLI for repeatable first-zone AWS bootstrap;
+  the provider-neutral CLI is the intended architecture.
 - `crane-bootstrap-probe`: a small probe used to validate bootstrap behavior.
 
 ## Verify over trust
@@ -46,11 +47,11 @@ The main services are:
 cmd/crane-api/       HTTP control-plane entrypoint
 cmd/dominator/       zone-side heartbeat service entrypoint
 cmd/subd/            host-agent entrypoint
-cmd/crane-bootstrap/ operator AWS/bootstrap entrypoint
+cmd/crane-bootstrap/ operator bootstrap entrypoint (currently AWS-specific)
 
 internal/activitymanager/  problem analysis and remediation decisions
 internal/badhost/          checks, detection, and problem persistence
-internal/bootstrap/        AWS resources, artifacts, scripts, and progress
+internal/bootstrap/        bootstrap resources, scripts, and progress (currently AWS-specific)
 internal/capacity/         first-go schema, topology, admission, and stores
 internal/config/           environment and database configuration
 internal/dominator/        desired-state policy and heartbeat HTTP server
@@ -65,6 +66,10 @@ pkg/api/                   shared public API and domain types
 
 Authority boundaries are deliberate:
 
+- Crane's shared architecture is vendor agnostic across bootstrap, runtime
+  execution, and host management. AWS is the sole current implementation.
+  Keep AWS-specific behavior in `internal/provider/awscompute` behind provider
+  capabilities; see `docs/decisions/adr-009-vendor-agnostic-architecture.md`.
 - Crane API owns global topology, placement, policy, and capacity admission.
 - Dominator owns zone execution and desired host state.
 - Subd owns host-local enforcement and reports the result by heartbeat.
@@ -99,6 +104,17 @@ Authority boundaries are deliberate:
 
 ## Bootstrap and image reuse
 
+- Keep bootstrap orchestration and `cmd/crane-bootstrap` vendor agnostic. Put
+  all AWS-specific bootstrap behavior, including AWS API calls, resource
+  reconciliation, image validation, remote execution, script templates,
+  identity and endpoint details, and AWS configuration validation, under
+  `internal/provider/awscompute`. Bootstrap must call provider capabilities
+  through a provider-neutral contract. The AWS implementation is the current
+  provider, not a reason to add AWS branches to the generic workflow.
+- Keep provider-specific CLI options and config parsing with the provider
+  implementation. Preserve retry, ownership, identity, and security invariants
+  when moving existing AWS bootstrap code. See
+  `docs/bootstrap-provider-refactor.md` for the refactor plan.
 - Reuse the repository's golden-image generator and its setup scripts in
   bootstrap wherever possible. Before adding a bootstrap-specific artifact,
   installer, or distribution path, inspect `golden_image_generator/`, its
