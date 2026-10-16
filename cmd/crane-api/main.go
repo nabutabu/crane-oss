@@ -200,9 +200,9 @@ func run() error {
 	mux.HandleFunc("/v1/db/health", health.dbHealth)
 
 	// Platform topology and capacity admission endpoints. The topology routes
-	// require CRANE_ADMIN_TOKEN; capacity derives identity from the cluster
-	// adapter header and is never authorized by a client-supplied team ID.
-	capacityAPI := capacity.NewAPI(capacity.NewStore(db), intconfig.GetEnv("CRANE_ADMIN_TOKEN", ""), intconfig.GetEnv("CRANE_ADAPTER_TOKEN", ""))
+	// require CRANE_ADMIN_TOKEN; adapter credentials are bound to one cluster,
+	// and a caller cannot choose its own team identity.
+	capacityAPI := capacity.NewAPI(capacity.NewStore(db), intconfig.GetEnv("CRANE_ADMIN_TOKEN", ""), intconfig.GetEnv("CRANE_ADAPTER_TOKEN", ""), intconfig.GetEnv("CRANE_ADAPTER_CLUSTER_ID", ""))
 	mux.Handle("/v1/", capacityAPI.Handler())
 
 	server := &http.Server{Addr: ":43060", Handler: mux, ReadHeaderTimeout: 10 * time.Second}

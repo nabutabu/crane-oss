@@ -1,33 +1,34 @@
 package capacity
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
 
 	"github.com/nabutabu/crane-oss/pkg/api"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
 )
 
 const maxBodyBytes = 1 << 20
 
 // API exposes the small platform control-plane surface. Topology mutations
-// require the configured admin bearer token; capacity mutations derive cluster
-// identity from X-Crane-Cluster-ID and never accept a team from the request.
+// require the configured admin bearer token. Adapter requests require a token
+// bound to one configured cluster; the header must match that binding.
 type API struct {
-	store        *Store
-	adminToken   string
-	adapterToken string
+	store            *Store
+	adminToken       string
+	adapterToken     string
+	adapterClusterID string
 }
 
-// NewAPI builds the platform API. The first adapter token, when present, is
-// required on capacity admission requests.
-func NewAPI(store *Store, adminToken string, adapterTokens ...string) *API {
-	apiHandler := &API{store: store, adminToken: adminToken}
-	if len(adapterTokens) > 0 {
-		apiHandler.adapterToken = adapterTokens[0]
-	}
-	return apiHandler
+// NewAPI builds the platform API. Unconfigured adapter credentials fail closed.
+// This prototype binds one token to one cluster; a workload identity registry
+// will replace this configuration when multiple adapters are deployed.
+func NewAPI(store *Store, adminToken, adapterToken, adapterClusterID string) *API {
+	return &API{store: store, adminToken: adminToken, adapterToken: adapterToken, adapterClusterID: adapterClusterID}
 }
 
 // Handler returns the router that maps each platform endpoint to its handler.
@@ -40,6 +41,8 @@ func (a *API) Handler() http.Handler {
 	mux.Handle("POST /v1/first-zone", a.admin(a.seedFirstZone))
 	mux.Handle("POST /v1/bootstrap", a.admin(a.createZoneBootstrap))
 	mux.Handle("POST /v1/capacity", a.adapter(a.setTarget))
+	mux.Handle("GET /v1/node-groups/{id}/target", a.adapter(a.target))
+	mux.Handle("POST /v1/node-removals", a.adapter(a.removeNodes))
 	return mux
 }
 
@@ -61,6 +64,11 @@ func (a *API) adapter(next http.HandlerFunc) http.Handler {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
+		if a.adapterClusterID == "" || strings.TrimSpace(r.Header.Get("X-Crane-Cluster-ID")) != a.adapterClusterID {
+			http.Error(w, "forbidden cluster identity", http.StatusForbidden)
+			return
+		}
+		r = r.WithContext(otel.GetTextMapPropagator().Extract(r.Context(), propagation.HeaderCarrier(r.Header)))
 		next.ServeHTTP(w, r)
 	})
 }
@@ -172,10 +180,52 @@ func (a *API) setTarget(w http.ResponseWriter, r *http.Request) {
 		TemplateRevision:       in.TemplateRevision,
 	})
 	if err != nil {
-		http.Error(w, err.Error(), status(err))
+		capacityError(w, err)
 		return
 	}
 	writeJSON(w, out)
+}
+
+func (a *API) target(w http.ResponseWriter, r *http.Request) {
+	out, err := a.store.Target(r.Context(), a.adapterClusterID, r.PathValue("id"))
+	if err != nil {
+		capacityError(w, err)
+		return
+	}
+	writeJSON(w, out)
+}
+
+func (a *API) removeNodes(w http.ResponseWriter, r *http.Request) {
+	var in api.NodeRemovalRequest
+	if !decodeJSON(w, r, &in) {
+		return
+	}
+	if err := a.store.CreateAutoscalerRemovals(r.Context(), a.adapterClusterID, in); err != nil {
+		capacityError(w, err)
+		return
+	}
+	writeJSON(w, map[string]string{"status": "accepted"})
+}
+
+func capacityError(w http.ResponseWriter, err error) {
+	code, httpStatus := "internal", http.StatusInternalServerError
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		code, httpStatus = "not_found", http.StatusNotFound
+	case errors.Is(err, ErrForbidden):
+		code, httpStatus = "forbidden", http.StatusForbidden
+	case errors.Is(err, ErrConflict), errors.Is(err, ErrReplayMismatch):
+		code, httpStatus = "conflict", http.StatusConflict
+	case errors.Is(err, ErrLimit):
+		code, httpStatus = "capacity_limit", http.StatusUnprocessableEntity
+	case errors.Is(err, ErrInactive), errors.Is(err, ErrTemplate), errors.Is(err, ErrFulfilled):
+		code, httpStatus = "precondition", http.StatusUnprocessableEntity
+	case errors.Is(err, ErrInvalid):
+		code, httpStatus = "invalid", http.StatusBadRequest
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(httpStatus)
+	_ = json.NewEncoder(w).Encode(map[string]string{"code": code})
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {

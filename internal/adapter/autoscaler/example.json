@@ -1,0 +1,19 @@
+{
+  "cluster_id": "platform-cluster",
+  "groups": [
+    {
+      "id": "platform-workers",
+      "cluster_id": "platform-cluster",
+      "template_revision": "template-1",
+      "zone": "us-west-2a",
+      "region": "us-west-2",
+      "pool": "platform-pool",
+      "min_nodes": 0,
+      "max_nodes": 8,
+      "instance_type": "m7i.xlarge",
+      "cpu": 4,
+      "memory_mib": 8192,
+      "nodes": []
+    }
+  ]
+}
