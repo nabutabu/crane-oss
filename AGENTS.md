@@ -20,8 +20,8 @@ The main services are:
   desired host state. It uses SPIFFE mTLS for the `subd` client.
 - `subd`: the host agent. It reports heartbeats and applies the desired state
   returned by Dominator.
-- `crane-bootstrap`: an operator CLI for repeatable first-zone AWS bootstrap;
-  the provider-neutral CLI is the intended architecture.
+- `crane-bootstrap`: a provider-neutral CLI for repeatable first-zone bootstrap;
+  AWS is the sole current provider implementation.
 - `crane-bootstrap-probe`: a small probe used to validate bootstrap behavior.
 
 ## Verify over trust
@@ -47,11 +47,11 @@ The main services are:
 cmd/crane-api/       HTTP control-plane entrypoint
 cmd/dominator/       zone-side heartbeat service entrypoint
 cmd/subd/            host-agent entrypoint
-cmd/crane-bootstrap/ operator bootstrap entrypoint (currently AWS-specific)
+cmd/crane-bootstrap/ provider-neutral operator bootstrap entrypoint
 
 internal/activitymanager/  problem analysis and remediation decisions
 internal/badhost/          checks, detection, and problem persistence
-internal/bootstrap/        bootstrap resources, scripts, and progress (currently AWS-specific)
+internal/bootstrap/        provider-neutral bootstrap orchestration, state, and progress
 internal/capacity/         first-go schema, topology, admission, and stores
 internal/config/           environment and database configuration
 internal/dominator/        desired-state policy and heartbeat HTTP server
@@ -59,6 +59,7 @@ internal/execute/          action queue, workers, and provider execution
 internal/hostcatalog/      host lifecycle service and PostgreSQL repository
 internal/logging/          slog setup and secret redaction
 internal/provider/         cloud-provider interface and AWS implementation
+internal/provider/registry/ provider composition and bootstrap factory selection
 internal/subd/             host heartbeat client and collectors
 internal/telemetry/        OTLP traces and metrics with no-op fallback
 pkg/api/                   shared public API and domain types

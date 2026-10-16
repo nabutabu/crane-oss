@@ -12,12 +12,13 @@ stage. The AWS first milestone in the
 [implementation plan](../implementation-plan.md) determines which integration
 we build first; it does not make AWS concepts part of the shared architecture.
 
-The current tree does not yet satisfy this boundary. In particular,
-`internal/bootstrap` and `cmd/crane-bootstrap` contain AWS provisioning,
+At the time of this decision, the tree did not satisfy this boundary. In particular,
+`internal/bootstrap` and `cmd/crane-bootstrap` contained AWS provisioning,
 configuration, and execution details outside `internal/provider/awscompute`.
 This decision defines the required architecture; the
 [bootstrap refactor plan](../bootstrap-provider-refactor.md) describes the work
-to bring bootstrap into conformance.
+to bring bootstrap into conformance. The bootstrap implementation now uses
+provider sessions; see [provider boundaries](../providers.md) for its wiring.
 
 ## Decision
 

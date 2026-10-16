@@ -1,4 +1,4 @@
-package bootstrap
+package awscompute
 
 import (
 	"bytes"
@@ -23,7 +23,7 @@ const spireServerImageRepo = "ghcr.io/spiffe/spire-server"
 // scriptData is the union of values every template may reference. Templates
 // use the [[ ]] delimiters so shell/Python brace syntax stays literal.
 type scriptData struct {
-	Config Config
+	Config bootstrapConfig
 	Infra  Infrastructure
 
 	TrustDomain        string
@@ -41,7 +41,7 @@ type scriptData struct {
 }
 
 // baseScriptData normalizes the configuration and derives shared values.
-func baseScriptData(cfg Config, infra Infrastructure) (scriptData, error) {
+func baseScriptData(cfg bootstrapConfig, infra Infrastructure) (scriptData, error) {
 	cfg = cfg.WithDefaults()
 	if strings.TrimSpace(cfg.SPIRE.TrustDomain) == "" {
 		return scriptData{}, errors.New("spire.trust_domain is required to render bootstrap scripts")
@@ -84,7 +84,7 @@ func renderScript(name string, data scriptData) (string, error) {
 // the dedicated SPIRE host. It creates the spire and crane PostgreSQL
 // databases with the runtime credentials, runs the pinned SPIRE server outside
 // Kubernetes, and publishes the trust bundle to IAM-protected Parameter Store.
-func RenderSpireScript(cfg Config, infra Infrastructure) (string, error) {
+func RenderSpireScript(cfg bootstrapConfig, infra Infrastructure) (string, error) {
 	data, err := baseScriptData(cfg, infra)
 	if err != nil {
 		return "", err
@@ -99,7 +99,7 @@ func RenderSpireScript(cfg Config, infra Infrastructure) (string, error) {
 // SPIRE agent, kubeadm, Cilium, the pending schema seed, and the crane-api and
 // dominator Deployments. It must run after RenderIdentityScript has registered
 // the platform node's parent ID on the SPIRE host.
-func RenderPlatformScript(cfg Config, infra Infrastructure, spireAddress string) (string, error) {
+func RenderPlatformScript(cfg bootstrapConfig, infra Infrastructure, spireAddress string) (string, error) {
 	if strings.TrimSpace(spireAddress) == "" {
 		return "", errors.New("spireAddress is required to render the platform script")
 	}
@@ -131,7 +131,7 @@ func RenderPlatformScript(cfg Config, infra Infrastructure, spireAddress string)
 // RenderIdentityScript renders the registration step executed on the SPIRE
 // host. It binds the deterministically known platform agent parent ID to the
 // dominator (UID 10002) and probe (UID 10003) workload identities.
-func RenderIdentityScript(cfg Config, infra Infrastructure, platformInstanceID string) (string, error) {
+func RenderIdentityScript(cfg bootstrapConfig, infra Infrastructure, platformInstanceID string) (string, error) {
 	if strings.TrimSpace(platformInstanceID) == "" {
 		return "", errors.New("platformInstanceID is required to render the identity script")
 	}
@@ -149,7 +149,7 @@ func RenderIdentityScript(cfg Config, infra Infrastructure, platformInstanceID s
 // RenderValidateScript renders the post-deployment gate. It fails on any
 // unhealthy component, exercises real SPIFFE mTLS against the dominator as the
 // probe workload, and only then marks the zone and cluster ready.
-func RenderValidateScript(cfg Config, infra Infrastructure) (string, error) {
+func RenderValidateScript(cfg bootstrapConfig, infra Infrastructure) (string, error) {
 	data, err := baseScriptData(cfg, infra)
 	if err != nil {
 		return "", err

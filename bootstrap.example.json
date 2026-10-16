@@ -1,36 +1,43 @@
 {
-  "version": 2,
+  "version": 3,
   "name": "crane-platform",
-  "aws": {
-    "region": "us-west-2"
-  },
-  "network": {
-    "vpc_cidr": "10.80.0.0/16",
-    "public_subnet_cidrs": [
-      "10.80.0.0/24",
-      "10.80.1.0/24"
-    ],
-    "private_subnet_cidrs": [
-      "10.80.16.0/24",
-      "10.80.17.0/24"
-    ]
-  },
-  "rds": {
-    "engine": "postgres",
-    "instance_class": "db.t3.micro",
-    "storage_gib": 20,
-    "deletion_protection": true,
-    "manage_master_user_password": true
+  "provider": "aws",
+  "provider_config": {
+    "region": "us-west-2",
+    "network": {
+      "vpc_cidr": "10.80.0.0/16",
+      "public_subnet_cidrs": [
+        "10.80.0.0/24",
+        "10.80.1.0/24"
+      ],
+      "private_subnet_cidrs": [
+        "10.80.16.0/24",
+        "10.80.17.0/24"
+      ]
+    },
+    "rds": {
+      "engine": "postgres",
+      "instance_class": "db.t3.micro",
+      "storage_gib": 20,
+      "deletion_protection": true,
+      "manage_master_user_password": true
+    },
+    "spire_host": {
+      "ami_id": "ami-0cdbfbc2f11b4cea4",
+      "instance_type": "t3.small",
+      "storage_gib": 8
+    },
+    "platform_host": {
+      "instance_type": "t3.small",
+      "ami_id": "ami-0cdbfbc2f11b4cea4",
+      "storage_gib": 20
+    }
   },
   "spire": {
     "version": "1.9.3",
-    "instance_type": "t3.small",
-    "storage_gib": 8,
     "trust_domain": "crane.internal"
   },
   "platform": {
-    "instance_type": "t3.small",
-    "storage_gib": 20,
     "kubernetes_version": "v1.35.0",
     "cilium_version": "1.19.0",
     "pod_cidr": "10.244.0.0/16",

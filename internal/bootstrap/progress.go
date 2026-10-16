@@ -6,6 +6,8 @@ import (
 	"io"
 	"strings"
 	"time"
+
+	"github.com/nabutabu/crane-oss/internal/logging"
 )
 
 const (
@@ -75,6 +77,7 @@ func (r *Reporter) Output(name, stream, output string) error {
 }
 
 func (r *Reporter) emit(p Phase) error {
+	p.Detail = logging.RedactText(p.Detail)
 	if r.JSON {
 		b, err := json.Marshal(p)
 		if err != nil {

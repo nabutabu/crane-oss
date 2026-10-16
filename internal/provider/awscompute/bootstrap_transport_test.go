@@ -1,8 +1,9 @@
-package bootstrap
+package awscompute
 
 import (
 	"bytes"
 	"context"
+	"github.com/nabutabu/crane-oss/internal/bootstrap"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -41,7 +42,7 @@ func TestSSMTransportPreservesScriptAndRedactsOutput(t *testing.T) {
 			return nil, nil
 		}
 	}}
-	if err := runScript(context.Background(), aws, NewReporter(&report, false), "i-test", "test", script); err != nil {
+	if err := runScript(context.Background(), aws, bootstrap.NewReporter(&report, false), "i-test", "test", script); err != nil {
 		t.Fatal(err)
 	}
 	got, err := os.ReadFile(marker)
@@ -64,7 +65,7 @@ func TestAllBootstrapScriptsFitDirectSSMTransport(t *testing.T) {
 			}
 			return map[string]string{"Status": "Success"}, nil
 		}}
-		if err := runScript(context.Background(), aws, NewReporter(&bytes.Buffer{}, false), "i-test", name, script); err != nil {
+		if err := runScript(context.Background(), aws, bootstrap.NewReporter(&bytes.Buffer{}, false), "i-test", name, script); err != nil {
 			t.Errorf("%s: %v", name, err)
 		}
 	}
@@ -84,7 +85,7 @@ func TestBundleFetchPreservesExistingBundleOnFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	source, err := os.ReadFile("../../golden_image_generator/templates/fetch-spire-bundle.sh")
+	source, err := os.ReadFile("../../../golden_image_generator/templates/fetch-spire-bundle.sh")
 	if err != nil {
 		t.Fatal(err)
 	}

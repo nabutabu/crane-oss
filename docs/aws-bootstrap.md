@@ -5,13 +5,22 @@ and versioned GHCR images for Crane API and Dominator. It creates a private
 SPIRE Network Load Balancer (NLB) before image generation so the AMI can contain
 its DNS hostname. No S3 bucket is created or used.
 
+The command and bootstrap runner use the provider contract described in
+[ADR-009](decisions/adr-009-vendor-agnostic-architecture.md). AWS is the sole
+registered implementation. Version 3 configuration sets `provider` to `aws`;
+`provider_config` contains `region`, optional `account_id`, `network`, `rds`,
+`spire_host`, and `platform_host`. Shared SPIRE and platform software settings
+remain in the top-level `spire` and `platform` objects. Older provisioning
+config versions are rejected.
+
 ## Prepare the endpoint and build an AMI
 
 Configure an AWS CLI profile with the operator permissions below. Use AWS CLI
 v2 and either a built `crane-bootstrap` binary or Go matching `go.mod` to run
 the command from this checkout. Packer builds the deployment AMI.
 
-1. Copy `bootstrap.example.json` and set its deployment name, region and pinned
+1. Copy `bootstrap.example.json` and set its deployment name,
+   `provider_config.region`, and pinned
    Crane image references. The example image version is illustrative: select a
    release containing these bootstrap changes, including the bootstrap-tools
    binary archive, and use that same release in Packer. Images must use an exact
@@ -19,33 +28,39 @@ the command from this checkout. Packer builds the deployment AMI.
 2. Run the preparation command:
 
    ```sh
-   go run ./cmd/crane-bootstrap -bootstrap-config bootstrap.example.json \
-     -aws-profile crane-bootstrap -prepare-images
+   AWS_PROFILE=crane-bootstrap go run ./cmd/crane-bootstrap \
+     -bootstrap-config bootstrap.example.json -prepare-images
    ```
 
    This provisions the VPC, subnets, security groups, internal NLB, TCP listener
    and empty SPIRE target group. It does not create hosts, databases or runtime
-   secrets. It prints the NLB hostname and bundle parameter name and saves them
-   in `.crane-bootstrap/<deployment>/endpoint.json` beside the config.
+   secrets. It prints the private identity endpoint and saves preparation
+   output in `.crane-bootstrap/<deployment>/endpoint.json` beside the config.
+   In that file, `identity_endpoint` is the NLB hostname and
+   `provider_output.spire_bundle_parameter` is the bundle parameter name.
 3. Follow [golden_image_generator/README.md](../golden_image_generator/README.md)
    to build the AMI with this hostname, bundle parameter, region, trust domain
    and matching SPIRE/Kubernetes versions. The existing setup scripts run at
    image creation time. Agents and Kubernetes clusters are never started on the
    temporary build machine.
-4. Set `spire.ami_id` and `platform.ami_id` to the resulting AMI in 
-   `bootstrap.example.json` in sections `spire` and `platform` sections. Both initial
+4. Set `provider_config.spire_host.ami_id` and
+   `provider_config.platform_host.ami_id` to the resulting AMI in
+   `bootstrap.example.json`. Both initial
    hosts currently use amd64 images; the generator also supports arm64 for other
    consumers. Bootstrap verifies the AMI tags against the prepared endpoint and
    configured versions.
 5. Start bootstrap:
 
    ```sh
-   go run ./cmd/crane-bootstrap -bootstrap-config bootstrap.example.json \
-     -aws-profile crane-bootstrap
+   AWS_PROFILE=crane-bootstrap go run ./cmd/crane-bootstrap \
+     -bootstrap-config bootstrap.example.json
    ```
 
 Packer uses the normal AWS credential chain, for example
-`AWS_PROFILE=crane-bootstrap`; never store AWS keys in the template. Attach the
+`AWS_PROFILE=crane-bootstrap`; the bootstrap AWS adapter uses the same chain.
+There are no `-aws-profile` or `-aws-region` flags; set the profile in the
+environment and the region in `provider_config.region`. Never store AWS keys
+in the template. Attach the
 image-build policy alongside the bootstrap operator policy:
 [golden-image-iam-policy.json](golden-image-iam-policy.json). It grants the
 Packer EC2 image, temporary-instance, key pair, and security-group permissions
@@ -122,6 +137,11 @@ settings are rejected. State files are atomically replaced with mode 0600;
 `endpoint.json` retains preparation output and `result.json` records successful
 handoff. These files contain references and configuration, never credentials.
 Runtime passwords and API tokens live in Secrets Manager.
+
+Results contain shared `name`, `provider`, `identity_endpoint`, and (after host
+creation) `api_server_endpoint` fields. AWS instance IDs, region, private host
+address, trust-bundle parameter name, and runtime secret reference are nested
+under `provider_output`.
 
 Rerun with the same configuration and state directory. Resources are discovered
 by stable names and `CraneBootstrap` ownership tags; installation and schema

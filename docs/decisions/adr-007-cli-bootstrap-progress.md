@@ -2,11 +2,16 @@
 
 The first-zone, layer-zero bootstrap is an explicit operator command. Its
 ordered phases are reported by `crane-bootstrap`; the command is safe to rerun
-because AWS resources are discovered by deployment names and ownership tags,
+because provider resources are discovered by deployment names and ownership tags,
 schema installation and topology seeding are idempotent, and installation
 scripts reconcile their host state. The operator machine retains the resolved
 configuration and golden AMI IDs in the deployment state directory so retries
 use the original selections.
+
+`internal/bootstrap` owns the provider-neutral phase sequence, reporting, and
+local state. The AWS session in `internal/provider/awscompute` reconciles AWS
+resources and renders/executes host scripts. Provider selection is wired through
+`internal/provider/registry`; see ADR-009 for the architectural boundary.
 
 The operator supplies an IAM identity and builds the golden AMIs using the
 prepared private SPIRE endpoint.

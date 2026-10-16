@@ -1,4 +1,4 @@
-package bootstrap
+package awscompute
 
 import (
 	"context"
@@ -7,8 +7,8 @@ import (
 	"strings"
 )
 
-func bundleParameter(cfg Config) string { return "/crane/" + cfg.Name + "/spire-bundle" }
-func bundleParameterARN(cfg Config) string {
+func bundleParameter(cfg bootstrapConfig) string { return "/crane/" + cfg.Name + "/spire-bundle" }
+func bundleParameterARN(cfg bootstrapConfig) string {
 	return "arn:aws:ssm:" + cfg.AWS.Region + ":" + cfg.AWS.AccountID + ":parameter" + bundleParameter(cfg)
 }
 
@@ -32,7 +32,7 @@ func checkEndpointOwner(ctx context.Context, aws AWSClient, arn, name string) er
 
 // ensureSpireEndpoint creates the endpoint before image generation. TLS passes
 // through to SPIRE; the NLB never holds the SPIRE CA keys or terminates mTLS.
-func ensureSpireEndpoint(ctx context.Context, aws AWSClient, cfg Config, infra Infrastructure) (Infrastructure, error) {
+func ensureSpireEndpoint(ctx context.Context, aws AWSClient, cfg bootstrapConfig, infra Infrastructure) (Infrastructure, error) {
 	type lb struct {
 		LoadBalancerArn, DNSName, Scheme, Type, VpcId string
 		SecurityGroups                                []string
@@ -152,7 +152,7 @@ func registerSpireTarget(ctx context.Context, aws AWSClient, infra Infrastructur
 	return aws.Call(ctx, "elbv2", "register-targets", map[string]any{"TargetGroupArn": infra.SpireTargetGroupARN, "Targets": []map[string]any{{"Id": instance, "Port": 8081}}}, nil)
 }
 
-func validateGoldenImage(ctx context.Context, aws AWSClient, cfg Config, infra Infrastructure, ami string) error {
+func validateGoldenImage(ctx context.Context, aws AWSClient, cfg bootstrapConfig, infra Infrastructure, ami string) error {
 	var out struct {
 		Images []struct {
 			State, Architecture string

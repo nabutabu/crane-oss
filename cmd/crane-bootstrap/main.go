@@ -1,7 +1,8 @@
-// crane-bootstrap creates the protected AWS platform, or seeds a local database.
+// crane-bootstrap creates a protected platform through a provider, or seeds a local database.
 package main
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -14,7 +15,7 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/nabutabu/crane-oss/internal/bootstrap"
-	"github.com/nabutabu/crane-oss/internal/capacity"
+	"github.com/nabutabu/crane-oss/internal/provider/registry"
 	"github.com/nabutabu/crane-oss/pkg/api"
 )
 
@@ -28,13 +29,11 @@ func main() {
 func run(parent context.Context, args []string, out io.Writer) error {
 	flags := flag.NewFlagSet("crane-bootstrap", flag.ContinueOnError)
 	dsn := flags.String("dsn", os.Getenv("CRANE_DATABASE_URL"), "PostgreSQL DSN for explicit database-only initialization")
-	raw := flags.String("config", "", "first-zone JSON (optional override for AWS bootstrap)")
-	configPath := flags.String("bootstrap-config", "", "versioned AWS platform configuration JSON")
-	region := flags.String("aws-region", "", "override bootstrap AWS region")
-	profile := flags.String("aws-profile", "", "AWS CLI profile (defaults to the AWS credential chain)")
+	raw := flags.String("config", "", "first-zone JSON (optional override for platform bootstrap)")
+	configPath := flags.String("bootstrap-config", "", "versioned platform configuration JSON")
 	stateDir := flags.String("state-dir", "", "local deployment state directory (defaults beside bootstrap config)")
-	prepareImages := flags.Bool("prepare-images", false, "create the private SPIRE endpoint before building golden AMIs")
-	dryRun := flags.Bool("dry-run", false, "validate local configuration and print phases without AWS calls")
+	prepareImages := flags.Bool("prepare-images", false, "prepare the private identity endpoint before building host images")
+	dryRun := flags.Bool("dry-run", false, "validate local configuration and print phases without provider calls")
 	jsonOutput := flags.Bool("json", false, "emit JSON events only on stdout")
 	pending := flags.Bool("pending", false, "seed first zone in initializing state until validated")
 	timeout := flags.Duration("operation-timeout", 90*time.Minute, "maximum duration of this invocation")
@@ -52,11 +51,19 @@ func run(parent context.Context, args []string, out io.Writer) error {
 		if err != nil {
 			return err
 		}
-		if err = json.Unmarshal(data, &cfg); err != nil {
+		var header struct {
+			Version int `json:"version"`
+		}
+		if err := json.Unmarshal(data, &header); err != nil {
 			return fmt.Errorf("decode bootstrap configuration: %w", err)
 		}
-		if *region != "" {
-			cfg.AWS.Region = *region
+		if header.Version != 3 {
+			return fmt.Errorf("unsupported bootstrap config version %d; use version 3", header.Version)
+		}
+		decoder := json.NewDecoder(bytes.NewReader(data))
+		decoder.DisallowUnknownFields()
+		if err = decoder.Decode(&cfg); err != nil {
+			return fmt.Errorf("decode bootstrap configuration: %w", err)
 		}
 		cfg = cfg.WithDefaults()
 	}
@@ -72,7 +79,7 @@ func run(parent context.Context, args []string, out io.Writer) error {
 		cfg.FirstZone = data
 	}
 	if *dsn == "" && *configPath == "" {
-		return fmt.Errorf("provide -bootstrap-config for AWS provisioning, or -dsn and -config for database-only initialization")
+		return fmt.Errorf("provide -bootstrap-config for platform provisioning, or -dsn and -config for database-only initialization")
 	}
 	if *configPath != "" {
 		if err := cfg.Validate(); err != nil {
@@ -81,19 +88,24 @@ func run(parent context.Context, args []string, out io.Writer) error {
 	}
 	reporter := bootstrap.NewReporter(out, *jsonOutput)
 	if *dsn == "" {
-		if cfg.Version != 2 {
-			return fmt.Errorf("AWS platform provisioning requires configuration version 2")
-		}
 		if *pending {
 			return fmt.Errorf("-pending is only used with an explicit database DSN")
 		}
+
+		factory, err := registry.Bootstrap(cfg.Provider)
+		if err != nil {
+			return err
+		}
+		if _, err := factory(cfg); err != nil {
+			return err
+		}
 		if *dryRun {
-			return reporter.Planned(bootstrap.AWSPhases(*prepareImages))
+			return reporter.Planned(bootstrap.Phases(*prepareImages))
 		}
 		if *stateDir == "" {
 			*stateDir = filepath.Join(filepath.Dir(*configPath), ".crane-bootstrap", cfg.Name)
 		}
-		result, err := bootstrap.RunAWS(ctx, cfg, bootstrap.CLI{Region: cfg.AWS.Region, Profile: *profile}, reporter, bootstrap.RunOptions{StateDir: *stateDir, PrepareImages: *prepareImages})
+		result, err := bootstrap.Run(ctx, cfg, factory, reporter, bootstrap.RunOptions{StateDir: *stateDir, PrepareImages: *prepareImages})
 		if err != nil {
 			return err
 		}
@@ -107,15 +119,12 @@ func run(parent context.Context, args []string, out io.Writer) error {
 				Result bootstrap.Result `json:"result"`
 			}{status, result})
 		}
-		if *prepareImages {
-			_, err = fmt.Fprintf(out, "private SPIRE hostname: %s; bundle parameter: %s; state: %s\n", result.SpireAddress, result.BundleParameter, *stateDir)
-			return err
-		}
-		_, err = fmt.Fprintf(out, "platform %s is ready in %s; SPIRE=%s, platform=%s, credentials secret=%s\n", result.Name, result.Region, result.SpireInstanceID, result.PlatformInstanceID, result.RuntimeSecretARN)
+
+		_, err = fmt.Fprintf(out, "platform %s: %s; provider=%s; identity=%s; state=%s\n", result.Name, status, result.Provider, result.IdentityEndpoint, *stateDir)
 		return err
 	}
 	if *prepareImages {
-		return fmt.Errorf("-prepare-images requires AWS provisioning without a database DSN")
+		return fmt.Errorf("-prepare-images requires platform provisioning without a database DSN")
 	}
 	if *raw == "" {
 		if len(cfg.FirstZone) == 0 {
@@ -133,25 +142,5 @@ func run(parent context.Context, args []string, out io.Writer) error {
 		return fmt.Errorf("open Crane database: %w", err)
 	}
 	defer db.Close()
-	if err = reporter.Run(2, "initialize Crane schema", func() (string, error) {
-		if err := reporter.Detail("database", "connecting and applying repeatable Crane schema"); err != nil {
-			return "", err
-		}
-		return "", capacity.InitializeSchema(ctx, db)
-	}); err != nil {
-		return err
-	}
-	return reporter.Run(2, "seed first zone", func() (string, error) {
-		if err := reporter.Detail("topology", fmt.Sprintf("seeding zone %s with target_nodes=0", in.Zone.ID)); err != nil {
-			return "", err
-		}
-		s := capacity.NewStore(db)
-		var err error
-		if *pending {
-			err = s.SeedFirstZonePending(ctx, in.Zone, in.Cluster, in.Budget, in.Pool, in.Group)
-		} else {
-			err = s.SeedFirstZone(ctx, in.Zone, in.Cluster, in.Budget, in.Pool, in.Group)
-		}
-		return "zone " + in.Zone.ID + ", target_nodes=0", err
-	})
+	return bootstrap.InitializeDatabase(ctx, db, in, *pending, reporter)
 }
