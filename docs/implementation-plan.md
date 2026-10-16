@@ -238,11 +238,11 @@ Repair and maintenance use explicit host identities and the same drain coordinat
 ## 14. Phased implementation plan
 
 ### Phase 0 — Architecture & compatibility spike
-- Pin K8s/CA/external gRPC/kubeadm versions, container runtime, and **Cilium** as CNI; confirm NodeGroup scope (per zone + per capacity class) and one-cluster-per-zone topology.
+- Pin the common GA compatibility baseline in ADR-001: Kubernetes/kubeadm/kubelet/kubectl 1.35.9, Cluster Autoscaler 1.35.x, containerd 2.3.5, and Cilium 1.20.3. Patch updates remain explicitly pinned; Kubernetes 1.37 is deferred until a matching CA release is available and tested.
 - Define the **cluster record** and `ZoneBootstrapOperation` contracts, bootstrap state machine, handoff gate, and join-token flow through the destination Kubernetes API.
 - Define handler-scoped adapter `RequestID`, revision-checked `SetTarget`, replay/recovery rules, and provider-token scope. Confirm behavior with the pinned CA release for lost responses, adapter restart, equal consecutive deltas, and CAS conflict.
 - Decide credit semantics (capacity entitlement vs cost) and bootstrap identity. Dominator is the Kubernetes drain coordinator; Subd owns host-local preparation.
-- Exit: ADR covering the above; minimal adapter reports a cluster-scoped static group/template; compatibility tests prove target refresh/recovery semantics for the pinned CA release.
+- Exit: accepted ADRs cover the above; the adapter contract test reports a cluster-scoped static group/template and explicit not-found behavior; compatibility tests prove target refresh/recovery, equal-delta, request-identity, and CAS/error semantics for the pinned CA release.
 
 ### Phase 1 — Control-plane data model & structured logging foundation
 - Models: `Zone`, `NodeGroup`, `NodePool`, `CapacityRequest`, `CreditReservation`. Host Catalog schema with lifecycle states, desired/observed versions, allocatable/reserved, operations.
