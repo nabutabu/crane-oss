@@ -102,6 +102,12 @@ func ensureSpireEndpoint(ctx context.Context, aws AWSClient, cfg bootstrapConfig
 		return infra, err
 	}
 	infra.SpireTargetGroupARN = tg.TargetGroupArn
+	// The SPIRE host's agent uses the same stable endpoint as every other
+	// agent. Disable client IP preservation so its connection can loop back
+	// through the NLB to the SPIRE server on this host.
+	if err := aws.Call(ctx, "elbv2", "modify-target-group-attributes", map[string]any{"TargetGroupArn": tg.TargetGroupArn, "Attributes": []map[string]string{{"Key": "preserve_client_ip.enabled", "Value": "false"}}}, nil); err != nil {
+		return infra, err
+	}
 	var listeners struct {
 		Listeners []struct {
 			Protocol       string

@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
+	"regexp"
 	"strings"
 	"text/template"
 )
@@ -20,9 +22,15 @@ var scriptTemplates embed.FS
 
 const spireServerImageRepo = "ghcr.io/spiffe/spire-server"
 
+var instanceIDRE = regexp.MustCompile(`^i-[0-9a-f]{8,17}$`)
+
+func privateIP(raw string) bool { ip := net.ParseIP(raw); return ip != nil && ip.IsPrivate() }
+
 // scriptData is the union of values every template may reference. Templates
 // use the [[ ]] delimiters so shell/Python brace syntax stays literal.
 type scriptData struct {
+	Hosts  []bootstrapAgentHost
+	Host   bootstrapAgentHost
 	Config bootstrapConfig
 	Infra  Infrastructure
 
@@ -38,6 +46,22 @@ type scriptData struct {
 	PodCIDR            string
 	SpireAddress       string
 	PlatformInstanceID string
+}
+
+type bootstrapAgentHost struct {
+	ID, PrivateIP, Role, AMI string
+}
+
+func checkAgentHosts(hosts []bootstrapAgentHost) error {
+	if len(hosts) != 2 || hosts[0].Role != "spire" || hosts[1].Role != "platform" || hosts[0].ID == hosts[1].ID {
+		return errors.New("both distinct bootstrap hosts are required")
+	}
+	for _, h := range hosts {
+		if !instanceIDRE.MatchString(h.ID) || !privateIP(h.PrivateIP) {
+			return errors.New("bootstrap host has invalid identity or private address")
+		}
+	}
+	return nil
 }
 
 // baseScriptData normalizes the configuration and derives shared values.
@@ -131,7 +155,7 @@ func RenderPlatformScript(cfg bootstrapConfig, infra Infrastructure, spireAddres
 // RenderIdentityScript renders the registration step executed on the SPIRE
 // host. It binds the deterministically known platform agent parent ID to the
 // dominator (UID 10002) and probe (UID 10003) workload identities.
-func RenderIdentityScript(cfg bootstrapConfig, infra Infrastructure, platformInstanceID string) (string, error) {
+func RenderIdentityScript(cfg bootstrapConfig, infra Infrastructure, platformInstanceID, spireInstanceID string) (string, error) {
 	if strings.TrimSpace(platformInstanceID) == "" {
 		return "", errors.New("platformInstanceID is required to render the identity script")
 	}
@@ -143,13 +167,20 @@ func RenderIdentityScript(cfg bootstrapConfig, infra Infrastructure, platformIns
 		return "", errors.New("aws.account_id and aws.region are required to render the identity script")
 	}
 	data.PlatformInstanceID = platformInstanceID
+	if !instanceIDRE.MatchString(spireInstanceID) || !instanceIDRE.MatchString(platformInstanceID) || spireInstanceID == platformInstanceID {
+		return "", errors.New("two distinct instance IDs are required")
+	}
+	data.Hosts = []bootstrapAgentHost{{ID: spireInstanceID}, {ID: platformInstanceID}}
 	return renderScript("identity.sh.tmpl", data)
 }
 
 // RenderValidateScript renders the post-deployment gate. It fails on any
 // unhealthy component, exercises real SPIFFE mTLS against the dominator as the
 // probe workload, and only then marks the zone and cluster ready.
-func RenderValidateScript(cfg bootstrapConfig, infra Infrastructure) (string, error) {
+func RenderValidateScript(cfg bootstrapConfig, infra Infrastructure, hosts []bootstrapAgentHost) (string, error) {
+	if err := checkAgentHosts(hosts); err != nil {
+		return "", err
+	}
 	data, err := baseScriptData(cfg, infra)
 	if err != nil {
 		return "", err
@@ -157,7 +188,33 @@ func RenderValidateScript(cfg bootstrapConfig, infra Infrastructure) (string, er
 	if err := requireInfra(infra, "DBEndpoint", "RuntimeSecretARN"); err != nil {
 		return "", err
 	}
+	data.Hosts = hosts
 	return renderScript("validate.sh.tmpl", data)
+}
+
+func RenderSubdScript(cfg bootstrapConfig, infra Infrastructure, h bootstrapAgentHost) (string, error) {
+	if !instanceIDRE.MatchString(h.ID) || !privateIP(h.PrivateIP) {
+		return "", errors.New("Subd requires a host identity and private address")
+	}
+	data, err := baseScriptData(cfg, infra)
+	if err != nil {
+		return "", err
+	}
+	data.Host = h
+	data.SpireAddress = infra.SpireAddress
+	return renderScript("subd.sh.tmpl", data)
+}
+
+func RenderSeedHostsScript(cfg bootstrapConfig, infra Infrastructure, hosts []bootstrapAgentHost) (string, error) {
+	if err := checkAgentHosts(hosts); err != nil {
+		return "", err
+	}
+	data, err := baseScriptData(cfg, infra)
+	if err != nil {
+		return "", err
+	}
+	data.Hosts = hosts
+	return renderScript("seed-hosts.sh.tmpl", data)
 }
 
 func requireInfra(infra Infrastructure, fields ...string) error {

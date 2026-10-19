@@ -1,4 +1,6 @@
 {
-  "DominatorURL": "http://YOUR_DOMINATOR_URL:44000",
-  "Token": "YOUR_HOST_TOKEN"
+  "ListenAddress": "10.0.0.10:44001",
+  "TrustDomain": "crane.internal",
+  "WriterIdentity": "spiffe://crane.internal/dominator",
+  "ReaderIdentities": ["spiffe://crane.internal/subd"]
 }

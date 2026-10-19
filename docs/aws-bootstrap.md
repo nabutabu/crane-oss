@@ -76,10 +76,27 @@ redacted before being printed.
 
 The internal NLB listens on TCP 8081 in the deployment's two private subnets.
 Cross-zone forwarding reaches the single SPIRE backend regardless of the NLB
-node used by a client. The NLB security group accepts 8081 from the platform
-security group; the SPIRE host accepts 8081 from the NLB security group.
+node used by a client. The NLB security group accepts 8081 from both host
+security groups; the SPIRE host accepts 8081 from the NLB security group.
+Target client IP preservation is disabled so the SPIRE host's own agent can
+reach its server through the stable NLB hostname. The SPIRE security group
+also accepts TCP 44001 from the platform security group for private Subd mTLS;
+the platform group's existing self-traffic rule covers its local Subd.
 Bootstrap checks ownership, VPC, subnets, security groups, target-group and
 listener settings on reruns. TLS passes through to SPIRE unchanged.
+
+Bootstrap configures and starts Subd on both hosts after registering their
+host-specific systemd workload identities. Phase 9 verifies the running service
+identity, real mTLS reads, a harmless revision-1 update and duplicate retry, and
+rejection of writes from the read-only probe before marking the zone ready.
+Both hosts are protected catalog inventory outside worker groups and credits.
+Subd does not send heartbeats; catalog health remains unknown until monitoring
+is integrated. See [Subd configuration and APIs](subd.md).
+
+Use matching release binaries/images and a newly built golden AMI containing
+the private endpoint and systemd attestor. Old POC databases are not upgraded;
+initialize a fresh compatible database explicitly. Bootstrap retries preserve
+the prepared endpoint and reuse matching registrations and host records.
 
 The AMI contains the NLB DNS hostname, trust-domain name, region and SSM public
 bundle parameter name. It contains no SPIRE private keys, SVIDs, agent data,

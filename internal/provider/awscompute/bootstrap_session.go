@@ -173,13 +173,33 @@ func (s *bootstrapSession) RunHostPhase(ctx context.Context, phase bootstrap.Hos
 	case bootstrap.InstallIdentity:
 		script, err = RenderSpireScript(s.cfg, s.infra)
 	case bootstrap.RegisterWorkloads:
-		script, err = RenderIdentityScript(s.cfg, s.infra, s.platform.ID)
+		script, err = RenderIdentityScript(s.cfg, s.infra, s.platform.ID, s.spire.ID)
 	case bootstrap.InstallPlatform:
 		target = s.platform.ID
 		script, err = RenderPlatformScript(s.cfg, s.infra, s.infra.SpireAddress)
 	case bootstrap.ValidateHandoff:
+		hosts := s.agentHosts()
+		if err := checkAgentHosts(hosts); err != nil {
+			return err
+		}
+		for _, h := range hosts {
+			setup, err := RenderSubdScript(s.cfg, s.infra, h)
+			if err != nil {
+				return err
+			}
+			if err := runScript(ctx, s.client, reporter, h.ID, "subd-"+h.Role, setup); err != nil {
+				return err
+			}
+		}
+		seed, err := RenderSeedHostsScript(s.cfg, s.infra, hosts)
+		if err != nil {
+			return err
+		}
+		if err := runScript(ctx, s.client, reporter, s.platform.ID, "seed-hosts", seed); err != nil {
+			return err
+		}
 		target = s.platform.ID
-		script, err = RenderValidateScript(s.cfg, s.infra)
+		script, err = RenderValidateScript(s.cfg, s.infra, hosts)
 	default:
 		return fmt.Errorf("unsupported host phase %q", phase)
 	}
@@ -190,6 +210,10 @@ func (s *bootstrapSession) RunHostPhase(ctx context.Context, phase bootstrap.Hos
 		return fmt.Errorf("host phase %s requires a protected host", phase)
 	}
 	return runScript(ctx, s.client, reporter, target, string(phase), script)
+}
+
+func (s *bootstrapSession) agentHosts() []bootstrapAgentHost {
+	return []bootstrapAgentHost{{ID: s.spire.ID, PrivateIP: s.spire.PrivateIP, Role: "spire", AMI: s.cfg.SPIRE.AMIID}, {ID: s.platform.ID, PrivateIP: s.platform.PrivateIP, Role: "platform", AMI: s.cfg.Platform.AMIID}}
 }
 func (s *bootstrapSession) Result() bootstrap.Result {
 	output, _ := json.Marshal(struct {

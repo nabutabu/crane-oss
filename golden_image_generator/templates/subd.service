@@ -5,10 +5,15 @@ ConditionPathExists=/usr/local/bin/appsettings.json
 Requires=spire-agent.service
 
 [Service]
+RuntimeDirectory=crane/subd
+RuntimeDirectoryMode=0700
+StateDirectory=crane/subd
+StateDirectoryMode=0700
 Environment="SPIFFE_ENDPOINT_SOCKET=unix:///run/spire/sockets/agent.sock"
 WorkingDirectory=/usr/local/bin
 User=root
 ExecStart=/usr/local/bin/subd
+TimeoutStopSec=15
 Restart=on-failure
 RestartSec=5
 

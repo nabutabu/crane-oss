@@ -11,12 +11,12 @@ import (
 func TestBootstrapHostPhasesUseTheCorrectProtectedHost(t *testing.T) {
 	for _, phase := range []bootstrap.HostPhase{bootstrap.InstallIdentity, bootstrap.RegisterWorkloads, bootstrap.InstallPlatform, bootstrap.ValidateHandoff} {
 		t.Run(string(phase), func(t *testing.T) {
-			want := "i-spire"
+			want := "i-11111111111111111"
 			if phase == bootstrap.InstallPlatform || phase == bootstrap.ValidateHandoff {
-				want = "i-platform"
+				want = "i-0abcdef1234567890"
 			}
 			sent := 0
-			session := &bootstrapSession{cfg: testConfig().WithDefaults(), infra: testInfra(), spire: host{ID: "i-spire"}, platform: host{ID: "i-platform"}}
+			session := &bootstrapSession{cfg: testConfig().WithDefaults(), infra: testInfra(), spire: host{ID: "i-11111111111111111", PrivateIP: "10.80.0.11"}, platform: host{ID: "i-0abcdef1234567890", PrivateIP: "10.80.0.12"}}
 			session.client = &fakeAWS{call: func(service, op string, input any) (any, error) {
 				if service != "ssm" {
 					t.Fatalf("unexpected service %s", service)
@@ -24,7 +24,11 @@ func TestBootstrapHostPhasesUseTheCorrectProtectedHost(t *testing.T) {
 				switch op {
 				case "send-command":
 					sent++
-					if input.(map[string]any)["InstanceIds"].([]string)[0] != want {
+					target := want
+					if phase == bootstrap.ValidateHandoff && sent == 1 {
+						target = session.spire.ID
+					}
+					if input.(map[string]any)["InstanceIds"].([]string)[0] != target {
 						t.Fatal("wrong phase target")
 					}
 					return map[string]any{"Command": map[string]string{"CommandId": "command-test"}}, nil
@@ -38,7 +42,11 @@ func TestBootstrapHostPhasesUseTheCorrectProtectedHost(t *testing.T) {
 			if err := session.RunHostPhase(context.Background(), phase, bootstrap.NewReporter(io.Discard, false)); err != nil {
 				t.Fatal(err)
 			}
-			if sent != 1 {
+			wantSent := 1
+			if phase == bootstrap.ValidateHandoff {
+				wantSent = 4
+			}
+			if sent != wantSent {
 				t.Fatalf("sent %d commands", sent)
 			}
 		})

@@ -35,7 +35,7 @@ func TestEndpointRejectsIncompatibleOrUnownedResources(t *testing.T) {
 						tags = nil
 					}
 					return map[string]any{"TagDescriptions": []any{map[string]any{"Tags": tags}}}, nil
-				case "modify-load-balancer-attributes":
+				case "modify-load-balancer-attributes", "modify-target-group-attributes":
 					return nil, nil
 				case "describe-target-groups":
 					protocol := "TCP"

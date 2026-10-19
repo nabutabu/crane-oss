@@ -407,6 +407,8 @@ func ensureSecurityGroups(ctx context.Context, aws AWSClient, cfg bootstrapConfi
 			for _, source := range p.UserIdGroupPairs {
 				allowed := (kind == "spire" && source.GroupID == ids["spire-nlb"] && p.IpProtocol == "tcp" && p.FromPort == 8081 && p.ToPort == 8081) ||
 					(kind == "spire-nlb" && source.GroupID == ids["platform"] && p.IpProtocol == "tcp" && p.FromPort == 8081 && p.ToPort == 8081) ||
+					(kind == "spire-nlb" && source.GroupID == ids["spire"] && p.IpProtocol == "tcp" && p.FromPort == 8081 && p.ToPort == 8081) ||
+					(kind == "spire" && source.GroupID == ids["platform"] && p.IpProtocol == "tcp" && p.FromPort == 44001 && p.ToPort == 44001) ||
 					(kind == "platform" && source.GroupID == ids["platform"] && p.IpProtocol == "-1") ||
 					(kind == "rds" && (source.GroupID == ids["spire"] || source.GroupID == ids["platform"]) && p.IpProtocol == "tcp" && p.FromPort == cfg.RDS.Port && p.ToPort == cfg.RDS.Port)
 				if !allowed {
@@ -418,7 +420,7 @@ func ensureSecurityGroups(ctx context.Context, aws AWSClient, cfg bootstrapConfi
 	for _, rule := range []struct {
 		target, source, protocol string
 		port                     int32
-	}{{ids["spire"], ids["spire-nlb"], "tcp", 8081}, {ids["spire-nlb"], ids["platform"], "tcp", 8081}, {ids["platform"], ids["platform"], "-1", 0}, {ids["rds"], ids["spire"], "tcp", cfg.RDS.Port}, {ids["rds"], ids["platform"], "tcp", cfg.RDS.Port}} {
+	}{{ids["spire"], ids["spire-nlb"], "tcp", 8081}, {ids["spire-nlb"], ids["platform"], "tcp", 8081}, {ids["spire-nlb"], ids["spire"], "tcp", 8081}, {ids["spire"], ids["platform"], "tcp", 44001}, {ids["platform"], ids["platform"], "-1", 0}, {ids["rds"], ids["spire"], "tcp", cfg.RDS.Port}, {ids["rds"], ids["platform"], "tcp", cfg.RDS.Port}} {
 		p := map[string]any{"IpProtocol": rule.protocol, "UserIdGroupPairs": []map[string]string{{"GroupId": rule.source}}}
 		if rule.protocol != "-1" {
 			p["FromPort"] = rule.port

@@ -49,7 +49,9 @@ if [ "$server_ready" != "1" ]; then
 fi
 
 ensure_entry() {
-  local spiffe_id="$1" uid="$2"
+  local spiffe_id="$1" uid="$2" parent="${3:-$PARENT_ID}"
+  local selector="unix:uid:$uid"
+  if [ "$uid" = systemd ]; then selector='systemd:id:subd.service'; fi
   local all matched count
   all="$(docker exec "$CONTAINER" /opt/spire/bin/spire-server entry show \
       -socketPath "$SOCKET_PATH" -spiffeID "$spiffe_id")"
@@ -60,8 +62,8 @@ ensure_entry() {
   fi
   if [ "$count" = "1" ]; then
     matched="$(docker exec "$CONTAINER" /opt/spire/bin/spire-server entry show \
-      -socketPath "$SOCKET_PATH" -spiffeID "$spiffe_id" -parentID "$PARENT_ID" \
-      -selector "unix:uid:$uid" -matchSelectorsOn exact)"
+      -socketPath "$SOCKET_PATH" -spiffeID "$spiffe_id" -parentID "$parent" \
+      -selector "$selector" -matchSelectorsOn exact)"
     if ! printf '%s\n' "$matched" | grep -q "Entry ID"; then
       echo "existing SPIRE entry has a different parent or workload selector" >&2
       return 1
@@ -71,9 +73,9 @@ ensure_entry() {
   fi
   docker exec "$CONTAINER" /opt/spire/bin/spire-server entry create \
     -socketPath "$SOCKET_PATH" \
-    -parentID "$PARENT_ID" \
+    -parentID "$parent" \
     -spiffeID "$spiffe_id" \
-    -selector "unix:uid:$uid"
+    -selector "$selector"
   echo "registered SPIRE entry for $spiffe_id"
 }
 
@@ -81,5 +83,10 @@ ensure_entry() {
 step "reconciling Dominator and probe workload identities"
 ensure_entry "spiffe://[[ .TrustDomain ]]/dominator" 10002
 ensure_entry "spiffe://[[ .TrustDomain ]]/subd" 10003
+
+[[ range .Hosts ]]
+ensure_entry "spiffe://[[ $.TrustDomain ]]/subd/[[ .ID ]]" systemd \
+  "spiffe://[[ $.TrustDomain ]]/spire/agent/aws_iid/[[ $.AccountID ]]/[[ $.Region ]]/[[ .ID ]]"
+[[ end ]]
 
 echo "platform workload identities are registered; parent ID $PARENT_ID"
