@@ -23,13 +23,11 @@
       "manage_master_user_password": true
     },
     "spire_host": {
-      "ami_id": "ami-0cdbfbc2f11b4cea4",
       "instance_type": "t3.small",
       "storage_gib": 8
     },
     "platform_host": {
       "instance_type": "t3.small",
-      "ami_id": "ami-0cdbfbc2f11b4cea4",
       "storage_gib": 20
     }
   },
