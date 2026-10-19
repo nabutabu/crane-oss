@@ -1,6 +1,7 @@
 package subd
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os/exec"
@@ -18,7 +19,11 @@ func NewServicesCollector() *ServicesCollector {
 }
 
 func getServices() (map[string]api.Service, error) {
-	cmd := exec.Command(
+	return collectServices(context.Background())
+}
+
+func collectServices(ctx context.Context) (map[string]api.Service, error) {
+	cmd := exec.CommandContext(ctx,
 		"systemctl",
 		"list-units",
 		"--type=service",
@@ -42,8 +47,6 @@ func getServices() (map[string]api.Service, error) {
 
 		fields := strings.Fields(line)
 		name := fields[0]
-
-		log.Println(name)
 
 		services[name] = api.Service{
 			Name:    name,

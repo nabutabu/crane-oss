@@ -1,5 +1,12 @@
 # SPIFFE ID Structure — Design Decisions
 
+Current Subd authentication is defined by [ADR-011](decisions/adr-011-subd-private-endpoint.md)
+and [the private endpoint protocol](subd.md). Bootstrap uses exact per-host
+AWS-IID parents and `systemd:id:subd.service`, not wildcard parents or templated
+registration IDs. Dominator writes expected state; the separate bootstrap probe
+can only read. The historical design below does not describe the current wire
+protocol or deployed registration flow.
+
 ## Overview
 
 This document outlines the architectural decisions for SPIFFE ID structure, workload attestation, and identity propagation between:

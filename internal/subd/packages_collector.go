@@ -1,6 +1,8 @@
 package subd
 
 import (
+	"context"
+	"fmt"
 	"log"
 	"os"
 	"os/exec"
@@ -17,7 +19,11 @@ func NewPackagesCollecetor() *PackagesCollector {
 }
 
 func getPackages() ([]api.Package, error) {
-	cmd := exec.Command("dpkg-query", "-W", "-f=${Package} ${Version}\n")
+	return collectPackages(context.Background())
+}
+
+func collectPackages(ctx context.Context) ([]api.Package, error) {
+	cmd := exec.CommandContext(ctx, "dpkg-query", "-W", "-f=${Package} ${Version}\n")
 
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -33,6 +39,9 @@ func getPackages() ([]api.Package, error) {
 		}
 
 		fields := strings.Fields(line)
+		if len(fields) != 2 {
+			return nil, fmt.Errorf("invalid package inventory")
+		}
 		name := fields[0]
 		version := fields[1]
 
