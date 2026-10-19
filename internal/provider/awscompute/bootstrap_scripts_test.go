@@ -1,4 +1,4 @@
-package bootstrap
+package awscompute
 
 import (
 	"os"
@@ -8,11 +8,10 @@ import (
 	"testing"
 )
 
-func testConfig() Config {
-	return Config{
-		Version: 2,
-		Name:    "crane-platform",
-		AWS:     AWSConfig{Region: "us-west-2", AccountID: "123456789012"},
+func testConfig() bootstrapConfig {
+	return bootstrapConfig{
+		Name: "crane-platform",
+		AWS:  AWSConfig{Region: "us-west-2", AccountID: "123456789012"},
 		Network: NetworkConfig{
 			VPCCIDR:            "10.80.0.0/16",
 			PublicSubnetCIDRs:  []string{"10.80.0.0/24", "10.80.1.0/24"},

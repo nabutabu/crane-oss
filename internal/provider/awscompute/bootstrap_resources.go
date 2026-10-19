@@ -1,4 +1,4 @@
-package bootstrap
+package awscompute
 
 import (
 	"context"
@@ -14,13 +14,10 @@ import (
 )
 
 // EnsureInfrastructure creates/reuses dedicated AWS resources for the bootstrap
-func EnsureInfrastructure(ctx context.Context, aws AWSClient, cfg Config) (Infrastructure, error) {
+func EnsureInfrastructure(ctx context.Context, aws AWSClient, cfg bootstrapConfig) (Infrastructure, error) {
 	cfg = cfg.WithDefaults()
 	if err := cfg.Validate(); err != nil {
 		return Infrastructure{}, err
-	}
-	if cfg.Version != 2 {
-		return Infrastructure{}, fmt.Errorf("EnsureInfrastructure only supports version 2 config")
 	}
 
 	infra := Infrastructure{}
@@ -31,7 +28,7 @@ func EnsureInfrastructure(ctx context.Context, aws AWSClient, cfg Config) (Infra
 	return ensureComputeInfrastructure(ctx, aws, cfg, infra)
 }
 
-func ensureComputeInfrastructure(ctx context.Context, aws AWSClient, cfg Config, stored Infrastructure) (Infrastructure, error) {
+func ensureComputeInfrastructure(ctx context.Context, aws AWSClient, cfg bootstrapConfig, stored Infrastructure) (Infrastructure, error) {
 	infra, err := ensureNetwork(ctx, aws, cfg)
 	if err != nil {
 		return infra, fmt.Errorf("ensure network: %w", err)
@@ -92,7 +89,7 @@ func isCode(err error, codes ...string) bool {
 	return false
 }
 
-func ensureNetwork(ctx context.Context, aws AWSClient, cfg Config) (Infrastructure, error) {
+func ensureNetwork(ctx context.Context, aws AWSClient, cfg bootstrapConfig) (Infrastructure, error) {
 	infra := Infrastructure{}
 	var az struct {
 		AvailabilityZones []struct{ ZoneName, State, ZoneType string }
@@ -203,7 +200,7 @@ func ensureNetwork(ctx context.Context, aws AWSClient, cfg Config) (Infrastructu
 	return infra, nil
 }
 
-func ensureSubnet(ctx context.Context, aws AWSClient, cfg Config, vpc, cidr, zone, kind string, public bool) (string, error) {
+func ensureSubnet(ctx context.Context, aws AWSClient, cfg bootstrapConfig, vpc, cidr, zone, kind string, public bool) (string, error) {
 	type subnet struct {
 		SubnetID                           string `json:"SubnetId"`
 		AvailabilityZone, CidrBlock, State string
@@ -239,7 +236,7 @@ func ensureSubnet(ctx context.Context, aws AWSClient, cfg Config, vpc, cidr, zon
 	return id, nil
 }
 
-func ensureGateway(ctx context.Context, aws AWSClient, cfg Config, vpc string) (string, error) {
+func ensureGateway(ctx context.Context, aws AWSClient, cfg bootstrapConfig, vpc string) (string, error) {
 	type gateway struct {
 		InternetGatewayID string `json:"InternetGatewayId"`
 		Attachments       []struct {
@@ -279,7 +276,7 @@ func ensureGateway(ctx context.Context, aws AWSClient, cfg Config, vpc string) (
 	return g.InternetGatewayID, nil
 }
 
-func ensureRoutes(ctx context.Context, aws AWSClient, cfg Config, vpc, kind, gateway string, subnets []string) error {
+func ensureRoutes(ctx context.Context, aws AWSClient, cfg bootstrapConfig, vpc, kind, gateway string, subnets []string) error {
 	type route struct {
 		DestinationCidrBlock string
 		GatewayID            string `json:"GatewayId"`
@@ -350,7 +347,7 @@ func ensureRoutes(ctx context.Context, aws AWSClient, cfg Config, vpc, kind, gat
 	return nil
 }
 
-func ensureSecurityGroups(ctx context.Context, aws AWSClient, cfg Config, infra Infrastructure) (Infrastructure, error) {
+func ensureSecurityGroups(ctx context.Context, aws AWSClient, cfg bootstrapConfig, infra Infrastructure) (Infrastructure, error) {
 	type permission struct {
 		IpProtocol           string
 		FromPort, ToPort     int32
@@ -434,7 +431,7 @@ func ensureSecurityGroups(ctx context.Context, aws AWSClient, cfg Config, infra 
 	return infra, nil
 }
 
-func ensureRDS(ctx context.Context, aws AWSClient, cfg Config, infra Infrastructure) (Infrastructure, error) {
+func ensureRDS(ctx context.Context, aws AWSClient, cfg bootstrapConfig, infra Infrastructure) (Infrastructure, error) {
 	name := cfg.Name + "-db-subnets"
 	// AWS uses VpcId and DBSubnetGroupName as distinct JSON members.
 	var groups struct {
@@ -549,7 +546,7 @@ func sameStrings(a, b []string) bool {
 	return strings.Join(aa, "\x00") == strings.Join(bb, "\x00")
 }
 
-func ensureSecrets(ctx context.Context, aws AWSClient, cfg Config, infra Infrastructure) (Infrastructure, error) {
+func ensureSecrets(ctx context.Context, aws AWSClient, cfg bootstrapConfig, infra Infrastructure) (Infrastructure, error) {
 	secretName := cfg.Name + "/runtime"
 	var desc struct {
 		ARN         string
@@ -608,7 +605,7 @@ func ensureSecrets(ctx context.Context, aws AWSClient, cfg Config, infra Infrast
 	return infra, nil
 }
 
-func ensureIAM(ctx context.Context, aws AWSClient, cfg Config, infra Infrastructure) (Infrastructure, error) {
+func ensureIAM(ctx context.Context, aws AWSClient, cfg bootstrapConfig, infra Infrastructure) (Infrastructure, error) {
 	for _, kind := range []string{"spire", "platform"} {
 		name := cfg.Name + "-" + kind
 		trust := map[string]any{"Version": "2012-10-17", "Statement": []any{map[string]any{"Effect": "Allow", "Principal": map[string]string{"Service": "ec2.amazonaws.com"}, "Action": "sts:AssumeRole"}}}

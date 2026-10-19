@@ -2,6 +2,10 @@
 
 ## Decision
 
+These endpoint, image, and bundle-delivery details define the AWS provider
+implementation under `internal/provider/awscompute`. The shared bootstrap
+contract exposes a private identity endpoint and provider output; see ADR-009.
+
 Prepare an internal Network Load Balancer before creating the deployment AMI.
 Bake its DNS hostname into the existing Packer SPIRE-agent configuration.
 Use TCP passthrough on 8081, private subnets and separate NLB/backend security

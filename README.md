@@ -165,7 +165,7 @@ and the first Kubernetes zone with Cilium, Crane API and Dominator:
 
 ```bash
 go run ./cmd/crane-bootstrap -bootstrap-config bootstrap.example.json -dry-run -json
-go run ./cmd/crane-bootstrap -bootstrap-config bootstrap.example.json -aws-profile crane-bootstrap
+AWS_PROFILE=crane-bootstrap go run ./cmd/crane-bootstrap -bootstrap-config bootstrap.example.json
 ```
 
 See [AWS bootstrap and IAM permissions](docs/aws-bootstrap.md) for prerequisites,
@@ -173,6 +173,12 @@ the IAM policy template, retry behavior, and AWS end-to-end validation. AWS CLI
 v2 and golden AMIs built with Packer are required. Prepare the private SPIRE
 load-balancer endpoint with `-prepare-images` before building deployment AMIs.
 Bootstrap uses released service images and local deployment state; it uses no S3 bucket.
+
+Bootstrap uses version 3 config with an explicit `provider` and separate
+`provider_config`. AWS is the only registered implementation. Shared workflow
+code uses provider capabilities; AWS resource operations, templates, and SSM
+transport live in `internal/provider/awscompute`. See
+[provider boundaries](docs/providers.md) for the contract and extension points.
 
 The command initializes the repeatable first-go schema before seeding topology
 and is safe to rerun against the dedicated Crane database. It does not create a
