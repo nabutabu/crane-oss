@@ -17,13 +17,17 @@ type HostCatalogService struct {
 }
 
 var ErrManagedCapacity = errors.New("capacity-managed host requires a fenced durable operation")
+var ErrProtectedHost = errors.New("protected host cannot be changed by automatic lifecycle operations")
 
 // EnsureLegacyLifecycle keeps the legacy action queue from becoming a second
 // lifecycle authority for hosts admitted through the capacity transaction.
 func (service *HostCatalogService) EnsureLegacyLifecycle(ctx context.Context, id string) error {
-	var managed bool
-	if err := service.store.DB.QueryRowContext(ctx, `SELECT node_group_id IS NOT NULL FROM host WHERE id=$1`, id).Scan(&managed); err != nil {
+	var managed, protected bool
+	if err := service.store.DB.QueryRowContext(ctx, `SELECT node_group_id IS NOT NULL, protected FROM host WHERE id=$1`, id).Scan(&managed, &protected); err != nil {
 		return err
+	}
+	if protected {
+		return ErrProtectedHost
 	}
 	if managed {
 		return ErrManagedCapacity

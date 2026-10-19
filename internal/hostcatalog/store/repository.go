@@ -42,7 +42,7 @@ func (store *PostgresHostStore) Delete(ctx context.Context, id string) error {
 
 func (store *PostgresHostStore) GetByID(ctx context.Context, id string) (*api.Host, error) {
 	query := `
-		SELECT id, role, zone, imageid, state, health, createdat, provider, providerID, lastseenheartbeat
+		SELECT id, role, zone, imageid, state, health, createdat, provider, providerID, lastseenheartbeat, protected, subd_endpoint
 		FROM host
 		WHERE id = $1
 	`
@@ -66,6 +66,7 @@ func (store *PostgresHostStore) GetByID(ctx context.Context, id string) (*api.Ho
 		&provider,
 		&providerID,
 		&lastSeenHeartbeat,
+		&h.Protected, &h.SubdEndpoint,
 	)
 	if err != nil {
 		return nil, err
@@ -93,7 +94,7 @@ func (store *PostgresHostStore) GetByID(ctx context.Context, id string) (*api.Ho
 
 func (store *PostgresHostStore) GetByProviderID(ctx context.Context, id string) (*api.Host, error) {
 	query := `
-		SELECT id, role, zone, imageid, state, health, createdat, provider, providerID, lastseenheartbeat
+		SELECT id, role, zone, imageid, state, health, createdat, provider, providerID, lastseenheartbeat, protected, subd_endpoint
 		FROM host
 		WHERE providerID = $1
 	`
@@ -117,6 +118,7 @@ func (store *PostgresHostStore) GetByProviderID(ctx context.Context, id string) 
 		&provider,
 		&providerID,
 		&lastSeenHeartbeat,
+		&h.Protected, &h.SubdEndpoint,
 	)
 	if err != nil {
 		return nil, err
@@ -169,7 +171,7 @@ func (store *PostgresHostStore) UpdateHealth(ctx context.Context, id string, new
 func (store *PostgresHostStore) GetByZone(ctx context.Context, zone string) ([]*api.Host, error) {
 	slog.Debug("listing hosts by zone", "zone", zone)
 
-	query := `SELECT id, role, zone, imageid, state, health, createdat, provider, providerid, lastSeenHeartbeat FROM host`
+	query := `SELECT id, role, zone, imageid, state, health, createdat, provider, providerid, lastSeenHeartbeat, protected, subd_endpoint FROM host`
 	rows, err := store.DB.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
@@ -195,6 +197,7 @@ func (store *PostgresHostStore) GetByZone(ctx context.Context, zone string) ([]*
 			&provider,
 			&providerID,
 			&lastSeenHeartbeat,
+			&host.Protected, &host.SubdEndpoint,
 		)
 		if err != nil {
 			return nil, err
@@ -222,7 +225,7 @@ func (store *PostgresHostStore) GetByZone(ctx context.Context, zone string) ([]*
 func (store *PostgresHostStore) ListHosts(ctx context.Context) ([]*api.Host, error) {
 	slog.Debug("listing hosts")
 
-	query := `SELECT id, role, zone, imageid, state, health, createdat, provider, providerid, lastseenheartbeat FROM host`
+	query := `SELECT id, role, zone, imageid, state, health, createdat, provider, providerid, lastseenheartbeat, protected, subd_endpoint FROM host`
 	rows, err := store.DB.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
@@ -248,6 +251,7 @@ func (store *PostgresHostStore) ListHosts(ctx context.Context) ([]*api.Host, err
 			&provider,
 			&providerID,
 			&lastSeenHeartbeat,
+			&host.Protected, &host.SubdEndpoint,
 		)
 		if err != nil {
 			return nil, err
@@ -310,7 +314,7 @@ func (store *PostgresHostStore) UpdateDBConnectionInfo(
 
 func (store *PostgresHostStore) GetByToken(ctx context.Context, token string) (*api.Host, error) {
 	slog.Debug("getting host by token")
-	query := "SELECT id, role, zone, imageid, state, health, createdat, provider, providerid, lastseenheartbeat FROM host WHERE token = $1"
+	query := "SELECT id, role, zone, imageid, state, health, createdat, provider, providerid, lastseenheartbeat, protected, subd_endpoint FROM host WHERE token = $1"
 
 	row := store.DB.QueryRowContext(ctx, query, token)
 
@@ -331,6 +335,7 @@ func (store *PostgresHostStore) GetByToken(ctx context.Context, token string) (*
 		&provider,
 		&providerID,
 		&lastSeenHeartbeat,
+		&h.Protected, &h.SubdEndpoint,
 	)
 	if err != nil {
 		return nil, err

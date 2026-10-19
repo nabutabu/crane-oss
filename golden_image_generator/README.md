@@ -49,5 +49,8 @@ and region are baked into the agent service. On boot, its pre-start helper uses
 the instance role to fetch the current public CA bundle before starting the
 agent; image creation never starts or enrolls it. Fleet instance roles require
 `ssm:GetParameter` on the exact bundle parameter ARN. Worker deployment must
-also supply subd's `/usr/local/bin/appsettings.json` and registration entries;
-the generic image does not invent host IDs or tokens.
+also supply Subd's mode-0600 `/usr/local/bin/appsettings.json` and host-specific
+registration entries. The image includes the systemd workload attestor and
+Subd's root-owned private mTLS service. Bootstrap configures both host listeners
+and validates them; it never downloads replacement agent binaries at runtime.
+Use a release and AMI containing [the private endpoint protocol](../docs/subd.md).

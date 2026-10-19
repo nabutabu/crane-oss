@@ -150,6 +150,7 @@
         "elasticloadbalancing:DescribeTags",
         "elasticloadbalancing:AddTags",
         "elasticloadbalancing:ModifyLoadBalancerAttributes",
+        "elasticloadbalancing:ModifyTargetGroupAttributes",
         "elasticloadbalancing:DescribeTargetHealth",
         "elasticloadbalancing:RegisterTargets"
       ],

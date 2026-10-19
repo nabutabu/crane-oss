@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# Deployment data only; software and units come from the golden image.
+set -euo pipefail
+export PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+umask 077
+test -x /usr/local/bin/subd
+grep -Fx '    server_address = "[[ .SpireAddress ]]"' /etc/spire/agent.conf >/dev/null
+grep -Fx '    trust_domain = "[[ .TrustDomain ]]"' /etc/spire/agent.conf >/dev/null
+grep -q 'WorkloadAttestor "systemd"' /etc/spire/agent.conf
+systemctl enable spire-agent.service >/dev/null
+systemctl restart spire-agent.service
+ready=0
+for _ in $(seq 1 60); do
+  if spire-agent healthcheck -socketPath /run/spire/sockets/agent.sock >/dev/null 2>&1; then ready=1; break; fi
+  sleep 5
+done
+test "$ready" = 1
+config="$(mktemp /usr/local/bin/.subd-config-XXXXXX)"
+trap 'rm -f "$config"' EXIT
+cat > "$config" <<'JSON'
+{"ListenAddress":"[[ .Host.PrivateIP ]]:44001","TrustDomain":"[[ .TrustDomain ]]","WriterIdentity":"spiffe://[[ .TrustDomain ]]/dominator","ReaderIdentities":["spiffe://[[ .TrustDomain ]]/subd"]}
+JSON
+chmod 600 "$config"
+chown root:root "$config"
+mv -f "$config" /usr/local/bin/appsettings.json
+systemctl enable subd.service >/dev/null
+systemctl restart subd.service
+ready=0
+for _ in $(seq 1 60); do
+  if systemctl is-active --quiet subd.service && test -f /run/crane/subd/status.json; then
+    pid="$(systemctl show subd.service -p MainPID --value)"
+    invocation="$(systemctl show subd.service -p InvocationID --value)"
+    if jq -e --arg id 'spiffe://[[ .TrustDomain ]]/subd/[[ .Host.ID ]]' --arg pid "$pid" --arg invocation "$invocation" \
+      '.ready and .identity == $id and (.pid|tostring) == $pid and .invocation_id == $invocation' /run/crane/subd/status.json >/dev/null; then ready=1; break; fi
+  fi
+  sleep 5
+done
+test "$ready" = 1
+systemctl is-enabled --quiet subd.service
+systemctl is-active --quiet spire-agent.service
+echo 'Subd listener and host workload identity validated'

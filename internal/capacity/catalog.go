@@ -215,7 +215,7 @@ func (s *Store) Host(ctx context.Context, id string) (api.Host, error) {
 	var created, heartbeat sql.NullTime
 	err := s.DB.QueryRowContext(
 		ctx,
-		`SELECT COALESCE(provider,''),COALESCE(providerid,''),COALESCE(crane_zone,zone,''),state,COALESCE(health,'unknown'),createdat,lastseenheartbeat,COALESCE(node_group_id,''),COALESCE(node_pool_id,''),COALESCE(operation_id,''),desired_state_version,observed_state_version,allocatable_vcpu,allocatable_memory_mib,reserved_vcpu,reserved_memory_mib,excess_capacity FROM host WHERE id=$1`,
+		`SELECT COALESCE(provider,''),COALESCE(providerid,''),COALESCE(crane_zone,zone,''),state,COALESCE(health,'unknown'),createdat,lastseenheartbeat,COALESCE(node_group_id,''),COALESCE(node_pool_id,''),COALESCE(operation_id,''),desired_state_version,observed_state_version,allocatable_vcpu,allocatable_memory_mib,reserved_vcpu,reserved_memory_mib,excess_capacity,protected,subd_endpoint FROM host WHERE id=$1`,
 		id,
 	).Scan(
 		&h.Provider, &h.ProviderID, &h.Zone, &h.State, &h.Health,
@@ -225,6 +225,7 @@ func (s *Store) Host(ctx context.Context, id string) (api.Host, error) {
 		&h.Allocatable.VCPU, &h.Allocatable.MemoryMiB,
 		&h.Reserved.VCPU, &h.Reserved.MemoryMiB,
 		&h.ExcessCapacity,
+		&h.Protected, &h.SubdEndpoint,
 	)
 	h.CreatedAt = created.Time
 	h.LastSeenHeartbeat = heartbeat.Time

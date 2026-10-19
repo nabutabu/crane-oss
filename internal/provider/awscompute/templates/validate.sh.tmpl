@@ -36,6 +36,18 @@ setpriv --reuid=10003 --regid=10003 --clear-groups env \
   SPIFFE_TRUST_DOMAIN="$TRUST_DOMAIN" \
   "$CRANE_DIR/bin/crane-bootstrap-probe"
 
+# ---- Both Subd listeners: exact host identities, update and read roles -----
+[[ range .Hosts ]]
+setpriv --reuid=10002 --regid=10002 --clear-groups env \
+  SPIFFE_ENDPOINT_SOCKET=unix:///run/spire/sockets/agent.sock SPIFFE_TRUST_DOMAIN="$TRUST_DOMAIN" \
+  "$CRANE_DIR/bin/crane-bootstrap-probe" -subd-url 'https://[[ .PrivateIP ]]:44001' \
+  -subd-id 'spiffe://[[ $.TrustDomain ]]/subd/[[ .ID ]]' -write
+setpriv --reuid=10003 --regid=10003 --clear-groups env \
+  SPIFFE_ENDPOINT_SOCKET=unix:///run/spire/sockets/agent.sock SPIFFE_TRUST_DOMAIN="$TRUST_DOMAIN" \
+  "$CRANE_DIR/bin/crane-bootstrap-probe" -subd-url 'https://[[ .PrivateIP ]]:44001' \
+  -subd-id 'spiffe://[[ $.TrustDomain ]]/subd/[[ .ID ]]'
+[[ end ]]
+
 # ---- Mark the validated zone and cluster ready (single transaction) --------
 step "marking the validated zone and cluster ready"
 readonly FIRST_ZONE="/etc/crane/first-zone.rendered.json"
@@ -54,13 +66,22 @@ SELECT id FROM clusters WHERE id = :'cluster' AND zone_id = :'zone' FOR UPDATE;
 SELECT (SELECT count(*) FROM zones WHERE id = :'zone') = 1
    AND (SELECT count(*) FROM clusters WHERE id = :'cluster' AND zone_id = :'zone') = 1 AS topology_valid \gset
 \if :topology_valid
+[[ range .Hosts ]]
+SELECT id FROM host WHERE id='[[ $.Config.Name ]]/bootstrap/[[ .Role ]]' FOR UPDATE;
+SELECT count(*)=1 AND bool_and(provider='aws' AND providerid='[[ .ID ]]' AND protected AND zone=:'zone' AND node_group_id IS NULL AND subd_endpoint='https://[[ .PrivateIP ]]:44001') AS host_valid
+  FROM host WHERE id='[[ $.Config.Name ]]/bootstrap/[[ .Role ]]' \gset
+\if :host_valid
+UPDATE host SET state='READY' WHERE id='[[ $.Config.Name ]]/bootstrap/[[ .Role ]]' AND provider='aws' AND providerid='[[ .ID ]]' AND protected AND node_group_id IS NULL;
+\else
+DO $$ BEGIN RAISE EXCEPTION 'bootstrap host inventory changed during validation'; END $$;
+\endif
+[[ end ]]
 UPDATE zones SET lifecycle_state = 'ready' WHERE id = :'zone';
 UPDATE clusters SET lifecycle_state = 'ready' WHERE id = :'cluster';
 COMMIT;
 \else
 ROLLBACK;
-\echo 'bootstrap topology is missing or mismatched'
-\quit 1
+DO $$ BEGIN RAISE EXCEPTION 'bootstrap topology is missing or mismatched'; END $$;
 \endif
 SQL
 unset PGPASSWORD

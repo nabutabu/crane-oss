@@ -2,12 +2,18 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/json"
+	"flag"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"time"
+
+	"github.com/nabutabu/crane-oss/pkg/api"
 
 	"github.com/spiffe/go-spiffe/v2/spiffeid"
 	"github.com/spiffe/go-spiffe/v2/spiffetls/tlsconfig"
@@ -21,6 +27,10 @@ func main() {
 	}
 }
 func run() error {
+	endpoint := flag.String("subd-url", "", "private Subd endpoint; empty checks Dominator")
+	identity := flag.String("subd-id", "", "expected Subd SPIFFE identity")
+	write := flag.Bool("write", false, "validate empty revision 1 as Dominator")
+	flag.Parse()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	source, err := workloadapi.NewX509Source(ctx)
@@ -40,8 +50,20 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	if own.ID.String() != "spiffe://"+domain+"/subd" {
+	ownID := "spiffe://" + domain + "/subd"
+	if *endpoint != "" && *write {
+		ownID = "spiffe://" + domain + "/dominator"
+	}
+	if own.ID.String() != ownID {
 		return fmt.Errorf("unexpected probe SPIFFE identity")
+	}
+	if *endpoint != "" {
+		serverID, err := spiffeid.FromString(*identity)
+		if err != nil || serverID.TrustDomain().String() != domain {
+			return fmt.Errorf("invalid expected Subd identity")
+		}
+		client := &http.Client{Transport: &http.Transport{TLSClientConfig: tlsconfig.MTLSClientConfig(source, source, tlsconfig.AuthorizeID(serverID))}, Timeout: 10 * time.Second}
+		return probeSubd(ctx, client, *endpoint, *identity, *write)
 	}
 	var conf *tls.Config = tlsconfig.MTLSClientConfig(source, source, tlsconfig.AuthorizeID(expected))
 	client := &http.Client{Transport: &http.Transport{TLSClientConfig: conf}, Timeout: 10 * time.Second}
@@ -60,5 +82,56 @@ func run() error {
 		}
 	}
 	fmt.Println("SPIRE workload attestation and Dominator mTLS/database health validated")
+	return nil
+}
+
+func probeSubd(ctx context.Context, client *http.Client, endpoint, identity string, write bool) error {
+	request := func(method, path string, body []byte, want int, out any) error {
+		req, err := http.NewRequestWithContext(ctx, method, endpoint+path, bytes.NewReader(body))
+		if err != nil {
+			return fmt.Errorf("invalid probe request")
+		}
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := client.Do(req)
+		if err != nil {
+			return fmt.Errorf("Subd authenticated request failed")
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != want {
+			return fmt.Errorf("Subd returned unexpected status %d", resp.StatusCode)
+		}
+		if out != nil && json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(out) != nil {
+			return fmt.Errorf("invalid Subd response")
+		}
+		return nil
+	}
+	var health api.HostAgentStatus
+	if err := request(http.MethodGet, "/v1/health", nil, http.StatusOK, &health); err != nil {
+		return err
+	}
+	if !health.Ready || health.Identity != identity {
+		return fmt.Errorf("Subd readiness or identity mismatch")
+	}
+	if write {
+		for i := 0; i < 2; i++ {
+			var result api.HostAgentStatus
+			if err := request(http.MethodPut, "/v1/expected-state", []byte(`{"revision":1}`), http.StatusOK, &result); err != nil {
+				return err
+			}
+			if result.Identity != identity || result.AcceptedRevision != 1 || result.AppliedRevision != 1 || result.Outcome != "applied" {
+				return fmt.Errorf("Subd did not apply bootstrap revision")
+			}
+		}
+	} else if err := request(http.MethodPut, "/v1/expected-state", []byte(`{"revision":1}`), http.StatusForbidden, nil); err != nil {
+		return err
+	}
+	var state api.HostAgentState
+	if err := request(http.MethodGet, "/v1/state", nil, http.StatusOK, &state); err != nil {
+		return err
+	}
+	if state.Identity != identity || !state.Ready || state.AppliedRevision != 1 || state.Outcome != "applied" {
+		return fmt.Errorf("Subd current state does not confirm bootstrap update")
+	}
+	fmt.Println("Subd authenticated state and update authorization validated")
 	return nil
 }

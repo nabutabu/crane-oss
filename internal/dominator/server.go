@@ -4,17 +4,14 @@ import (
 	"context"
 	"crypto/tls"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/nabutabu/crane-oss/internal/config"
 	"github.com/nabutabu/crane-oss/internal/hostcatalog/service"
-	"github.com/nabutabu/crane-oss/pkg/api"
 	"github.com/spiffe/go-spiffe/v2/spiffeid"
 	"github.com/spiffe/go-spiffe/v2/spiffetls/tlsconfig"
 	"github.com/spiffe/go-spiffe/v2/workloadapi"
@@ -49,7 +46,6 @@ func (s *Server) Start(source *workloadapi.X509Source) error {
 func (s *Server) StartContext(ctx context.Context, source *workloadapi.X509Source) error {
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("/v1/heartbeat", s.handleState)
 	mux.HandleFunc("/v1/health", s.Health)
 	mux.HandleFunc("/v1/db/health", s.dbHealth)
 
@@ -116,63 +112,4 @@ func (s *Server) Health(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusOK)
 	fmt.Fprintf(w, "Dominator listening on %s\n", s.addr)
-}
-
-func (s *Server) recordState(ctx context.Context, host *api.Host) error {
-	if err := s.catalog.TransitionHealth(ctx, host.ID, string(api.HostHealthHealthy)); err != nil {
-		return err
-	}
-	return s.catalog.UpdateLastSeenHeartbeat(ctx, host.ID, time.Now())
-}
-
-func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
-	if r.TLS == nil || len(r.TLS.PeerCertificates) == 0 {
-		http.Error(w, "no client cert", http.StatusUnauthorized)
-		return
-	}
-
-	cert := r.TLS.PeerCertificates[0]
-	if len(cert.URIs) == 0 {
-		http.Error(w, "missing SPIFFE ID", http.StatusUnauthorized)
-		return
-	}
-
-	// SPIFFE ID is in URI SAN, e.g. spiffe://crane.internal/subd/i-0abc123def456
-	spiffeID := cert.URIs[0].String()
-	parts := strings.Split(spiffeID, "/")
-	hostID := parts[len(parts)-1]
-
-	s.logger.Info("state requested", "path", r.URL.Path, "spiffe_id", spiffeID, "host_id", hostID)
-
-	if hostID == "" {
-		http.Error(w, "missing token", http.StatusBadRequest)
-		return
-	}
-
-	// get host based on token
-	host, err := s.catalog.GetByProviderID(r.Context(), hostID)
-	if err != nil {
-		s.logger.Error("failed to look up host", "host_id", hostID, "error", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-
-	if err := s.recordState(r.Context(), host); err != nil {
-		s.logger.Error("failed to record state", "host_id", hostID, "error", err)
-		http.Error(w, "failed to record state", http.StatusInternalServerError)
-		return
-	}
-
-	desired, err := s.resolver.Resolve(host)
-	if err != nil {
-		s.logger.Error("failed to resolve desired state", "host_id", hostID, "error", err)
-		http.Error(w, "Error in /handleState/Resolve", http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-
-	if err := json.NewEncoder(w).Encode(desired); err != nil {
-		s.logger.Error("failed to encode response", "host_id", hostID, "error", err)
-	}
 }

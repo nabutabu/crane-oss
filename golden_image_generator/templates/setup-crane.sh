@@ -29,4 +29,5 @@ sudo install -m 0644 /tmp/subd.service /etc/systemd/system/subd.service
 sudo systemctl daemon-reload
 sudo systemctl enable spire-agent subd
 # appsettings.json is supplied on deployment; a generic AMI has no host ID,
-# token, SPIRE key, bundle, SVID, or initialized Kubernetes/Kind cluster.
+# SPIRE key, bundle, SVID, or initialized Kubernetes/Kind cluster. Subd accepts
+# private mTLS requests; deployment config contains no host token.

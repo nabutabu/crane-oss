@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
-	"encoding/json"
+	"flag"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/nabutabu/crane-oss/internal/logging"
@@ -12,53 +14,39 @@ import (
 	"github.com/spiffe/go-spiffe/v2/workloadapi"
 )
 
-const (
-	APP_SETTINGS_FILE = "appsettings.json"
-)
-
-type Configuration struct {
-	DominatorURL string
-	HostID       string
-	Token        string
-}
-
-func LoadConfig(logger *logging.Logger) Configuration {
-	file, err := os.Open(APP_SETTINGS_FILE)
-	if err != nil {
-		logger.Error("Error opening config file", "error", err)
-		os.Exit(1)
-	}
-	defer file.Close()
-
-	decoder := json.NewDecoder(file)
-	configuration := Configuration{}
-	err = decoder.Decode(&configuration)
-	if err != nil {
-		logger.Error("Error decoding config file", "error", err)
-		os.Exit(1)
-	}
-
-	return configuration
-}
-
 func main() {
 	logger := logging.New("subd")
+	logger.SetDefault()
+	path := flag.String("config", "/usr/local/bin/appsettings.json", "deployment configuration")
+	flag.Parse()
 	logger.Info("subd", "version", version.String())
-	config := LoadConfig(logger)
-	ctx := context.Background()
-
-	source, err := workloadapi.NewX509Source(ctx)
-	if err != nil {
-		logger.Error("failed to create X509Source", "error", err)
+	if err := run(*path); err != nil {
+		logger.Error("Subd stopped", "error", err)
 		os.Exit(1)
 	}
+}
+
+func run(path string) error {
+	cfg, err := subd.LoadConfig(path)
+	if err != nil {
+		return err
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	initial, cancel := context.WithTimeout(ctx, 30*time.Second)
+	source, err := workloadapi.NewX509Source(initial)
+	cancel()
+	if err != nil {
+		return err
+	}
 	defer source.Close()
-
-	runner := subd.NewRunner(
-		subd.NewClient(config.DominatorURL, config.HostID, config.Token, source),
-		subd.NewServicesCollector(),
-		subd.NewPackagesCollecetor(),
-		time.Second*10)
-
-	runner.Run()
+	own, err := source.GetX509SVID()
+	if err != nil {
+		return err
+	}
+	s, err := subd.NewServer(cfg, own.ID.String(), "/var/lib/crane/subd/state.json", "/run/crane/subd/status.json", subd.LocalHost{})
+	if err != nil {
+		return err
+	}
+	return s.Serve(ctx, source)
 }

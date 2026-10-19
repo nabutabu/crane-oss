@@ -61,6 +61,10 @@ func testInfra() Infrastructure {
 	}
 }
 
+func testAgentHosts() []bootstrapAgentHost {
+	return []bootstrapAgentHost{{ID: "i-11111111111111111", PrivateIP: "10.80.0.11", Role: "spire", AMI: "ami-11111111"}, {ID: "i-0abcdef1234567890", PrivateIP: "10.80.0.12", Role: "platform", AMI: "ami-22222222"}}
+}
+
 func renderAll(t *testing.T) map[string]string {
 	t.Helper()
 	cfg, infra := testConfig(), testInfra()
@@ -68,7 +72,7 @@ func renderAll(t *testing.T) map[string]string {
 	if err != nil {
 		t.Fatalf("RenderSpireScript: %v", err)
 	}
-	identity, err := RenderIdentityScript(cfg, infra, "i-0abcdef1234567890")
+	identity, err := RenderIdentityScript(cfg, infra, "i-0abcdef1234567890", "i-11111111111111111")
 	if err != nil {
 		t.Fatalf("RenderIdentityScript: %v", err)
 	}
@@ -76,15 +80,25 @@ func renderAll(t *testing.T) map[string]string {
 	if err != nil {
 		t.Fatalf("RenderPlatformScript: %v", err)
 	}
-	validate, err := RenderValidateScript(cfg, infra)
+	validate, err := RenderValidateScript(cfg, infra, testAgentHosts())
 	if err != nil {
 		t.Fatalf("RenderValidateScript: %v", err)
 	}
+	subdScript, err := RenderSubdScript(cfg, infra, testAgentHosts()[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed, err := RenderSeedHostsScript(cfg, infra, testAgentHosts())
+	if err != nil {
+		t.Fatal(err)
+	}
 	return map[string]string{
-		"spire":    spire,
-		"identity": identity,
-		"platform": platform,
-		"validate": validate,
+		"subd":       subdScript,
+		"seed-hosts": seed,
+		"spire":      spire,
+		"identity":   identity,
+		"platform":   platform,
+		"validate":   validate,
 	}
 }
 
@@ -140,7 +154,7 @@ func TestRenderSpireScript(t *testing.T) {
 }
 
 func TestRenderIdentityScript(t *testing.T) {
-	script, err := RenderIdentityScript(testConfig(), testInfra(), "i-0abcdef1234567890")
+	script, err := RenderIdentityScript(testConfig(), testInfra(), "i-0abcdef1234567890", "i-11111111111111111")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,7 +169,10 @@ func TestRenderIdentityScript(t *testing.T) {
 		`ensure_entry "spiffe://crane.internal/subd" 10003`,
 		`entry show`,
 		`entry create`,
-		`-parentID "$PARENT_ID"`,
+		`-parentID "$parent"`,
+		`systemd:id:subd.service`,
+		`spiffe://crane.internal/subd/i-11111111111111111`,
+		`spiffe://crane.internal/subd/i-0abcdef1234567890`,
 		`-matchSelectorsOn exact`,
 	}
 	for _, marker := range want {
@@ -202,7 +219,7 @@ func TestRenderPlatformScript(t *testing.T) {
 }
 
 func TestRenderValidateScript(t *testing.T) {
-	script, err := RenderValidateScript(testConfig(), testInfra())
+	script, err := RenderValidateScript(testConfig(), testInfra(), testAgentHosts())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,13 +248,13 @@ func TestRenderScriptRequiredInputs(t *testing.T) {
 	if _, err := RenderSpireScript(cfg, Infrastructure{}); err == nil {
 		t.Error("spire script must reject missing infrastructure")
 	}
-	if _, err := RenderIdentityScript(cfg, infra, "  "); err == nil {
+	if _, err := RenderIdentityScript(cfg, infra, "  ", "i-11111111111111111"); err == nil {
 		t.Error("identity script must reject empty instance ID")
 	}
 	if _, err := RenderPlatformScript(cfg, infra, ""); err == nil {
 		t.Error("platform script must reject empty spire IP")
 	}
-	if _, err := RenderValidateScript(cfg, Infrastructure{}); err == nil {
+	if _, err := RenderValidateScript(cfg, Infrastructure{}, testAgentHosts()); err == nil {
 		t.Error("validate script must reject missing infrastructure")
 	}
 	noDomain := cfg
@@ -267,12 +284,13 @@ func TestRenderedScriptsAreValidBash(t *testing.T) {
 func TestValidationDoesNotOpenAdmissionOnHealthFailure(t *testing.T) {
 	for _, failure := range []string{"cluster", "identity"} {
 		t.Run(failure, func(t *testing.T) {
-			script, err := RenderValidateScript(testConfig(), testInfra())
+			script, err := RenderValidateScript(testConfig(), testInfra(), testAgentHosts())
 			if err != nil {
 				t.Fatal(err)
 			}
 			dir := t.TempDir()
 			script = strings.ReplaceAll(script, "/opt/crane", dir)
+			script = strings.ReplaceAll(script, "/var/lib/crane", dir)
 			file := filepath.Join(dir, "validate.sh")
 			if err = os.WriteFile(file, []byte(script), 0600); err != nil {
 				t.Fatal(err)

@@ -182,7 +182,7 @@ func TestInfrastructureFirstRunAndRetry(t *testing.T) {
 			return map[string]any{"LoadBalancers": []any{l}}, nil
 		case "elbv2:describe-tags":
 			return map[string]any{"TagDescriptions": []any{map[string]any{"Tags": tags}}}, nil
-		case "elbv2:modify-load-balancer-attributes":
+		case "elbv2:modify-load-balancer-attributes", "elbv2:modify-target-group-attributes":
 			return nil, nil
 		case "elbv2:describe-target-groups":
 			if g, ok := inventory["tg"]; ok {

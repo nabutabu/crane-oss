@@ -50,6 +50,8 @@ CREATE TABLE IF NOT EXISTS host (
  health varchar, createdat timestamptz, updatedat timestamptz, provider varchar, providerid varchar,
  lastseenheartbeat timestamptz, endpoint varchar, port int4, dbname varchar, username varchar,
  secretarn varchar, rdssgid varchar,
+ protected boolean NOT NULL DEFAULT false,
+ subd_endpoint text NOT NULL DEFAULT '',
  node_group_id text, node_pool_id text, crane_zone text REFERENCES zones(id), operation_id text,
  desired_state_version text NOT NULL DEFAULT '', observed_state_version text NOT NULL DEFAULT '',
  allocatable_vcpu bigint NOT NULL DEFAULT 0 CHECK(allocatable_vcpu >= 0),

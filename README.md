@@ -17,7 +17,7 @@ The system consists of several key components:
 - **Action Executor**: Executes remediation actions (drain, replace, create hosts)
 - **Host Catalog**: Maintains a centralized registry of all hosts
 - **Problem Store**: Persists detected problems for trend analysis and decision making
-- **Dominator**: Receives heartbeats from hosts and returns desired state
+- **Dominator**: Owns zone expected-state policy; Subd accepts private authenticated updates and returns state on request. Production rollout and BHD polling integration are follow-up work.
 - **Subd**: Agent that runs on hosts to report status and apply desired state
 
 ### Remediation Actions
@@ -91,9 +91,15 @@ The crane-api service will start on port 43060 and begin monitoring hosts in the
 
 ### dominator (Port 44000)
 
-- `POST /v1/heartbeat?hostID=<host-id>` - Receives host state and returns desired state
 - `GET /v1/health` - Health check
 - `GET /v1/db/health` - Database health check
+
+### subd (Private port 44001, SPIFFE mTLS)
+
+- `GET /v1/health`, `GET /v1/state` - authenticated health/current-state reads
+- `PUT /v1/expected-state` - Dominator-only revisioned service/package update
+
+Subd never polls Dominator or sends heartbeats. See [the protocol and configuration](docs/subd.md).
 
 ## Project Structure
 
@@ -107,7 +113,7 @@ The crane-api service will start on port 43060 and begin monitoring hosts in the
 │   ├── badhost/            # Bad host detection and problem scanning
 │   │   ├── checks/         # Check implementations (AWS, host store)
 │   │   └── problem/        # Problem storage
-│   ├── dominator/          # Receives heartbeats from hosts
+│   ├── dominator/          # Zone expected-state policy and health server
 │   ├── execute/            # Action execution and worker management
 │   ├── hostcatalog/        # Host registry and management
 │   │   ├── http/           # HTTP handlers

@@ -22,8 +22,8 @@ flowchart TB
             S1["Ensure only allowed packages<br/>and services exist on host"]
             S2["Detect deviations from expected state<br/>and revert unauthorized changes"]
             S3["Listen for Dominator requests<br/>to change expected state"]
-            S4["Perform kubelet drain when<br/>unhealthy or under maintenance"]
-            S5["Bring host back using uncordon"]
+            S4["Perform requested host-local preparation"]
+            S5["Return current state on request"]
 
             STATE["Host Expected State"]
         end
@@ -104,7 +104,7 @@ Developers use standard Kubernetes (`Deployment`, `StatefulSet`, `Job`, `Pod`, `
 - **G.** Capacity = reserved (not raw free) resources.
 - **H.** Golden images/rollouts are version-pinned (not "latest").
 - **I.** Capacity is a state progression (`requested → provisioning → booting → registering → converging → ready → draining → terminating → terminated/failed`). Registration alone is not readiness.
-- **J.** Control plane gets full observability; Subd reports outcome via heartbeat only (no streaming telemetry).
+- **J.** Control plane gets full observability. Subd returns current state only on authenticated requests; no outbound heartbeats or streaming telemetry. Bad Host Detector owns zone-scoped polling; see [ADR-011](decisions/adr-011-subd-private-endpoint.md).
 
 ## 5. Kubernetes integration
 
@@ -226,7 +226,7 @@ Repair and maintenance use explicit host identities and the same drain coordinat
 ## 12. Observability (brief)
 
 - **Control plane** (crane-api, dominator): structured logs (slog), OTLP traces/metrics, audit trail.
-- **Data plane** (subd): structured local journald logs + heartbeat outcome reporting only; no streaming telemetry, no open listener.
+- **Data plane** (subd): structured local journald logs and a private SPIFFE mTLS listener. Dominator supplies expected-state updates; Subd applies them only on request and returns state only in response to requests. Subd never polls Dominator. Production BHD polling and Dominator rollout integration remain follow-up work.
 - Redact secrets in logs; replace `log.Fatal` in library paths with returned errors; propagate `request_id`/trace context; liveness/readiness split; inject `version`/`commit`.
 
 ## 13. Testing strategy (key)
@@ -247,8 +247,9 @@ Repair and maintenance use explicit host identities and the same drain coordinat
 Phase 0 protocol exit work is implemented by `cmd/crane-autoscaler-adapter` and
 its pinned CA v1.35.0 contract tests. See `internal/adapter/autoscaler/README.md`
 for runnable configuration and verification. The prototype uses static inventory;
-provider execution, node readiness, live discovery, and the Subd transport change
-remain later-phase work. Full Kubernetes/runtime/Cilium deployment qualification
+provider execution, node readiness and live discovery remain later-phase work.
+The Subd private request-driven transport is implemented; production callers
+remain follow-up work. Full Kubernetes/runtime/Cilium deployment qualification
 is tracked separately in `docs/compatibility-matrix.md`.
 
 ### Phase 1 — Control-plane data model & structured logging foundation
@@ -297,7 +298,7 @@ is tracked separately in `docs/compatibility-matrix.md`.
 2. Credit model: capacity entitlement, cost budget, or both?
 3. Bootstrap identity: mechanism for nodes to prove identity on enrollment? (Layer zero provides SPIRE with AWS instance-identity attestation — confirm this is the enrollment path.)
 4. Force-removal policy: which confirmed-dead-host conditions and actor authorization permit bypassing normal drain completion?
-5. Subd reporting boundary: local journald + heartbeat outcome only; no streaming telemetry—confirm acceptable?
+5. Subd reporting boundary: local journald and responses to authenticated requests only; BHD owns periodic zone polling. See ADR-011.
 
 ## 16. Definition of Done
 - Layer zero (SPIRE + Postgres + `crane-api`) is bring-up-able from a developer machine; subsequent zones are created through the Crane API.
@@ -311,4 +312,4 @@ is tracked separately in `docs/compatibility-matrix.md`.
 - `DecreaseTargetSize` cancels only unfulfilled capacity; `DeleteNodes` removes named nodes. Dominator solely owns Kubernetes cordon/eviction/drain, and blocked drains do not terminate instances implicitly.
 - Structured, redaction-safe logs; liveness/readiness; basic OTLP telemetry; `gofmt`/`go vet`/`go test` pass in CI.
 - Capacity changes, drains/terminations, rollouts, quota denials, zone selections are auditable end-to-end.
-- Subd observable via local journald + heartbeat outcome; no streaming telemetry or open listeners.
+- Subd observable via local journald and authenticated private state requests; no streaming telemetry, outbound polling or heartbeat reporting.

@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -euo pipefail
+export PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+umask 077
+DB_USER="$(jq -r '.crane_username' /var/lib/crane/runtime-secret.json)"
+export PGPASSWORD="$(jq -r '.crane_password' /var/lib/crane/runtime-secret.json)"
+ZONE_ID="$(jq -r '.zone.id' /etc/crane/first-zone.rendered.json)"
+psql "host=[[ .Infra.DBEndpoint ]] port=[[ .Config.RDS.Port ]] user=$DB_USER dbname=crane sslmode=verify-full sslrootcert=/etc/crane/rds-ca.pem" \
+  -v ON_ERROR_STOP=1 -v zone="$ZONE_ID" <<'SQL'
+BEGIN;
+SELECT pg_advisory_xact_lock(724163002);
+[[ range .Hosts ]]
+INSERT INTO host(id,role,zone,imageid,state,health,createdat,provider,providerid,protected,subd_endpoint)
+SELECT '[[ $.Config.Name ]]/bootstrap/[[ .Role ]]','[[ .Role ]]',:'zone','[[ .AMI ]]','CONVERGING','unknown',clock_timestamp(),'aws','[[ .ID ]]',true,'https://[[ .PrivateIP ]]:44001'
+WHERE NOT EXISTS (SELECT 1 FROM host WHERE provider='aws' AND providerid='[[ .ID ]]')
+ON CONFLICT (id) DO NOTHING;
+SELECT count(*) = 1 AND bool_and(id='[[ $.Config.Name ]]/bootstrap/[[ .Role ]]' AND provider='aws' AND providerid='[[ .ID ]]' AND role='[[ .Role ]]' AND zone=:'zone' AND imageid='[[ .AMI ]]' AND state IN ('CONVERGING','READY') AND protected AND subd_endpoint='https://[[ .PrivateIP ]]:44001' AND node_group_id IS NULL AND node_pool_id IS NULL AND crane_zone IS NULL AND operation_id IS NULL)
+ AS host_valid FROM host WHERE (provider='aws' AND providerid='[[ .ID ]]') OR id='[[ $.Config.Name ]]/bootstrap/[[ .Role ]]' \gset
+\if :host_valid
+\else
+DO $$ BEGIN RAISE EXCEPTION 'conflicting bootstrap host catalog record'; END $$;
+\endif
+[[ end ]]
+COMMIT;
+SQL
+unset PGPASSWORD
+echo 'protected bootstrap hosts registered outside worker capacity'
