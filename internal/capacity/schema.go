@@ -51,5 +51,12 @@ func CheckSchema(ctx context.Context, db *sql.DB) error {
 	if len(missing) != 0 {
 		return fmt.Errorf("Crane schema is not initialized (missing tables: %s); run crane-bootstrap", strings.Join(missing, ", "))
 	}
+	var columns int
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='host' AND column_name IN ('protected','subd_endpoint')`).Scan(&columns); err != nil {
+		return fmt.Errorf("check host schema readiness: %w", err)
+	}
+	if columns != 2 {
+		return fmt.Errorf("Crane host schema is incompatible; initialize a fresh database with crane-bootstrap")
+	}
 	return nil
 }

@@ -59,6 +59,8 @@ type HealthRequest struct {
 }
 
 type Host struct {
+	Protected            bool
+	SubdEndpoint         string
 	NodeGroupID          string
 	NodePoolID           string
 	OperationID          string
