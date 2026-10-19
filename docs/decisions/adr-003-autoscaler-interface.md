@@ -34,3 +34,9 @@ Need to integrate with Kubernetes Cluster Autoscaler without forking scheduler/c
 - The first executable prototype may use static groups, but it must implement
   the same identity, not-found, target-refresh, and error semantics as the
   production adapter.
+- The pinned protocol explicitly represents an unmanaged node with an empty
+  group ID. Unknown group callbacks return `NotFound`; GPU discovery returns
+  empty results, while optional pricing/options remain `Unimplemented`.
+- Named-node admission is batched and atomic, with replay data in immutable
+  operation parameters. It retains credits and leaves draining/termination to
+  Dominator. The prototype uses a 30-minute drain deadline.

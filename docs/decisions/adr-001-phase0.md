@@ -14,7 +14,7 @@ matching autoscaler release is available:
 |---|---|---|
 | Kubernetes control plane and node components | 1.35.9 | Pin the exact patch and image digests in each deployment. |
 | kubeadm, kubelet, kubectl | 1.35.9 | Keep the minor version equal to the control plane; kubelet may not be newer than the API server. |
-| Cluster Autoscaler | 1.35.x; start with 1.35.0 | Use the newest published 1.35.x image whose release notes and compatibility tests pass. |
+| Cluster Autoscaler | 1.35.0 | Exact protocol source is pinned to `cluster-autoscaler-1.35.0`; later patches require a compatibility update. |
 | External provider protocol | CA 1.35 external cloud-provider gRPC contract | Generate bindings from the pinned CA source; do not invent a Crane-specific CA protocol. |
 | Container runtime | containerd 2.3.5 | Use CRI v1; keep the runtime version independently pinned and test it with Kubernetes 1.35. |
 | CNI | Cilium 1.20.3 | Pin the chart/image digests; Cilium is the only supported first-milestone CNI. |
@@ -76,22 +76,23 @@ security/maintenance updates, not automatic floating tags.
   parameters; a recovery controller never generates a replacement token.
 
 ## 4. Placement, Scale-down, Authority
-- Authority: Crane API owns global placement/policy/credits; Dominator owns zone execution; Subd owns host enforcement and drain.
+- Authority: Crane API owns global placement/policy/credits; Dominator owns zone execution and Kubernetes drain; Subd owns host-local enforcement and preparation.
 - Scale-down: autoscaler requests reduction; drain via Kubernetes with PDB respect; defer termination if drain cannot complete; credits released after instance is terminated and catalog updated.
 - Zone failure: mark zone unavailable for new provisioning on failure; do not auto-terminate healthy existing nodes on transient discovery failures. Existing instances remain running.
 
-## 5. Observability Defaults (no new deps)
+## 5. Observability Defaults
 - Logging: stdlib `log/slog`. Env: `LOG_LEVEL` (debug/info/warn/error, default info), `LOG_FORMAT` (json/text, default text local, json in containers). Always include `service`, `version`, `commit`. Redact secrets (DSN/passwords, raw bodies, connection info). Fix invalid format verbs; replace library `log.Fatal` with returned errors (main exits).
 - Metrics: expose `/metrics` (Prometheus preferred; expvar fallback). Liveness/readiness split on control-plane services.
-- Tracing: thread request_id/trace context through capacity/provisioning decisions; full tracing later.
+- Tracing: OTLP with no-op fallback as defined by ADR-006; propagate request/trace context through capacity/provisioning decisions.
 - Boundary: control-plane (crane-api, dominator) full telemetry/audit; data-plane (subd) logs locally to journald, reports outcome via heartbeat (no open listener for telemetry).
 
 ## 6. Prototype & Exit Criteria
 - Implement a minimal adapter contract test that reports at least one static,
   cluster-scoped node group with a valid zone-specific template and standard
   topology labels.
-- Verify that `NodeGroupForNode` returns the owning group and that an unknown
-  node/group is an explicit not-found error, never a nil success.
+- Verify that `NodeGroupForNode` returns the owning group. An unmanaged node
+  returns an empty group per the upstream protocol; an unknown group RPC returns
+  `NotFound`.
 - Test the adapter's Crane translation with a fake Crane endpoint: one handler
   request UUID is reused for downstream retries, while two later equal deltas
   receive different UUIDs.
@@ -102,3 +103,9 @@ security/maintenance updates, not automatic floating tags.
 - Exit: the pinned CA contract, static discovery/template behavior, request
   identity, target-refresh recovery, and CAS/error mapping are all covered by
   executable tests.
+
+The runnable prototype and verification commands are documented in
+`internal/adapter/autoscaler/README.md`. It uses the actual upstream generated
+client across gRPC, a stateful fake Crane endpoint for failure injection, and
+PostgreSQL integration tests for the real HTTP/persistence boundary. Static
+inventory and admission-only removals are deliberate Phase 0 limits.

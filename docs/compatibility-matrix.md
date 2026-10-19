@@ -10,12 +10,24 @@ Cluster Autoscaler compatibility table does not yet document a 1.37 release.
 |---|---:|---|
 | Kubernetes control plane | v1.35.9 | Exact patch and image digest are deployment inputs. |
 | kubeadm / kubelet / kubectl | v1.35.9 | Same minor as the control plane; kubelet is never newer than the API server. |
-| Cluster Autoscaler | v1.35.0 initially | Track the newest published v1.35.x only after the CA contract tests pass. |
+| Cluster Autoscaler | v1.35.0 | Protocol files are pinned to `cluster-autoscaler-1.35.0`; update them and rerun compatibility tests for later releases. |
 | CA external provider API | CA v1.35 external cloud-provider gRPC contract | Generated/tested from the pinned CA source tree. |
 | Container runtime | containerd v2.3.5 | CRI v1; test the selected release with Kubernetes v1.35. |
 | CNI | Cilium v1.20.3 | Pin chart and image digests; no alternate CNI in the first milestone. |
 
-## Compatibility gates
+## Phase 0 protocol evidence
+
+The adapter executable implements the pinned CA external gRPC service. Contract
+tests use the upstream generated client, protobuf Kubernetes node templates,
+static cluster/group inventory, and a stateful fake Crane endpoint to verify lost
+responses, equal deltas, target refresh after adapter replacement, CAS conflicts,
+named deletion, and safe error mapping. Protocol file hashes are checked in tests.
+The real Crane HTTP/persistence path has dedicated PostgreSQL integration tests.
+
+This proves protocol behavior; a stock CA scheduling loop against a real cluster
+and the runtime/CNI combination require the deployment gates below in Phase 2.
+
+## Deployment qualification gates (Phase 2)
 
 1. Kubernetes and kubeadm binaries report the selected minor and patch.
 2. Cluster Autoscaler starts against the selected Kubernetes API and passes its

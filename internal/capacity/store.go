@@ -16,6 +16,7 @@ import (
 )
 
 var (
+	ErrInvalid        = errors.New("invalid capacity request")
 	ErrConflict       = errors.New("target revision conflict")
 	ErrReplayMismatch = errors.New("request ID reused with different parameters")
 	ErrForbidden      = errors.New("node group does not belong to authenticated cluster")
@@ -45,7 +46,7 @@ func (s *Store) SetTarget(ctx context.Context, req api.CapacityRequest) (api.Cap
 	var result api.CapacityResult
 	if req.NodeGroupID == "" || req.RequestID == "" || req.ClusterID == "" ||
 		req.TemplateRevision == "" || req.DesiredTarget < 0 || req.ExpectedTargetRevision < 0 {
-		return result, errors.New("invalid capacity request")
+		return result, ErrInvalid
 	}
 
 	tx, err := s.DB.BeginTx(ctx, nil)

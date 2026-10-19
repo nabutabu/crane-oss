@@ -242,7 +242,14 @@ Repair and maintenance use explicit host identities and the same drain coordinat
 - Define the **cluster record** and `ZoneBootstrapOperation` contracts, bootstrap state machine, handoff gate, and join-token flow through the destination Kubernetes API.
 - Define handler-scoped adapter `RequestID`, revision-checked `SetTarget`, replay/recovery rules, and provider-token scope. Confirm behavior with the pinned CA release for lost responses, adapter restart, equal consecutive deltas, and CAS conflict.
 - Decide credit semantics (capacity entitlement vs cost) and bootstrap identity. Dominator is the Kubernetes drain coordinator; Subd owns host-local preparation.
-- Exit: accepted ADRs cover the above; the adapter contract test reports a cluster-scoped static group/template and explicit not-found behavior; compatibility tests prove target refresh/recovery, equal-delta, request-identity, and CAS/error semantics for the pinned CA release.
+- Exit: accepted ADRs cover the above; the adapter contract test reports a cluster-scoped static group/template, empty ownership for unmanaged nodes, and `NotFound` for unknown groups; compatibility tests prove target refresh/recovery, equal-delta, request-identity, and CAS/error semantics for the pinned CA release.
+
+Phase 0 protocol exit work is implemented by `cmd/crane-autoscaler-adapter` and
+its pinned CA v1.35.0 contract tests. See `internal/adapter/autoscaler/README.md`
+for runnable configuration and verification. The prototype uses static inventory;
+provider execution, node readiness, live discovery, and the Subd transport change
+remain later-phase work. Full Kubernetes/runtime/Cilium deployment qualification
+is tracked separately in `docs/compatibility-matrix.md`.
 
 ### Phase 1 — Control-plane data model & structured logging foundation
 - Models: `Zone`, `NodeGroup`, `NodePool`, `CapacityRequest`, `CreditReservation`. Host Catalog schema with lifecycle states, desired/observed versions, allocatable/reserved, operations.

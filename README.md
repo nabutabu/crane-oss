@@ -84,7 +84,9 @@ The crane-api service will start on port 43060 and begin monitoring hosts in the
 - `GET /v1/db/health` - Database health check
 - `POST /v1/zones`, `/v1/clusters`, `/v1/node-pools`, `/v1/node-groups` - authenticated platform topology creation (`Authorization: Bearer $CRANE_ADMIN_TOKEN`)
 - `POST /v1/first-zone` - atomically seeds the platform team's first ready topology; it leaves capacity at target revision 0
-- `POST /v1/capacity` - capacity admission; cluster identity comes from `X-Crane-Cluster-ID`
+- `POST /v1/capacity` - capacity admission; the adapter token is bound to `CRANE_ADAPTER_CLUSTER_ID`, and `X-Crane-Cluster-ID` must match
+- `GET /v1/node-groups/{id}/target` - authenticated target/revision read for adapter recovery
+- `POST /v1/node-removals` - authenticated atomic admission of explicit named-node removals; credits remain held until termination
 - `POST /v1/bootstrap` - creates a durable layer-zero bootstrap operation
 
 ### dominator (Port 44000)
@@ -145,6 +147,10 @@ The Activity Manager uses the following decision logic:
 | AWS_REGION | us-west-2 | AWS region |
 | CRANE_ADMIN_TOKEN | - | Required bearer token for topology/bootstrap mutations |
 | CRANE_ADAPTER_TOKEN | - | Required bearer token for capacity admission |
+| CRANE_ADAPTER_CLUSTER_ID | - | Cluster bound to the adapter token; required for target reads, capacity, and node removals |
+
+The [Cluster Autoscaler external gRPC prototype](internal/adapter/autoscaler/README.md)
+provides a runnable adapter and the pinned CA v1.35.0 compatibility tests.
 
 For a deterministic first-zone initialization, use `cmd/crane-bootstrap` with a
 JSON file containing `zone`, `cluster`, `budget`, `pool`, and `group` objects:
