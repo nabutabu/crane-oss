@@ -1,11 +1,13 @@
 # Phase 1 capacity persistence
 
-`capacity.Migrate(ctx, db)` installs the embedded, versioned PostgreSQL schema in
-one transaction under an advisory lock. Both control-plane binaries run it at
-startup. It preserves existing hosts and action records and creates compatibility
-tables on an empty database. Use the `crane` database on the existing RDS instance.
-The old `postgres_data/createtablescripts.sql` is a historical bootstrap script
-with destructive DROP statements; it is not the migration path.
+`capacity.InitializeSchema(ctx, db)` installs the canonical first-go PostgreSQL
+schema from `schema.sql` in one transaction under an advisory lock. The explicit
+`crane-bootstrap` command initializes the schema before seeding the first zone.
+`crane-api` and Dominator only call `capacity.CheckSchema` at startup and fail
+with instructions to run bootstrap when the schema is missing. The baseline is
+repeatable on the dedicated, initially empty `crane` database; it does not keep a
+version ledger or upgrade earlier POC schemas. It includes the host/action and
+health tables required by the current control loops.
 
 Platform configuration seeds `team_budgets`, `zones`, `clusters`, `node_pools`, and
 `node_groups`. Memory entitlement is in MiB, CPU in integer vCPUs, and node count

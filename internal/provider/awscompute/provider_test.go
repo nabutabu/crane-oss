@@ -19,6 +19,9 @@ import (
 
 func newLocalstackEC2Client(t *testing.T) *ec2.Client {
 	t.Helper()
+	if testing.Short() {
+		t.Skip("LocalStack integration test")
+	}
 
 	cfg, err := config.LoadDefaultConfig(
 		context.Background(),
@@ -50,6 +53,9 @@ func newLocalstackEC2Client(t *testing.T) *ec2.Client {
 
 func newLocalstackELBv2Client(t *testing.T) *elasticloadbalancingv2.Client {
 	t.Helper()
+	if testing.Short() {
+		t.Skip("LocalStack integration test")
+	}
 
 	cfg, err := config.LoadDefaultConfig(
 		context.Background(),

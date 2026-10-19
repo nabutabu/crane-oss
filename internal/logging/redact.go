@@ -40,6 +40,11 @@ var urlCredentialRe = regexp.MustCompile(
 )
 
 var authorizationRe = regexp.MustCompile(`(?i)(authorization\s*[=:]\s*(?:bearer|basic)\s+)[^\s,;]+`)
+
+// RedactText applies the same conservative redaction used by structured logs
+// to operator-visible command output.
+func RedactText(s string) string { return redactString(s) }
+
 var jsonSecretRe = regexp.MustCompile(`(?i)("(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|secret[_-]?key|authorization|credential)"\s*:\s*)"(?:\\.|[^"\\])*"`)
 
 // RedactHandler is a slog.Handler that removes secrets before delegating to an

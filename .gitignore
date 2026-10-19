@@ -10,3 +10,5 @@ secrets-to-purge.txt
 spire/data/keys/
 spire/agent/data/
 spire/server/data/
+# Local bootstrap deployment state (operator-owned recovery files)
+.crane-bootstrap/
