@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -197,14 +198,14 @@ func run() (runErr error) {
 
 	manager := activitymanager.NewActivityManager(problemStore, actionStore, problemcache.NewCache(10, time.Hour), time.Minute*5, time.Minute)
 
-	// Activity Manager - Create actions based on problems seen by BHD
-	go manager.Run(ctx)
-
-	// Bad Host Detector - Detect problems with existing Hosts in a Zone
-	go bhd.Run(ctx)
-
-	// Worker to put the hosts in appropriate states once detected by BHD
-	go worker.Run(ctx)
+	// Stop and join background loops before closing the database and flushing
+	// telemetry, so their final context-aware records participate in shutdown.
+	var background sync.WaitGroup
+	for _, loop := range []func(context.Context){manager.Run, bhd.Run, worker.Run} {
+		background.Add(1)
+		go func() { defer background.Done(); loop(ctx) }()
+	}
+	defer func() { stop(); background.Wait() }()
 
 	health := &healthHandler{logger: logger.Logger, db: db}
 

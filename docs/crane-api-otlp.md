@@ -92,3 +92,13 @@ Metrics `http.server.request.count` and `http.server.request.duration` (seconds)
 carry method, matched route and status dimensions. They share the resource
 configuration of traces and logs. Capacity authentication preserves the active
 server span instead of replacing it with the incoming parent context.
+
+## Background processing
+
+Activity analysis, bad-host scans, and action execution create spans at their
+operation boundaries. Their slog calls pass context through to OTLP and include
+stable operation names alongside existing host, action and zone identifiers.
+The API joins its background loops before closing the database and flushing
+telemetry. The action worker observes cancellation without waiting for its next
+one-minute polling tick. These shared context-aware calls do not enable log
+export in other binaries.

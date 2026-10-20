@@ -2,6 +2,9 @@ package badhost
 
 import (
 	"context"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	"log/slog"
 	"time"
 
@@ -31,7 +34,7 @@ func (detector *BadHostDetector) Run(ctx context.Context) {
 	ticker := time.NewTicker(detector.cfg.ScanInterval)
 	defer ticker.Stop()
 
-	slog.Info("bad host detector starting",
+	slog.InfoContext(ctx, "bad host detector starting", "operation", "badhost.scan",
 		"zone", detector.cfg.Zone,
 		"scan_interval", detector.cfg.ScanInterval,
 		"checks", len(detector.checks),
@@ -40,7 +43,7 @@ func (detector *BadHostDetector) Run(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			slog.Info("bad host detector shutting down")
+			slog.InfoContext(ctx, "bad host detector shutting down", "operation", "badhost.scan")
 			return
 
 		case <-ticker.C:
@@ -50,10 +53,12 @@ func (detector *BadHostDetector) Run(ctx context.Context) {
 }
 
 func (detector *BadHostDetector) ScanZone(ctx context.Context, zone string) {
+	ctx, span := otel.Tracer("crane.background").Start(ctx, "badhost.scan", trace.WithAttributes(attribute.String("zone", zone)))
+	defer func() { span.End() }()
 	// 1. Get all hosts in zone from host catalog
 	hosts, err := detector.hostStore.GetByZone(ctx, zone)
 	if err != nil {
-		slog.Error("failed to list hosts in zone", "zone", zone, "error", err)
+		slog.ErrorContext(ctx, "failed to list hosts in zone", "operation", "badhost.scan", "zone", zone, "error", err)
 	}
 
 	// 2. Scan each host for problems
@@ -61,11 +66,11 @@ func (detector *BadHostDetector) ScanZone(ctx context.Context, zone string) {
 		problems := detector.detectProblems(ctx, host)
 		if len(problems) > 0 {
 			// 3. Record problems in central database
-			slog.Info("recording problems", "host_id", host.ID, "count", len(problems))
+			slog.InfoContext(ctx, "recording problems", "operation", "badhost.scan", "host_id", host.ID, "count", len(problems))
 			for _, problem := range problems {
 				err = detector.problemStore.RecordProblem(ctx, host.ID, *problem)
 				if err != nil {
-					slog.Error("failed to record problem", "host_id", host.ID, "error", err)
+					slog.ErrorContext(ctx, "failed to record problem", "operation", "badhost.scan", "host_id", host.ID, "error", err)
 				}
 			}
 		}
@@ -77,10 +82,10 @@ func (detector *BadHostDetector) detectProblems(ctx context.Context, host *api.H
 	var problems []*problem.Problem
 
 	for _, check := range detector.checks {
-		slog.Debug("running check", "check", check.Name(), "host_id", host.ID)
+		slog.DebugContext(ctx, "running check", "operation", "badhost.scan", "check", check.Name(), "host_id", host.ID)
 		ps, err := check.Detect(ctx, host)
 		if err != nil {
-			slog.Error("check failed", "check", check.Name(), "host_id", host.ID, "error", err)
+			slog.ErrorContext(ctx, "check failed", "operation", "badhost.scan", "check", check.Name(), "host_id", host.ID, "error", err)
 			continue
 		}
 

@@ -17,7 +17,7 @@ func NewPostgresActionStore(DB *sql.DB) *PostgresActionStore {
 }
 
 func (store *PostgresActionStore) Enqueue(ctx context.Context, action *ActionRecord) error {
-	slog.Debug("enqueuing action", "host_id", action.HostID, "action", action.Type)
+	slog.DebugContext(ctx, "enqueuing action", "host_id", action.HostID, "action", action.Type)
 
 	query := `
         INSERT INTO actions (hostid, status, attempts, createdat, type)
@@ -30,13 +30,13 @@ func (store *PostgresActionStore) Enqueue(ctx context.Context, action *ActionRec
 	if err != nil {
 		return err
 	}
-	slog.Debug("action enqueued", "action_id", id, "host_id", action.HostID)
+	slog.DebugContext(ctx, "action enqueued", "action_id", id, "host_id", action.HostID)
 
 	return nil
 }
 
 func (store *PostgresActionStore) Next(ctx context.Context) (*ActionRecord, error) {
-	slog.Debug("fetching next action")
+	slog.DebugContext(ctx, "fetching next action")
 	var record ActionRecord
 	query := `
         UPDATE actions
@@ -67,7 +67,7 @@ func (store *PostgresActionStore) Next(ctx context.Context) (*ActionRecord, erro
 }
 
 func (store *PostgresActionStore) MarkDone(ctx context.Context, id int) error {
-	slog.Debug("marking action done", "action_id", id)
+	slog.DebugContext(ctx, "marking action done", "action_id", id)
 	// Mark it done
 	_, err := store.DB.ExecContext(ctx, "UPDATE actions SET status='done', updatedat=NOW() WHERE id=$1", id)
 	if err != nil {
@@ -77,7 +77,7 @@ func (store *PostgresActionStore) MarkDone(ctx context.Context, id int) error {
 }
 
 func (store *PostgresActionStore) MarkFailed(ctx context.Context, id int) error {
-	slog.Debug("marking action failed", "action_id", id)
+	slog.DebugContext(ctx, "marking action failed", "action_id", id)
 	// Mark it failed
 	_, err := store.DB.ExecContext(ctx, "UPDATE actions SET status='failed', updatedat=NOW() WHERE id=$1", id)
 	if err != nil {

@@ -2,6 +2,7 @@ package activitymanager
 
 import (
 	"context"
+	"go.opentelemetry.io/otel"
 	"log/slog"
 	"time"
 
@@ -38,12 +39,12 @@ func (am *ActivityManager) Run(ctx context.Context) {
 	ticker := time.NewTicker(am.ScanInterval)
 	defer ticker.Stop()
 
-	slog.Info("activity manager starting")
+	slog.InfoContext(ctx, "activity manager starting", "operation", "activity.analyze")
 
 	for {
 		select {
 		case <-ctx.Done():
-			slog.Info("activity manager shutting down")
+			slog.InfoContext(ctx, "activity manager shutting down", "operation", "activity.analyze")
 			return
 
 		case <-ticker.C:
@@ -53,14 +54,16 @@ func (am *ActivityManager) Run(ctx context.Context) {
 }
 
 func (am *ActivityManager) RunHelp(ctx context.Context) {
+	ctx, span := otel.Tracer("crane.background").Start(ctx, "activity.analyze")
+	defer func() { span.End() }()
 	// get problems from ProblemStore
 	problems, err := am.problemStore.GetRecentProblems(ctx, am.contextWindow)
 	if err != nil {
-		slog.Error("failed to get recent problems", "error", err)
+		slog.ErrorContext(ctx, "failed to get recent problems", "operation", "activity.analyze", "error", err)
 		return
 	}
 
-	slog.Info("problems seen", "count", len(problems))
+	slog.InfoContext(ctx, "problems seen", "operation", "activity.analyze", "count", len(problems))
 
 	// group problems by host
 	hostProblems := make(map[string][]problem.Problem)
@@ -87,12 +90,12 @@ func (am *ActivityManager) RunHelp(ctx context.Context) {
 			action := Decide(hostID, hostProblemList)
 
 			if action != nil {
-				slog.Info("action decided", "host_id", hostID, "action", action.Type)
+				slog.InfoContext(ctx, "action decided", "operation", "activity.analyze", "host_id", hostID, "action", action.Type)
 
 				// enqueue the action if one was decided
 				err := am.actionStore.Enqueue(ctx, action)
 				if err != nil {
-					slog.Error("failed to enqueue action", "host_id", hostID, "error", err)
+					slog.ErrorContext(ctx, "failed to enqueue action", "operation", "activity.analyze", "host_id", hostID, "error", err)
 				}
 			}
 		}
