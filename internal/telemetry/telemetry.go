@@ -34,7 +34,7 @@ type Config struct {
 	ServiceName    string
 	ServiceVersion string
 	Environment    string
-	// EnableLogs is deliberately opt-in. Only crane-api enables log export.
+	// EnableLogs is deliberately opt-in at each service entrypoint.
 	EnableLogs bool
 	// ErrorHandler must write locally, without using an exporting handler.
 	ErrorHandler otel.ErrorHandler

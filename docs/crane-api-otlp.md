@@ -2,7 +2,8 @@
 
 Crane API exports standard OpenTelemetry logs over OTLP/gRPC when an endpoint
 is configured. It also writes redacted JSON to stdout for `kubectl logs`.
-Other binaries retain local logging; `EnableLogs` is opt-in at the entrypoint.
+Log export remains opt-in at each entrypoint: Crane API and Dominator enable
+it, while Subd and other binaries retain local logging.
 The bridge uses the same `LOG_LEVEL` for both destinations (default `info`,
 `debug` only when explicitly selected), without application log sampling.
 
@@ -48,6 +49,12 @@ Standard SDK configuration is honored:
 The application never needs the New Relic ingest key when exporting to a
 Collector. Give that key only to the Collector. Use application OTLP as the only
 Crane API log ingestion path; exclude its stdout from any filelog pipeline.
+
+Dominator uses the same endpoint, TLS trust and receiver authentication
+settings as Crane API. Its records retain `service.name=dominator`, the
+compiled version and deployment resource attributes, while the shared redaction
+handler protects both stdout and OTLP. The bootstrapper supplies the same
+Collector configuration to both Deployments.
 
 Redaction runs before fan-out. Messages, groups, nested values, attached fields
 and standard-library log calls use the existing shared redaction rules. With
@@ -102,4 +109,4 @@ stable operation names alongside existing host, action and zone identifiers.
 The API joins its background loops before closing the database and flushing
 telemetry. The action worker observes cancellation without waiting for its next
 one-minute polling tick. These shared context-aware calls do not enable log
-export in other binaries.
+export in services that do not explicitly enable it.

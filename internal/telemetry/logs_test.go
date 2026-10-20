@@ -200,7 +200,7 @@ func TestLogExportIsOptIn(t *testing.T) {
 	}
 	defer p.Shutdown(context.Background())
 	if _, ok := p.LoggerProvider.(lognoop.LoggerProvider); !ok {
-		t.Fatalf("other binaries must not export logs: %T", p.LoggerProvider)
+		t.Fatalf("services without EnableLogs must not export logs: %T", p.LoggerProvider)
 	}
 }
 
