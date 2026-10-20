@@ -2,7 +2,7 @@
 
 The first-zone bootstrap now installs the pinned Collector and configures Crane
 API and Dominator to send logs, traces and metrics to it. See
-[bootstrap-managed observability](../../docs/bootstrap-observability.md) for
+[AWS bootstrap](../../docs/aws-bootstrap.md#configure-the-collector-backend) for
 the backend configuration Secret and stop-and-rerun bootstrap workflow. These manifests
 remain an operator workflow for an already-running layer-zero cluster; do not
 apply them over a Collector managed by bootstrap. Neither workflow upgrades the
@@ -52,7 +52,7 @@ Render `REPLACE_PROTECTED_PLATFORM_NODE` in `collector.yaml` to the actual
 Use deployment-specific copies outside Git for these values. Supply the backend
 endpoint, authentication headers and optional TLS files through the operator-owned
 `otel-exporter-config` Secret; see [the example](exporter.example.yaml) and the
-[Secret contract](../../docs/bootstrap-observability.md#backend-configuration).
+[AWS bootstrap Secret contract](../../docs/aws-bootstrap.md#configure-the-collector-backend).
 Keep HTTPS and certificate validation enabled. No backend is selected by default.
 Update the Secret and restart the Collector to rotate backend credentials.
 

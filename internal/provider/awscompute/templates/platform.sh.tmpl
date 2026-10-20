@@ -157,7 +157,7 @@ if ! EXPORTER_CONFIG_PRESENT="$(kubectl -n crane-system get secret otel-exporter
   exit 1
 fi
 if [ "$EXPORTER_CONFIG_PRESENT" != present ]; then
-  echo "Collector backend configuration required: create Secret crane-system/otel-exporter-config with a nonempty exporter.yaml key, then rerun bootstrap with the same deployment state. Use private administrative access and kubectl create secret generic otel-exporter-config -n crane-system --from-file=exporter.yaml=/secure/exporter.yaml. See docs/bootstrap-observability.md. Readiness has not been finalized." >&2
+  echo "Collector backend configuration required: create Secret crane-system/otel-exporter-config with a nonempty exporter.yaml key, then rerun bootstrap with the same deployment state. Use private administrative access and kubectl create secret generic otel-exporter-config -n crane-system --from-file=exporter.yaml=/secure/exporter.yaml. See docs/aws-bootstrap.md#configure-the-collector-backend. Readiness has not been finalized." >&2
   exit 1
 fi
 EXPORTER_SECRET_VERSION="$(kubectl -n crane-system get secret otel-exporter-config -o jsonpath='{.metadata.uid}:{.metadata.resourceVersion}')"

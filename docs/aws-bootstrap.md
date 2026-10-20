@@ -56,6 +56,70 @@ the command from this checkout. Packer builds the deployment AMI.
      -bootstrap-config bootstrap.example.json
    ```
 
+## Configure the Collector backend
+
+The platform bootstrap installs the shared OpenTelemetry Collector after it
+creates Kubernetes and the `crane-system` namespace. Backend settings are not
+part of `bootstrap.example.json`, AWS Secrets Manager, or the AMI. Supply them
+as native Collector configuration in an operator-owned Kubernetes Secret:
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: otel-exporter-config
+  namespace: crane-system
+type: Opaque
+stringData:
+  exporter.yaml: |
+    exporters:
+      otlp_http/backend:
+        endpoint: https://your-otlp-backend.example
+        headers:
+          Authorization: "Bearer YOUR_CREDENTIAL"
+```
+
+The required object is `crane-system/otel-exporter-config`; its required key is
+`exporter.yaml`. Use the endpoint, headers and optional TLS file settings for
+the chosen OTLP/HTTP backend. Keep credentials in headers rather than endpoint
+URLs, and keep the Secret out of Git, bootstrap JSON, AMIs, SSM payloads and
+logs. A non-secret example is in
+[`deploy/observability/exporter.example.yaml`](../deploy/observability/exporter.example.yaml).
+
+On a fresh deployment, bootstrap creates the cluster and namespace, then stops
+if this Secret or key is missing. Use private administrative access to create
+it after Kubernetes is available, then rerun the command with the same
+configuration and `.crane-bootstrap/<deployment>` state directory:
+
+```sh
+kubectl -n crane-system create secret generic otel-exporter-config \
+  --from-file=exporter.yaml=/secure/exporter.yaml
+AWS_PROFILE=crane-bootstrap go run ./cmd/crane-bootstrap \
+  -bootstrap-config bootstrap.example.json
+```
+
+Bootstrap never creates, overwrites or deletes this operator-owned Secret. It
+checks only the key's presence and reads Secret metadata to roll the Collector
+when the Secret changes. Kubernetes/API access failures are distinct from a
+missing Secret and should be resolved before retrying. An invalid exporter
+fragment blocks Collector readiness and prevents bootstrap handoff completion.
+
+The bootstrap-created internal Collector objects have separate responsibilities:
+
+| Object | Data | Readers |
+| --- | --- | --- |
+| `otel-exporter-config` Secret | Backend exporter YAML | Collector |
+| `crane-otel-receiver` Secret | Internal receiver bearer token | Collector |
+| `crane-otel-client` Secret | Internal receiver authorization header | Crane API and Dominator |
+| `otel-collector-tls` Secret | Collector receiver certificate and key | Collector |
+| `otel-collector-ca` ConfigMap | Public receiver certificate | Crane API and Dominator |
+
+The applications use only the internal receiver credentials. They never receive
+the backend credential. Backend credential rotation requires restarting or
+rerunning the Collector; it does not require restarting Crane API or Dominator.
+Receiver token or certificate rotation requires rerunning bootstrap so the
+Collector and both applications update together.
+
 Packer uses the normal AWS credential chain, for example
 `AWS_PROFILE=crane-bootstrap`; the bootstrap AWS adapter uses the same chain.
 There are no `-aws-profile` or `-aws-region` flags; set the profile in the
