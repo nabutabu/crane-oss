@@ -76,3 +76,19 @@ searchable resource metadata and log-to-trace correlation; synthetic-secret
 redaction in stdout and export; graceful-termination flush; Collector restart and
 backend-outage queue recovery within configured capacity. No acceptance is
 claimed by passing the in-process receiver tests alone.
+
+## HTTP request observability
+
+Every Crane API route, including authentication failures and unmatched requests,
+has a server span and completion log. The API extracts W3C trace context and
+creates its own UUID request ID, returned in `X-Request-ID`. Context-aware
+processing logs share that request ID and span. Completion fields are `method`,
+matched `route`, `status`, `duration_ms`, and `panicked`. Unknown routes use the
+constant `unmatched`; no raw paths, query strings, headers or bodies are logged.
+Panics are recorded without their potentially sensitive values and propagate to
+Go's HTTP server. Server failures mark spans as errors.
+
+Metrics `http.server.request.count` and `http.server.request.duration` (seconds)
+carry method, matched route and status dimensions. They share the resource
+configuration of traces and logs. Capacity authentication preserves the active
+server span instead of replacing it with the incoming parent context.

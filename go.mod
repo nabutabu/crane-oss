@@ -11,6 +11,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2 v1.54.9
 	github.com/aws/aws-sdk-go-v2/service/rds v1.116.3
 	github.com/aws/smithy-go v1.24.2
+	github.com/felixge/httpsnoop v1.1.0
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.8.0
 	github.com/spiffe/go-spiffe/v2 v2.7.0

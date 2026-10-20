@@ -82,7 +82,7 @@ type healthHandler struct {
 }
 
 func (h *healthHandler) health(w http.ResponseWriter, r *http.Request) {
-	h.logger.InfoContext(r.Context(), "healthy", "path", r.URL.Path)
+	h.logger.InfoContext(r.Context(), "healthy")
 	fmt.Fprintf(w, `{"status": "available"}`)
 }
 
@@ -218,7 +218,7 @@ func run() (runErr error) {
 	capacityAPI := capacity.NewAPI(capacity.NewStore(db), intconfig.GetEnv("CRANE_ADMIN_TOKEN", ""), intconfig.GetEnv("CRANE_ADAPTER_TOKEN", ""), intconfig.GetEnv("CRANE_ADAPTER_CLUSTER_ID", ""))
 	mux.Handle("/v1/", capacityAPI.Handler())
 
-	server := &http.Server{Addr: ":43060", Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+	server := &http.Server{Addr: ":43060", Handler: telemetryProvider.HTTPHandler(mux, logger.Logger), ReadHeaderTimeout: 10 * time.Second}
 	shutdownDone := make(chan struct{})
 	go func() {
 		defer close(shutdownDone)
