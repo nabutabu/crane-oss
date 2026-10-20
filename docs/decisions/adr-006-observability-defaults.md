@@ -22,3 +22,15 @@ Status: Accepted
 
 ## Control/Data Plane Boundary
 - Control-plane (crane-api, dominator): full telemetry/audit (logs + OTLP). Data-plane (subd): logs locally to journald, reports outcome via heartbeat only (no open listener). Host identity bound to registered provider instance.
+
+## Crane API OTLP log rollout
+
+Crane API opts into a standard OTel Logs SDK batch provider and slog bridge;
+other entrypoints retain local logging. Redaction wraps both stdout and OTLP.
+Crane API keeps JSON stdout and sends every record enabled by `LOG_LEVEL`
+(default info), without sampling. Exporter diagnostics use a local-only handler.
+All enabled signals use one environment-configurable resource and standard
+gRPC exporter settings. HTTP/protobuf configuration is rejected explicitly.
+See [Crane API application log export](../crane-api-otlp.md) for configuration,
+bounded buffering, shutdown behavior and the acceptance gate preceding zone
+provisioning.

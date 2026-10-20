@@ -30,6 +30,7 @@ import (
 	"github.com/nabutabu/crane-oss/internal/provider/awscompute"
 	"github.com/nabutabu/crane-oss/internal/telemetry"
 	"github.com/nabutabu/crane-oss/internal/version"
+	"go.opentelemetry.io/otel"
 )
 
 const BHD_CONFIG_YAML_PATH = "bhd.json"
@@ -81,14 +82,14 @@ type healthHandler struct {
 }
 
 func (h *healthHandler) health(w http.ResponseWriter, r *http.Request) {
-	h.logger.Info("healthy", "path", r.URL.Path)
+	h.logger.InfoContext(r.Context(), "healthy", "path", r.URL.Path)
 	fmt.Fprintf(w, `{"status": "available"}`)
 }
 
 func (h *healthHandler) dbHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := h.db.PingContext(r.Context()); err != nil {
-		h.logger.Error("database health check failed", "error", err)
+		h.logger.ErrorContext(r.Context(), "database health check failed", "error", err)
 		w.WriteHeader(http.StatusServiceUnavailable)
 		fmt.Fprint(w, `{"status": "unavailable"}`)
 		return
@@ -99,15 +100,14 @@ func (h *healthHandler) dbHealth(w http.ResponseWriter, r *http.Request) {
 
 func main() {
 	if err := run(); err != nil {
-		slog.Error("crane-api stopped", "error", err)
 		os.Exit(1)
 	}
 }
 
-func run() error {
-	logger := logging.New("crane-api")
-	logger.SetDefault()
-	logger.Info("crane-api", "version", version.String())
+func run() (runErr error) {
+	// Exporter diagnostics retain a local-only, redacting handler.
+	localLogger := logging.NewWithOTLP("crane-api", nil)
+	localLogger.SetDefault()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -115,17 +115,30 @@ func run() error {
 		ServiceName:    "crane-api",
 		ServiceVersion: version.Version,
 		Environment:    intconfig.GetEnv("ENVIRONMENT", ""),
+		EnableLogs:     true,
+		ErrorHandler: otel.ErrorHandlerFunc(func(error) {
+			localLogger.Warn("telemetry export failed; check collector delivery health")
+		}),
 	})
+	logger := logging.NewWithOTLP("crane-api", telemetryProvider.LoggerProvider)
+	logger.SetDefault()
 	if err != nil {
 		logger.Warn("telemetry disabled; continuing with no-op providers", "error", err)
 	}
 	defer func() {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if runErr != nil {
+			logger.ErrorContext(ctx, "crane-api stopped", "error", runErr)
+		} else {
+			logger.InfoContext(ctx, "crane-api stopped")
+		}
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := telemetryProvider.Shutdown(shutdownCtx); err != nil {
-			logger.Error("telemetry shutdown failed", "error", err)
+			localLogger.Error("telemetry shutdown failed")
 		}
 	}()
+
+	logger.InfoContext(ctx, "crane-api starting", "version", version.String())
 
 	db, err := sql.Open("pgx", intconfig.DatabaseURL(5432))
 	if err != nil {
