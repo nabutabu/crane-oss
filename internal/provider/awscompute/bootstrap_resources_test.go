@@ -270,6 +270,12 @@ func TestInfrastructureFirstRunAndRetry(t *testing.T) {
 	if !strings.Contains(policies[cfg.Name+"-platform"], "ec2:ResourceTag/CraneBootstrap") {
 		t.Fatal("platform role does not protect bootstrap instances")
 	}
+	if !strings.Contains(policies[cfg.Name+"-platform"], cfg.Observability.NewRelicSecretARN) || !strings.Contains(policies[cfg.Name+"-platform"], "secretsmanager:GetSecretValue") {
+		t.Fatal("platform role cannot read the configured New Relic secret")
+	}
+	if strings.Contains(policies[cfg.Name+"-spire"], cfg.Observability.NewRelicSecretARN) {
+		t.Fatal("SPIRE role must not read the New Relic secret")
+	}
 }
 
 func TestDiscoveryDeniedCannotProvision(t *testing.T) {

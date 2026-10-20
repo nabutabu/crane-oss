@@ -7,13 +7,21 @@ it, while Subd and other binaries retain local logging.
 The bridge uses the same `LOG_LEVEL` for both destinations (default `info`,
 `debug` only when explicitly selected), without application log sampling.
 
-For an internal Collector, configure only the Crane API Deployment:
+The layer-zero bootstrap configures both Crane API and Dominator. For a manual
+Crane API rollout against an internal Collector, the relevant settings are:
 
 ```yaml
 - name: OTEL_EXPORTER_OTLP_ENDPOINT
-  value: http://otel-collector.crane-system.svc.cluster.local:4317
+  value: https://otel-collector.crane-system.svc.cluster.local:4317
 - name: OTEL_EXPORTER_OTLP_PROTOCOL
   value: grpc
+- name: OTEL_EXPORTER_OTLP_CERTIFICATE
+  value: /etc/crane-otel/ca.crt
+- name: OTEL_EXPORTER_OTLP_HEADERS
+  valueFrom:
+    secretKeyRef:
+      name: crane-otel-client
+      key: headers
 - name: OTEL_SERVICE_NAME
   value: crane-api
 - name: POD_NAME
@@ -46,9 +54,10 @@ Standard SDK configuration is honored:
 - `PROTOCOL`, including per-signal overrides, must be `grpc`. Unsupported
   protocols return a configuration error and disable export with a local warning.
 
-The application never needs the New Relic ingest key when exporting to a
+The applications never need the New Relic ingest key when exporting to a
 Collector. Give that key only to the Collector. Use application OTLP as the only
-Crane API log ingestion path; exclude its stdout from any filelog pipeline.
+Crane API and Dominator log ingestion path; exclude both stdout streams from any
+filelog pipeline.
 
 Dominator uses the same endpoint, TLS trust and receiver authentication
 settings as Crane API. Its records retain `service.name=dominator`, the

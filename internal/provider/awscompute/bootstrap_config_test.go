@@ -15,6 +15,9 @@ func TestEmptyAccountConfig(t *testing.T) {
 	if !cfg.RDS.ManageMasterUserPassword || !cfg.RDS.DeletionProtection {
 		t.Fatal("RDS must protect storage and manage the master secret")
 	}
+	if cfg.Platform.StorageGiB != 40 {
+		t.Fatalf("platform volume default must reserve room for the Collector queue, got %d GiB", cfg.Platform.StorageGiB)
+	}
 }
 
 func TestPersistedConfigNullFirstZoneUsesDefaultTopology(t *testing.T) {
@@ -46,6 +49,36 @@ func TestRejectInvalidBootstrapNetwork(t *testing.T) {
 			tc.edit(&cfg)
 			if err := cfg.Validate(); err == nil {
 				t.Fatal("expected invalid configuration")
+			}
+		})
+	}
+}
+
+func TestValidateObservabilityConfig(t *testing.T) {
+	cfg := testConfig()
+	cfg.Observability.NewRelicOTLPEndpoint = ""
+	if got := cfg.WithDefaults().Observability.NewRelicOTLPEndpoint; got != "https://otlp.nr-data.net" {
+		t.Fatalf("unexpected default endpoint %q", got)
+	}
+	for _, tc := range []struct {
+		name string
+		edit func(*bootstrapConfig)
+	}{
+		{"wrong account", func(c *bootstrapConfig) {
+			c.Observability.NewRelicSecretARN = "arn:aws:secretsmanager:us-west-2:999999999999:secret:crane/new-relic-abcd"
+		}},
+		{"wrong region", func(c *bootstrapConfig) {
+			c.Observability.NewRelicSecretARN = "arn:aws:secretsmanager:us-east-1:123456789012:secret:crane/new-relic-abcd"
+		}},
+		{"http endpoint", func(c *bootstrapConfig) { c.Observability.NewRelicOTLPEndpoint = "http://otlp.nr-data.net" }},
+		{"endpoint credentials", func(c *bootstrapConfig) { c.Observability.NewRelicOTLPEndpoint = "https://user:pass@otlp.nr-data.net" }},
+		{"endpoint path", func(c *bootstrapConfig) { c.Observability.NewRelicOTLPEndpoint = "https://otlp.nr-data.net/v1/logs" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			candidate := cfg
+			tc.edit(&candidate)
+			if err := candidate.Validate(); err == nil {
+				t.Fatal("expected invalid observability configuration")
 			}
 		})
 	}

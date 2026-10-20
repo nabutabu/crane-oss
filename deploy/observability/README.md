@@ -1,9 +1,14 @@
 # Layer-zero telemetry deployment
 
-These are opt-in deployment artifacts, separate from first-zone bootstrap.
-They neither upgrade the database nor provision any zone. Use the existing
-release pipeline to build and qualify the Crane API image before rollout.
-Do not change the live Kubernetes, Cilium or container-runtime pins.
+The first-zone bootstrap now installs the pinned Collector and configures Crane
+API and Dominator to send logs, traces and metrics to it. See
+[bootstrap-managed observability](../../docs/bootstrap-observability.md) for
+the required New Relic secret reference and bootstrap behavior. These manifests
+remain an operator workflow for an already-running layer-zero cluster; do not
+apply them over a Collector managed by bootstrap. Neither workflow upgrades the
+database or provisions a zone. Use the existing release pipeline to build and
+qualify application images before rollout, and do not change live Kubernetes,
+Cilium or container-runtime pins.
 
 ## Prerequisites and rendering
 
@@ -19,19 +24,20 @@ printing values or adding them to Git:
 | --- | --- | --- |
 | Secret `new-relic-otlp` | `license-key`: New Relic ingest key | Collector only |
 | Secret `otel-collector-tls` | `tls.crt`, `tls.key`: receiver certificate/key | Collector only |
-| ConfigMap `otel-collector-ca` | `ca.crt`: receiver's public issuing CA | Crane API |
-| Secret `crane-api-otlp` | `token`: random receiver token; `headers`: `Authorization=Bearer%20` followed by that same token | Collector reads token; Crane API reads headers |
+| ConfigMap `otel-collector-ca` | `ca.crt`: receiver's public issuing CA | Crane API and Dominator |
+| Secret `crane-otel-receiver` | `token`: random receiver token | Collector only |
+| Secret `crane-otel-client` | `headers`: `Authorization=Bearer%20` followed by the receiver token | Crane API and Dominator |
 
 Use a high-entropy URL-safe receiver token so the headers value needs no further
 encoding. This token is independent of the New Relic key and Crane API admin or
 adapter credentials. Restrict Secret RBAC to the deployment system. Rotate the
-receiver token in both workloads together. Restart the Collector when its TLS
+receiver token in both Secrets and both workloads together. Restart the Collector when its TLS
 certificate, configuration or environment changes.
 
 The TLS certificate must cover
 `otel-collector.crane-system.svc.cluster.local`. Supply it using the existing
 private certificate workflow; this does not expose any endpoint publicly.
-Crane API receives only the public CA, never the Collector's private key.
+Crane API and Dominator receive only the public CA, never the Collector's private key.
 
 On the protected platform node, prepare a persistent directory
 `/var/lib/crane/otel-queue`, owned by UID/GID 10001 and mode 0700, on the intended
@@ -47,10 +53,10 @@ New Relic endpoint defaults to `https://otlp.nr-data.net`; select the account's
 correct regional endpoint when necessary. Keep HTTPS and certificate validation
 on for the backend.
 
-Apply the rendered Collector resources, wait for readiness, then patch the
-existing Crane API Deployment with the rendered strategic merge patch. Select
-the already-qualified Crane API image separately; the patch intentionally
-contains no unqualified image tag. Example commands (files must be rendered):
+Apply the rendered Collector resources, wait for readiness, then patch both
+application Deployments with their rendered strategic merge patches. Select
+the already-qualified application images separately; the patches intentionally
+contain no unqualified image tags. Example commands (files must be rendered):
 
 ```sh
 kubectl --context YOUR_LAYER_ZERO_CONTEXT apply -f /secure/rendered/collector.yaml
@@ -58,22 +64,26 @@ kubectl --context YOUR_LAYER_ZERO_CONTEXT -n crane-system rollout status deploym
 kubectl --context YOUR_LAYER_ZERO_CONTEXT -n crane-system patch deployment crane-api \
   --type strategic --patch-file /secure/rendered/crane-api-patch.yaml
 kubectl --context YOUR_LAYER_ZERO_CONTEXT -n crane-system rollout status deployment/crane-api
+kubectl --context YOUR_LAYER_ZERO_CONTEXT -n crane-system patch deployment dominator \
+  --type strategic --patch-file /secure/rendered/dominator-patch.yaml
+kubectl --context YOUR_LAYER_ZERO_CONTEXT -n crane-system rollout status deployment/dominator
 ```
 
 No public ingress, LoadBalancer or NodePort is created. The receiver Service is
 `otel-collector.crane-system.svc.cluster.local:4317`. Network policy allows OTLP
-from Crane API pods in the same namespace and metrics scraping from pods labeled
+from Crane API and Dominator pods in the same namespace and metrics scraping from pods labeled
 `crane.io/telemetry-reader=true`. Kubelet health probes retain normal node access.
-The existing Crane API uses `hostNetwork`; Kubernetes network policy handling
+Crane API and Dominator use `hostNetwork`; Kubernetes network policy handling
 of host traffic does not reliably enforce pod-label isolation. TLS plus receiver
 authentication therefore enforce workload access for that path. Verify the
 policy with the live Cilium configuration, and prove an unauthenticated client
 is rejected. Do not rely on the policy alone for host-origin traffic.
 
 The New Relic key is only in Collector environment configuration. It is not
-attached as an application resource attribute or given to Crane API. No filelog
-receiver is configured. Exclude Crane API stdout from any existing log agents
-before enabling application OTLP, so there is one ingestion path.
+attached as an application resource attribute or given to either application.
+No filelog receiver is configured. Exclude Crane API and Dominator stdout from
+any existing log agents before enabling application OTLP, so each has one
+ingestion path.
 
 ## Delivery and storage
 

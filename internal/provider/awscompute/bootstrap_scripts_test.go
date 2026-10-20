@@ -32,6 +32,10 @@ func testConfig() bootstrapConfig {
 			CiliumVersion:     "1.19.0",
 			PodCIDR:           "10.244.0.0/16",
 		},
+		Observability: ObservabilityConfig{
+			NewRelicSecretARN:    "arn:aws:secretsmanager:us-west-2:123456789012:secret:crane-platform/new-relic-abc123",
+			NewRelicOTLPEndpoint: "https://otlp.nr-data.net",
+		},
 		RDS: RDSConfig{
 			Identifier:               "crane-platform-db",
 			Engine:                   "postgres",
@@ -207,6 +211,12 @@ func TestRenderPlatformScript(t *testing.T) {
 		`image: ghcr.io/nabutabu/crane-oss-dominator:0.2.0`,
 		`SPIFFE_ENDPOINT_SOCKET`,
 		`tcpSocket:`,
+		`installing the shared OTLP Collector`,
+		`Collector queue requires at least 10 GiB free`,
+		`rollout status deployment/otel-collector`,
+		`OTEL_EXPORTER_OTLP_ENDPOINT`,
+		`otel-collector.crane-system.svc.cluster.local:4317`,
+		`name: crane-otel-client`,
 	}
 	for _, marker := range want {
 		if !strings.Contains(script, marker) {
@@ -218,6 +228,33 @@ func TestRenderPlatformScript(t *testing.T) {
 	}
 }
 
+func TestRenderCollectorManifest(t *testing.T) {
+	data, err := baseScriptData(testConfig(), testInfra())
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := renderTemplate("otel-collector.yaml.tmpl", data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, marker := range []string{
+		`value: https://otlp.nr-data.net`,
+		`name: crane-otel-receiver`,
+		`crane.io/otel-config-hash: REPLACE_OTEL_CONFIG_HASH`,
+		`path: /var/lib/crane/otel-queue`,
+		`values: [REPLACE_PROTECTED_PLATFORM_NODE]`,
+		`app: crane-api`,
+		`app: dominator`,
+	} {
+		if !strings.Contains(manifest, marker) {
+			t.Errorf("Collector manifest missing %q", marker)
+		}
+	}
+	if strings.Contains(manifest, testConfig().Observability.NewRelicSecretARN) || strings.Contains(manifest, "[[ .") {
+		t.Fatal("Collector manifest contains a secret reference or unrendered template")
+	}
+}
+
 func TestRenderValidateScript(t *testing.T) {
 	script, err := RenderValidateScript(testConfig(), testInfra(), testAgentHosts())
 	if err != nil {
@@ -226,6 +263,7 @@ func TestRenderValidateScript(t *testing.T) {
 	want := []string{
 		`rollout status deployment/crane-api`,
 		`rollout status deployment/dominator`,
+		`rollout status deployment/otel-collector`,
 		`rollout status daemonset/cilium`,
 		`setpriv --reuid=10003 --regid=10003 --clear-groups`,
 		`crane-bootstrap-probe`,

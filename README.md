@@ -179,6 +179,8 @@ the IAM policy template, retry behavior, and AWS end-to-end validation. AWS CLI
 v2 and golden AMIs built with Packer are required. Prepare the private SPIRE
 load-balancer endpoint with `-prepare-images` before building deployment AMIs.
 Bootstrap uses released service images and local deployment state; it uses no S3 bucket.
+Bootstrap-managed Collector deployment and New Relic secret setup are described
+in [layer-zero observability](docs/bootstrap-observability.md).
 
 Bootstrap uses version 3 config with an explicit `provider` and separate
 `provider_config`. AWS is the only registered implementation. Shared workflow

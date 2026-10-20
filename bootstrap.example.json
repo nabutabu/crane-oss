@@ -22,13 +22,17 @@
       "deletion_protection": true,
       "manage_master_user_password": true
     },
+    "observability": {
+      "new_relic_secret_arn": "arn:aws:secretsmanager:us-west-2:123456789012:secret:crane-platform/new-relic-abc123",
+      "new_relic_otlp_endpoint": "https://otlp.nr-data.net"
+    },
     "spire_host": {
       "instance_type": "t3.small",
       "storage_gib": 8
     },
     "platform_host": {
       "instance_type": "t3.small",
-      "storage_gib": 20
+      "storage_gib": 40
     }
   },
   "spire": {

@@ -26,6 +26,7 @@ chmod 600 "$SECRET_DIR/runtime-secret.json"
 # ---- Kubernetes and Cilium readiness --------------------------------------
 kubectl -n crane-system rollout status deployment/crane-api --timeout=600s
 kubectl -n crane-system rollout status deployment/dominator --timeout=600s
+kubectl -n crane-system rollout status deployment/otel-collector --timeout=600s
 kubectl -n kube-system rollout status daemonset/cilium --timeout=600s
 kubectl wait --for=condition=Ready node --all --timeout=600s
 

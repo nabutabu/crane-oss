@@ -22,7 +22,7 @@ spec:
             - name: OTEL_EXPORTER_OTLP_HEADERS
               valueFrom:
                 secretKeyRef:
-                  name: crane-api-otlp
+                  name: crane-otel-client
                   key: headers
             - name: OTEL_SERVICE_NAME
               value: crane-api

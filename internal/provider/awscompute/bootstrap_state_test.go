@@ -11,6 +11,7 @@ func TestBootstrapResolvePinsPlacementAndImages(t *testing.T) {
 	cfg := testConfig().WithDefaults()
 	cfg.SPIRE.AMIID = ""
 	cfg.Platform.AMIID = ""
+	cfg.Observability.NewRelicSecretARN = ""
 	client := &fakeAWS{call: func(service, op string, _ any) (any, error) {
 		switch service + ":" + op {
 		case "sts:get-caller-identity":
@@ -33,6 +34,7 @@ func TestBootstrapResolvePinsPlacementAndImages(t *testing.T) {
 	candidate := cfg
 	candidate.SPIRE.AMIID = "ami-golden"
 	candidate.Platform.AMIID = "ami-golden"
+	candidate.Observability.NewRelicSecretARN = testConfig().Observability.NewRelicSecretARN
 	next := &bootstrapSession{cfg: candidate, client: client}
 	pinned, err = next.Resolve(context.Background(), pinned, false)
 	if err != nil {
@@ -41,7 +43,21 @@ func TestBootstrapResolvePinsPlacementAndImages(t *testing.T) {
 	if len(client.calls) != 3 {
 		t.Fatalf("retry rediscovered placement: %v", client.calls)
 	}
-	for _, change := range []string{"ami", "account", "region", "network", "placement"} {
+	omittedReference := next.cfg
+	omittedReference.Observability.NewRelicSecretARN = ""
+	retry := &bootstrapSession{cfg: omittedReference, client: &fakeAWS{call: func(service, op string, _ any) (any, error) {
+		if service+":"+op != "sts:get-caller-identity" {
+			t.Fatalf("unexpected provider operation during retry: %s:%s", service, op)
+		}
+		return map[string]string{"Account": cfg.AWS.AccountID}, nil
+	}}}
+	if _, err := retry.Resolve(context.Background(), pinned, false); err != nil {
+		t.Fatalf("retry without repeating pinned secret reference: %v", err)
+	}
+	if retry.cfg.Observability.NewRelicSecretARN != testConfig().Observability.NewRelicSecretARN {
+		t.Fatal("retry did not restore the pinned New Relic secret reference")
+	}
+	for _, change := range []string{"ami", "account", "region", "network", "placement", "new_relic_secret"} {
 		t.Run(change, func(t *testing.T) {
 			candidate := next.cfg
 			// Copy through JSON so edits never mutate slices held by the prior session.
@@ -58,6 +74,8 @@ func TestBootstrapResolvePinsPlacementAndImages(t *testing.T) {
 				candidate.Network.VPCCIDR = "10.90.0.0/16"
 			case "placement":
 				candidate.Network.AvailabilityZones[0] = "us-west-2c"
+			case "new_relic_secret":
+				candidate.Observability.NewRelicSecretARN = "arn:aws:secretsmanager:us-west-2:123456789012:secret:crane/other-new-relic-xyz987"
 			}
 			denied := &fakeAWS{call: func(_, op string, _ any) (any, error) { t.Fatalf("call after changed config: %s", op); return nil, nil }}
 			retry := &bootstrapSession{cfg: candidate, client: denied}
@@ -83,6 +101,20 @@ func TestBootstrapAccountMismatchAndMissingImages(t *testing.T) {
 		if _, err := session.Resolve(context.Background(), nil, false); err == nil {
 			t.Fatal("expected validation failure")
 		}
+	}
+}
+
+func TestBootstrapRequiresNewRelicSecretBeforeProviderCalls(t *testing.T) {
+	cfg := testConfig().WithDefaults()
+	cfg.Observability.NewRelicSecretARN = ""
+	cfg.SPIRE.AMIID = "ami-pinned"
+	cfg.Platform.AMIID = "ami-pinned"
+	session := &bootstrapSession{cfg: cfg, client: &fakeAWS{call: func(_, op string, _ any) (any, error) {
+		t.Fatalf("provider call %s before local observability validation", op)
+		return nil, nil
+	}}}
+	if _, err := session.Resolve(context.Background(), nil, false); err == nil {
+		t.Fatal("expected missing New Relic secret reference to fail")
 	}
 }
 
