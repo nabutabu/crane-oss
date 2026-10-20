@@ -1,0 +1,42 @@
+# Strategic merge patch for the existing Deployment; no other binary is enabled.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: crane-api
+  namespace: crane-system
+spec:
+  template:
+    spec:
+      terminationGracePeriodSeconds: 45
+      containers:
+        - name: crane-api
+          env:
+            - name: LOG_LEVEL
+              value: info
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: https://otel-collector.crane-system.svc.cluster.local:4317
+            - name: OTEL_EXPORTER_OTLP_PROTOCOL
+              value: grpc
+            - name: OTEL_EXPORTER_OTLP_CERTIFICATE
+              value: /etc/crane-otel/ca.crt
+            - name: OTEL_EXPORTER_OTLP_HEADERS
+              valueFrom:
+                secretKeyRef:
+                  name: crane-api-otlp
+                  key: headers
+            - name: OTEL_SERVICE_NAME
+              value: crane-api
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: deployment.environment.name=production,k8s.cluster.name=layer-zero,deployment.id=REPLACE_DEPLOYMENT_ID,service.instance.id=$(POD_NAME)
+          volumeMounts:
+            - name: otel-ca
+              mountPath: /etc/crane-otel
+              readOnly: true
+      volumes:
+        - name: otel-ca
+          configMap:
+            name: otel-collector-ca

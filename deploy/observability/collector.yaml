@@ -1,0 +1,292 @@
+# Render REPLACE_PROTECTED_PLATFORM_NODE before applying. Secrets are external.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otel-collector
+  namespace: crane-system
+data:
+  collector.yaml: |
+    extensions:
+      health_check:
+        endpoint: 0.0.0.0:13133
+      file_storage:
+        directory: /var/lib/otelcol
+        create_directory: true
+      bearertokenauth/receiver:
+        token: ${env:CRANE_OTLP_RECEIVER_TOKEN}
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+            max_recv_msg_size_mib: 4
+            tls:
+              cert_file: /etc/otel-tls/tls.crt
+              key_file: /etc/otel-tls/tls.key
+              min_version: "1.2"
+            auth:
+              authenticator: bearertokenauth/receiver
+      prometheus/self:
+        config:
+          scrape_configs:
+            - job_name: otel-collector
+              scrape_interval: 15s
+              static_configs:
+                - targets: [127.0.0.1:8888]
+    processors:
+      memory_limiter:
+        check_interval: 1s
+        limit_mib: 384
+        spike_limit_mib: 96
+      batch:
+        timeout: 1s
+        send_batch_size: 512
+        send_batch_max_size: 1024
+      resource/collector:
+        attributes:
+          - key: service.name
+            value: otel-collector
+            action: upsert
+          - key: service.instance.id
+            value: ${env:POD_NAME}
+            action: upsert
+          - key: k8s.cluster.name
+            value: layer-zero
+            action: upsert
+    exporters:
+      otlp_http/newrelic:
+        endpoint: ${env:NEW_RELIC_OTLP_ENDPOINT}
+        headers:
+          api-key: ${env:NEW_RELIC_LICENSE_KEY}
+        tls:
+          insecure: false
+          min_version: "1.2"
+        timeout: 15s
+        retry_on_failure:
+          enabled: true
+          initial_interval: 5s
+          max_interval: 30s
+          max_elapsed_time: 0s
+        sending_queue:
+          enabled: true
+          num_consumers: 4
+          queue_size: 500
+          storage: file_storage
+    service:
+      extensions: [health_check, file_storage, bearertokenauth/receiver]
+      telemetry:
+        logs:
+          level: info
+          encoding: json
+        metrics:
+          level: detailed
+          readers:
+            - pull:
+                exporter:
+                  prometheus:
+                    host: 0.0.0.0
+                    port: 8888
+      pipelines:
+        logs:
+          receivers: [otlp]
+          processors: [memory_limiter, batch]
+          exporters: [otlp_http/newrelic]
+        traces:
+          receivers: [otlp]
+          processors: [memory_limiter, batch]
+          exporters: [otlp_http/newrelic]
+        metrics:
+          receivers: [otlp]
+          processors: [memory_limiter, batch]
+          exporters: [otlp_http/newrelic]
+        metrics/collector:
+          receivers: [prometheus/self]
+          processors: [memory_limiter, resource/collector, batch]
+          exporters: [otlp_http/newrelic]
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: crane-telemetry-local
+provisioner: kubernetes.io/no-provisioner
+volumeBindingMode: WaitForFirstConsumer
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: otel-collector-queue
+spec:
+  capacity:
+    storage: 10Gi
+  volumeMode: Filesystem
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: crane-telemetry-local
+  local:
+    path: /var/lib/crane/otel-queue
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: kubernetes.io/hostname
+              operator: In
+              values: [REPLACE_PROTECTED_PLATFORM_NODE]
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: otel-collector-queue
+  namespace: crane-system
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: crane-telemetry-local
+  volumeName: otel-collector-queue
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: otel-collector
+  namespace: crane-system
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: otel-collector
+  template:
+    metadata:
+      labels:
+        app: otel-collector
+    spec:
+      automountServiceAccountToken: false
+      nodeSelector:
+        kubernetes.io/hostname: REPLACE_PROTECTED_PLATFORM_NODE
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+      terminationGracePeriodSeconds: 45
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: collector
+          image: otel/opentelemetry-collector-contrib:0.161.0@sha256:fd328de2552466ad78385e1b1289c3f2402b1c45f265b252aab1955b42845ac1
+          args: [--config=/etc/otel/collector.yaml]
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          env:
+            - name: GOMEMLIMIT
+              value: 400MiB
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: NEW_RELIC_OTLP_ENDPOINT
+              value: https://otlp.nr-data.net
+            - name: NEW_RELIC_LICENSE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: new-relic-otlp
+                  key: license-key
+            - name: CRANE_OTLP_RECEIVER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: crane-api-otlp
+                  key: token
+          ports:
+            - name: otlp-grpc
+              containerPort: 4317
+            - name: health
+              containerPort: 13133
+            - name: metrics
+              containerPort: 8888
+          readinessProbe:
+            httpGet:
+              path: /
+              port: health
+          livenessProbe:
+            httpGet:
+              path: /
+              port: health
+            initialDelaySeconds: 10
+          volumeMounts:
+            - name: config
+              mountPath: /etc/otel
+              readOnly: true
+            - name: tls
+              mountPath: /etc/otel-tls
+              readOnly: true
+            - name: queue
+              mountPath: /var/lib/otelcol
+      volumes:
+        - name: config
+          configMap:
+            name: otel-collector
+        - name: tls
+          secret:
+            secretName: otel-collector-tls
+        - name: queue
+          persistentVolumeClaim:
+            claimName: otel-collector-queue
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: otel-collector
+  namespace: crane-system
+spec:
+  type: ClusterIP
+  selector:
+    app: otel-collector
+  ports:
+    - name: otlp-grpc
+      port: 4317
+      targetPort: otlp-grpc
+    - name: metrics
+      port: 8888
+      targetPort: metrics
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: otel-collector
+  namespace: crane-system
+spec:
+  podSelector:
+    matchLabels:
+      app: otel-collector
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: crane-api
+      ports:
+        - protocol: TCP
+          port: 4317
+    - from:
+        - podSelector:
+            matchLabels:
+              crane.io/telemetry-reader: "true"
+      ports:
+        - protocol: TCP
+          port: 8888

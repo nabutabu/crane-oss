@@ -68,9 +68,10 @@ queue protects records only after they reach that Collector.
 
 ## Rollout gate
 
-This change supplies the application logging pipeline. Collector deployment,
-HTTP request instrumentation, New Relic dashboards, and live acceptance are
-separate review units. Keep zone provisioning paused until the complete gate is
+The application pipeline, HTTP request instrumentation, background context,
+and Collector deployment are separate review units. See
+[Collector deployment and live acceptance](../deploy/observability/README.md)
+for manifests, dashboard inputs, and the acceptance procedure. Keep zone provisioning paused until the complete gate is
 recorded: startup, request, background and controlled error logs in New Relic;
 searchable resource metadata and log-to-trace correlation; synthetic-secret
 redaction in stdout and export; graceful-termination flush; Collector restart and
