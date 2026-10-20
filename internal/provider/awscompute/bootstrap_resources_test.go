@@ -270,12 +270,27 @@ func TestInfrastructureFirstRunAndRetry(t *testing.T) {
 	if !strings.Contains(policies[cfg.Name+"-platform"], "ec2:ResourceTag/CraneBootstrap") {
 		t.Fatal("platform role does not protect bootstrap instances")
 	}
-	if !strings.Contains(policies[cfg.Name+"-platform"], cfg.Observability.NewRelicSecretARN) || !strings.Contains(policies[cfg.Name+"-platform"], "secretsmanager:GetSecretValue") {
-		t.Fatal("platform role cannot read the configured New Relic secret")
+	for role, policy := range policies {
+		var document struct {
+			Statement []struct {
+				Action   any
+				Resource any
+			}
+		}
+		if err := json.Unmarshal([]byte(policy), &document); err != nil {
+			t.Fatal(err)
+		}
+		for _, statement := range document.Statement {
+			if statement.Action != "secretsmanager:GetSecretValue" {
+				continue
+			}
+			resources, _ := json.Marshal(statement.Resource)
+			if string(resources) != `["arn:runtime"]` && !(role == cfg.Name+"-spire" && string(resources) == `"arn:master"`) {
+				t.Fatalf("unexpected secret access in %s: %s", role, resources)
+			}
+		}
 	}
-	if strings.Contains(policies[cfg.Name+"-spire"], cfg.Observability.NewRelicSecretARN) {
-		t.Fatal("SPIRE role must not read the New Relic secret")
-	}
+
 }
 
 func TestDiscoveryDeniedCannotProvision(t *testing.T) {

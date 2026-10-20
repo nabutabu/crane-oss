@@ -3,7 +3,7 @@
 The first-zone bootstrap now installs the pinned Collector and configures Crane
 API and Dominator to send logs, traces and metrics to it. See
 [bootstrap-managed observability](../../docs/bootstrap-observability.md) for
-the required New Relic secret reference and bootstrap behavior. These manifests
+the backend configuration Secret and stop-and-rerun bootstrap workflow. These manifests
 remain an operator workflow for an already-running layer-zero cluster; do not
 apply them over a Collector managed by bootstrap. Neither workflow upgrades the
 database or provisions a zone. Use the existing release pipeline to build and
@@ -14,22 +14,23 @@ Cilium or container-runtime pins.
 
 Use the intended layer-zero Kubernetes context explicitly. Record its actual
 Kubernetes, Cilium, runtime and Crane image versions in the acceptance record.
-This repository does not assume a currently selected context or a New Relic
-account. The New Relic account and ingest license key are external prerequisites.
+This repository does not assume a currently selected context or telemetry
+backend. A working OTLP/HTTP backend and its required credentials are external
+prerequisites. The New Relic queries and dashboard below are optional examples.
 
 Prepare the following through your deployment secret-management system, without
 printing values or adding them to Git:
 
 | Object in `crane-system` | Required data | Readers |
 | --- | --- | --- |
-| Secret `new-relic-otlp` | `license-key`: New Relic ingest key | Collector only |
+| Secret `otel-exporter-config` | `exporter.yaml`: native `exporters.otlp_http/backend` fragment | Collector only |
 | Secret `otel-collector-tls` | `tls.crt`, `tls.key`: receiver certificate/key | Collector only |
 | ConfigMap `otel-collector-ca` | `ca.crt`: receiver's public issuing CA | Crane API and Dominator |
 | Secret `crane-otel-receiver` | `token`: random receiver token | Collector only |
 | Secret `crane-otel-client` | `headers`: `Authorization=Bearer%20` followed by the receiver token | Crane API and Dominator |
 
 Use a high-entropy URL-safe receiver token so the headers value needs no further
-encoding. This token is independent of the New Relic key and Crane API admin or
+encoding. This token is independent of backend credentials and Crane API admin or
 adapter credentials. Restrict Secret RBAC to the deployment system. Rotate the
 receiver token in both Secrets and both workloads together. Restart the Collector when its TLS
 certificate, configuration or environment changes.
@@ -48,10 +49,12 @@ node access workflow; no new remote binary distribution is required.
 Render `REPLACE_PROTECTED_PLATFORM_NODE` in `collector.yaml` to the actual
 `kubernetes.io/hostname` value for that protected node. Render
 `REPLACE_DEPLOYMENT_ID` in `crane-api-patch.yaml` to the deployment identity.
-Use deployment-specific copies outside Git for these values. The Collector's
-New Relic endpoint defaults to `https://otlp.nr-data.net`; select the account's
-correct regional endpoint when necessary. Keep HTTPS and certificate validation
-on for the backend.
+Use deployment-specific copies outside Git for these values. Supply the backend
+endpoint, authentication headers and optional TLS files through the operator-owned
+`otel-exporter-config` Secret; see [the example](exporter.example.yaml) and the
+[Secret contract](../../docs/bootstrap-observability.md#backend-configuration).
+Keep HTTPS and certificate validation enabled. No backend is selected by default.
+Update the Secret and restart the Collector to rotate backend credentials.
 
 Apply the rendered Collector resources, wait for readiness, then patch both
 application Deployments with their rendered strategic merge patches. Select
@@ -79,8 +82,8 @@ authentication therefore enforce workload access for that path. Verify the
 policy with the live Cilium configuration, and prove an unauthenticated client
 is rejected. Do not rely on the policy alone for host-origin traffic.
 
-The New Relic key is only in Collector environment configuration. It is not
-attached as an application resource attribute or given to either application.
+Backend settings are mounted read-only from the Secret into the Collector.
+They are not attached as application resource attributes or given to either application.
 No filelog receiver is configured. Exclude Crane API and Dominator stdout from
 any existing log agents before enabling application OTLP, so each has one
 ingestion path.
@@ -109,7 +112,7 @@ failures, send failures and successful delivery rates for all three signals.
 Scrape `:8888/metrics` through the internal Service, using an authorized scraper.
 The Collector also scrapes itself and forwards its metrics with
 `service.name=otel-collector`. Health on pod port 13133 reports process health;
-it is not proof that New Relic is receiving records. Local Collector logs expose
+it is not proof that the configured backend is receiving records. Local Collector logs expose
 export failures, including backend status codes. Treat them as sensitive
 operator diagnostics and never enable payload/debug exporters with live data.
 
@@ -120,7 +123,7 @@ bounded queue. HTTP 401/403 indicates account/key/authorization configuration;
 429 indicates throttling; 5xx and timeouts usually retry. New Relic integration
 errors can reveal ingestion validation failures even when transport succeeds.
 
-## Dashboard and queries
+## Optional New Relic dashboard and queries
 
 `dashboard.json` is a dashboardCreate input object for NerdGraph. Replace every
 `accountId: 0` in its NRQL query configurations with the intended account ID,

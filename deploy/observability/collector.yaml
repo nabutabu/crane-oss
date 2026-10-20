@@ -54,10 +54,7 @@ data:
             value: layer-zero
             action: upsert
     exporters:
-      otlp_http/newrelic:
-        endpoint: ${env:NEW_RELIC_OTLP_ENDPOINT}
-        headers:
-          api-key: ${env:NEW_RELIC_LICENSE_KEY}
+      otlp_http/backend:
         tls:
           insecure: false
           min_version: "1.2"
@@ -90,19 +87,19 @@ data:
         logs:
           receivers: [otlp]
           processors: [memory_limiter, batch]
-          exporters: [otlp_http/newrelic]
+          exporters: [otlp_http/backend]
         traces:
           receivers: [otlp]
           processors: [memory_limiter, batch]
-          exporters: [otlp_http/newrelic]
+          exporters: [otlp_http/backend]
         metrics:
           receivers: [otlp]
           processors: [memory_limiter, batch]
-          exporters: [otlp_http/newrelic]
+          exporters: [otlp_http/backend]
         metrics/collector:
           receivers: [prometheus/self]
           processors: [memory_limiter, resource/collector, batch]
-          exporters: [otlp_http/newrelic]
+          exporters: [otlp_http/backend]
 ---
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
@@ -180,7 +177,7 @@ spec:
       containers:
         - name: collector
           image: otel/opentelemetry-collector-contrib:0.161.0@sha256:fd328de2552466ad78385e1b1289c3f2402b1c45f265b252aab1955b42845ac1
-          args: [--config=/etc/otel/collector.yaml]
+          args: [--config=/etc/otel/collector.yaml, --config=/etc/otel-exporter/exporter.yaml]
           securityContext:
             readOnlyRootFilesystem: true
             allowPrivilegeEscalation: false
@@ -200,13 +197,6 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
-            - name: NEW_RELIC_OTLP_ENDPOINT
-              value: https://otlp.nr-data.net
-            - name: NEW_RELIC_LICENSE_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: new-relic-otlp
-                  key: license-key
             - name: CRANE_OTLP_RECEIVER_TOKEN
               valueFrom:
                 secretKeyRef:
@@ -229,6 +219,9 @@ spec:
               port: health
             initialDelaySeconds: 10
           volumeMounts:
+            - name: exporter-config
+              mountPath: /etc/otel-exporter
+              readOnly: true
             - name: config
               mountPath: /etc/otel
               readOnly: true
@@ -238,6 +231,10 @@ spec:
             - name: queue
               mountPath: /var/lib/otelcol
       volumes:
+        - name: exporter-config
+          secret:
+            secretName: otel-exporter-config
+            defaultMode: 0440
         - name: config
           configMap:
             name: otel-collector

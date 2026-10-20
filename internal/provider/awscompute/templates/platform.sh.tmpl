@@ -12,7 +12,6 @@ readonly K8S_VERSION="[[ .KubernetesVersion ]]"
 readonly CILIUM_VERSION="[[ .CiliumVersion ]]"
 readonly POD_CIDR="[[ .PodCIDR ]]"
 readonly RUNTIME_SECRET_ARN="[[ .Infra.RuntimeSecretARN ]]"
-readonly NEW_RELIC_SECRET_ARN="[[ .Config.Observability.NewRelicSecretARN ]]"
 readonly DB_ENDPOINT="[[ .Infra.DBEndpoint ]]"
 readonly DB_PORT="[[ .Config.RDS.Port ]]"
 readonly CA_BUNDLE="/etc/crane/rds-ca.pem"
@@ -151,6 +150,17 @@ metadata:
 NS
 
 step "installing the shared OTLP Collector and private receiver credentials"
+# The deployment system owns backend configuration. Never print, copy or
+# overwrite its contents; inspect only key presence and object identity.
+if ! EXPORTER_CONFIG_PRESENT="$(kubectl -n crane-system get secret otel-exporter-config --ignore-not-found -o go-template='{{if index .data "exporter.yaml"}}present{{end}}')"; then
+  echo "Could not inspect Collector backend Secret crane-system/otel-exporter-config. Check Kubernetes access and availability, then retry bootstrap with the same deployment state. Do not replace the existing Secret to resolve an access error." >&2
+  exit 1
+fi
+if [ "$EXPORTER_CONFIG_PRESENT" != present ]; then
+  echo "Collector backend configuration required: create Secret crane-system/otel-exporter-config with a nonempty exporter.yaml key, then rerun bootstrap with the same deployment state. Use private administrative access and kubectl create secret generic otel-exporter-config -n crane-system --from-file=exporter.yaml=/secure/exporter.yaml. See docs/bootstrap-observability.md. Readiness has not been finalized." >&2
+  exit 1
+fi
+EXPORTER_SECRET_VERSION="$(kubectl -n crane-system get secret otel-exporter-config -o jsonpath='{.metadata.uid}:{.metadata.resourceVersion}')"
 readonly OTEL_STATE_DIR="$SECRET_DIR/otel"
 readonly OTEL_QUEUE_DIR="/var/lib/crane/otel-queue"
 install -d -m 0700 "$OTEL_STATE_DIR"
@@ -184,16 +194,8 @@ chmod 0644 "$OTEL_STATE_DIR/tls.crt"
 
 OTEL_TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$OTEL_TMP_DIR"' EXIT
-aws secretsmanager get-secret-value --secret-id "$NEW_RELIC_SECRET_ARN" --query SecretString --output text | tr -d '\r\n' > "$OTEL_TMP_DIR/new-relic-license-key"
-test -s "$OTEL_TMP_DIR/new-relic-license-key"
-if grep -qxE 'None|\(None\)' "$OTEL_TMP_DIR/new-relic-license-key"; then
-  echo "configured New Relic secret has no SecretString" >&2
-  exit 1
-fi
 OTEL_TOKEN="$(cat "$OTEL_STATE_DIR/receiver-token")"
 printf 'Authorization=Bearer%%20%s' "$OTEL_TOKEN" > "$OTEL_TMP_DIR/headers"
-kubectl create secret generic new-relic-otlp -n crane-system \
-  --from-file=license-key="$OTEL_TMP_DIR/new-relic-license-key" --dry-run=client -o yaml | kubectl apply -f -
 kubectl create secret generic crane-otel-receiver -n crane-system \
   --from-file=token="$OTEL_STATE_DIR/receiver-token" --dry-run=client -o yaml | kubectl apply -f -
 kubectl create secret generic crane-otel-client -n crane-system \
@@ -210,7 +212,7 @@ case "$NODE_NAME" in
 esac
 printf %s '[[ .CollectorManifestGzipBase64 ]]' | base64 -d | gzip -d > "$CRANE_DIR/otel-collector.yaml"
 sed "s/REPLACE_PROTECTED_PLATFORM_NODE/$NODE_NAME/g" "$CRANE_DIR/otel-collector.yaml" > "$CRANE_DIR/otel-collector.node.yaml"
-OTEL_CONFIG_HASH="$(sha256sum "$CRANE_DIR/otel-collector.node.yaml" "$OTEL_TMP_DIR/new-relic-license-key" "$OTEL_TMP_DIR/headers" "$OTEL_STATE_DIR/receiver-token" "$OTEL_STATE_DIR/tls.crt" "$OTEL_STATE_DIR/tls.key" | awk '{print $1}' | sha256sum | awk '{print $1}')"
+OTEL_CONFIG_HASH="$({ sha256sum "$CRANE_DIR/otel-collector.node.yaml" "$OTEL_TMP_DIR/headers" "$OTEL_STATE_DIR/receiver-token" "$OTEL_STATE_DIR/tls.crt" "$OTEL_STATE_DIR/tls.key" | awk '{print $1}'; printf '%s\n' "$EXPORTER_SECRET_VERSION"; } | sha256sum | awk '{print $1}')"
 sed "s/REPLACE_OTEL_CONFIG_HASH/$OTEL_CONFIG_HASH/g" "$CRANE_DIR/otel-collector.node.yaml" > "$CRANE_DIR/otel-collector.rendered.yaml"
 chmod 0600 "$CRANE_DIR/otel-collector.yaml" "$CRANE_DIR/otel-collector.rendered.yaml"
 kubectl apply -f "$CRANE_DIR/otel-collector.rendered.yaml"

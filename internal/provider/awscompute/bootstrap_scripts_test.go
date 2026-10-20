@@ -32,10 +32,6 @@ func testConfig() bootstrapConfig {
 			CiliumVersion:     "1.19.0",
 			PodCIDR:           "10.244.0.0/16",
 		},
-		Observability: ObservabilityConfig{
-			NewRelicSecretARN:    "arn:aws:secretsmanager:us-west-2:123456789012:secret:crane-platform/new-relic-abc123",
-			NewRelicOTLPEndpoint: "https://otlp.nr-data.net",
-		},
 		RDS: RDSConfig{
 			Identifier:               "crane-platform-db",
 			Engine:                   "postgres",
@@ -238,7 +234,9 @@ func TestRenderCollectorManifest(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, marker := range []string{
-		`value: https://otlp.nr-data.net`,
+		`otlp_http/backend:`,
+		`secretName: otel-exporter-config`,
+		`--config=/etc/otel-exporter/exporter.yaml`,
 		`name: crane-otel-receiver`,
 		`crane.io/otel-config-hash: REPLACE_OTEL_CONFIG_HASH`,
 		`path: /var/lib/crane/otel-queue`,
@@ -250,8 +248,8 @@ func TestRenderCollectorManifest(t *testing.T) {
 			t.Errorf("Collector manifest missing %q", marker)
 		}
 	}
-	if strings.Contains(manifest, testConfig().Observability.NewRelicSecretARN) || strings.Contains(manifest, "[[ .") {
-		t.Fatal("Collector manifest contains a secret reference or unrendered template")
+	if strings.Contains(manifest, "[[ .") {
+		t.Fatal("Collector manifest contains an unrendered template")
 	}
 }
 

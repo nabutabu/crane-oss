@@ -642,9 +642,6 @@ func ensureIAM(ctx context.Context, aws AWSClient, cfg bootstrapConfig, infra In
 		if kind == "spire" {
 			statements = append(statements, map[string]any{"Effect": "Allow", "Action": "secretsmanager:GetSecretValue", "Resource": infra.DBSecretARN}, map[string]any{"Effect": "Allow", "Action": "ssm:PutParameter", "Resource": bundleParameterARN(cfg)})
 		} else {
-			if cfg.Observability.NewRelicSecretARN != "" {
-				statements = append(statements, map[string]any{"Effect": "Allow", "Action": "secretsmanager:GetSecretValue", "Resource": cfg.Observability.NewRelicSecretARN})
-			}
 			statements = append(statements,
 				map[string]any{"Effect": "Allow", "Action": "ecr:GetAuthorizationToken", "Resource": "*"},
 				map[string]any{"Effect": "Allow", "Action": []string{"ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer", "ecr:BatchCheckLayerAvailability"}, "Resource": "arn:aws:ecr:" + cfg.AWS.Region + ":" + cfg.AWS.AccountID + ":repository/*"},

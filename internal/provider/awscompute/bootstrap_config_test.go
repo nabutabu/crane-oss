@@ -1,6 +1,7 @@
 package awscompute
 
 import (
+	"encoding/json"
 	"testing"
 )
 
@@ -54,32 +55,13 @@ func TestRejectInvalidBootstrapNetwork(t *testing.T) {
 	}
 }
 
-func TestValidateObservabilityConfig(t *testing.T) {
-	cfg := testConfig()
-	cfg.Observability.NewRelicOTLPEndpoint = ""
-	if got := cfg.WithDefaults().Observability.NewRelicOTLPEndpoint; got != "https://otlp.nr-data.net" {
-		t.Fatalf("unexpected default endpoint %q", got)
-	}
-	for _, tc := range []struct {
-		name string
-		edit func(*bootstrapConfig)
-	}{
-		{"wrong account", func(c *bootstrapConfig) {
-			c.Observability.NewRelicSecretARN = "arn:aws:secretsmanager:us-west-2:999999999999:secret:crane/new-relic-abcd"
-		}},
-		{"wrong region", func(c *bootstrapConfig) {
-			c.Observability.NewRelicSecretARN = "arn:aws:secretsmanager:us-east-1:123456789012:secret:crane/new-relic-abcd"
-		}},
-		{"http endpoint", func(c *bootstrapConfig) { c.Observability.NewRelicOTLPEndpoint = "http://otlp.nr-data.net" }},
-		{"endpoint credentials", func(c *bootstrapConfig) { c.Observability.NewRelicOTLPEndpoint = "https://user:pass@otlp.nr-data.net" }},
-		{"endpoint path", func(c *bootstrapConfig) { c.Observability.NewRelicOTLPEndpoint = "https://otlp.nr-data.net/v1/logs" }},
+func TestInputRejectsRetiredBackendConfiguration(t *testing.T) {
+	for _, raw := range []string{
+		`{"observability":{"new_relic_secret_arn":"retired-reference"}}`,
+		`{"unexpected_field":true}`,
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			candidate := cfg
-			tc.edit(&candidate)
-			if err := candidate.Validate(); err == nil {
-				t.Fatal("expected invalid observability configuration")
-			}
-		})
+		if _, err := decodeBootstrapSettings(json.RawMessage(raw)); err == nil {
+			t.Fatal("input accepted unsupported provider settings")
+		}
 	}
 }

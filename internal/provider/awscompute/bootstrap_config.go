@@ -5,21 +5,18 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
-	"net/url"
 	"regexp"
-	"strconv"
 	"strings"
 )
 
 type bootstrapConfig struct {
-	Name          string              `json:"name"`
-	AWS           AWSConfig           `json:"aws"`
-	Network       NetworkConfig       `json:"network"`
-	SPIRE         SPIREConfig         `json:"spire"`
-	RDS           RDSConfig           `json:"rds"`
-	Platform      PlatformConfig      `json:"platform"`
-	Observability ObservabilityConfig `json:"observability"`
-	FirstZone     json.RawMessage     `json:"first_zone"`
+	Name      string          `json:"name"`
+	AWS       AWSConfig       `json:"aws"`
+	Network   NetworkConfig   `json:"network"`
+	SPIRE     SPIREConfig     `json:"spire"`
+	RDS       RDSConfig       `json:"rds"`
+	Platform  PlatformConfig  `json:"platform"`
+	FirstZone json.RawMessage `json:"first_zone"`
 }
 
 type AWSConfig struct {
@@ -62,13 +59,6 @@ type PlatformConfig struct {
 	KubernetesVersion string `json:"kubernetes_version"`
 	CiliumVersion     string `json:"cilium_version"`
 	PodCIDR           string `json:"pod_cidr"`
-}
-
-// ObservabilityConfig holds AWS-side bootstrap references and the Collector's
-// OTLP/HTTP destination. It contains references only, never credential values.
-type ObservabilityConfig struct {
-	NewRelicSecretARN    string `json:"new_relic_secret_arn"`
-	NewRelicOTLPEndpoint string `json:"new_relic_otlp_endpoint,omitempty"`
 }
 
 type RDSConfig struct {
@@ -128,9 +118,6 @@ func (c bootstrapConfig) WithDefaults() bootstrapConfig {
 	}
 	if c.Platform.PodCIDR == "" {
 		c.Platform.PodCIDR = "10.244.0.0/16"
-	}
-	if c.Observability.NewRelicOTLPEndpoint == "" {
-		c.Observability.NewRelicOTLPEndpoint = "https://otlp.nr-data.net"
 	}
 	if c.RDS.Identifier == "" {
 		c.RDS.Identifier = c.Name + "-db"
@@ -222,14 +209,6 @@ func (c bootstrapConfig) Validate() error {
 	if c.SPIRE.Image != "" && c.SPIRE.Image != "ghcr.io/spiffe/spire-server:"+c.SPIRE.Version {
 		return errors.New("spire.image must match the pinned public SPIRE server version, or be omitted")
 	}
-	if c.Observability.NewRelicSecretARN != "" {
-		if err := validateNewRelicSecretARN(c.Observability.NewRelicSecretARN, c.AWS.Region, c.AWS.AccountID); err != nil {
-			return err
-		}
-	}
-	if err := validateNewRelicEndpoint(c.Observability.NewRelicOTLPEndpoint); err != nil {
-		return err
-	}
 	if !sameStrings(c.RDS.Databases, []string{"spire", "crane"}) {
 		return errors.New("bootstrap requires exactly the spire and crane databases")
 	}
@@ -293,34 +272,6 @@ func (c bootstrapConfig) Validate() error {
 	if len(c.FirstZone) > 0 {
 		if _, err := topology(c, Infrastructure{AvailabilityZones: []string{c.AWS.Region + "a"}, PublicSubnetIDs: []string{"validation-only"}}); err != nil {
 			return err
-		}
-	}
-	return nil
-}
-
-func validateNewRelicSecretARN(raw, region, accountID string) error {
-	parts := strings.Split(raw, ":")
-	if len(parts) != 7 || parts[0] != "arn" || parts[1] != "aws" || parts[2] != "secretsmanager" || parts[3] != region || !regexp.MustCompile(`^[0-9]{12}$`).MatchString(parts[4]) || parts[5] != "secret" || parts[6] == "" {
-		return errors.New("observability.new_relic_secret_arn must be a Secrets Manager ARN in aws.region")
-	}
-	if accountID != "" && parts[4] != accountID {
-		return errors.New("observability.new_relic_secret_arn must be in aws.account_id")
-	}
-	if !regexp.MustCompile(`^[A-Za-z0-9/_+=.@-]+$`).MatchString(parts[6]) {
-		return errors.New("observability.new_relic_secret_arn has an invalid resource name")
-	}
-	return nil
-}
-
-func validateNewRelicEndpoint(raw string) error {
-	u, err := url.Parse(raw)
-	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") || !regexp.MustCompile(`^[A-Za-z0-9.-]+$`).MatchString(u.Hostname()) {
-		return errors.New("observability.new_relic_otlp_endpoint must be an HTTPS origin without credentials, path or query")
-	}
-	if port := u.Port(); port != "" {
-		value, err := strconv.Atoi(port)
-		if err != nil || value < 1 || value > 65535 {
-			return errors.New("observability.new_relic_otlp_endpoint has an invalid port")
 		}
 	}
 	return nil

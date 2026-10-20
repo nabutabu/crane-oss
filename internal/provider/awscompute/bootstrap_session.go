@@ -6,20 +6,18 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
-	"strings"
 
 	"github.com/nabutabu/crane-oss/internal/bootstrap"
 )
 
 // BootstrapSettings contains AWS choices; software and topology use shared configuration.
 type BootstrapSettings struct {
-	Region        string              `json:"region"`
-	AccountID     string              `json:"account_id,omitempty"`
-	Network       NetworkConfig       `json:"network"`
-	RDS           RDSConfig           `json:"rds"`
-	Observability ObservabilityConfig `json:"observability"`
-	SPIREHost     BootstrapHost       `json:"spire_host"`
-	PlatformHost  BootstrapHost       `json:"platform_host"`
+	Region       string        `json:"region"`
+	AccountID    string        `json:"account_id,omitempty"`
+	Network      NetworkConfig `json:"network"`
+	RDS          RDSConfig     `json:"rds"`
+	SPIREHost    BootstrapHost `json:"spire_host"`
+	PlatformHost BootstrapHost `json:"platform_host"`
 }
 type BootstrapHost struct {
 	AMIID        string `json:"ami_id,omitempty"`
@@ -64,7 +62,7 @@ func NewBootstrap(shared bootstrap.Config) (bootstrap.Session, error) {
 
 func composeBootstrapConfig(shared bootstrap.Config, settings BootstrapSettings) bootstrapConfig {
 	return bootstrapConfig{
-		Name: shared.Name, AWS: AWSConfig{Region: settings.Region, AccountID: settings.AccountID}, Network: settings.Network, RDS: settings.RDS, Observability: settings.Observability, FirstZone: shared.FirstZone,
+		Name: shared.Name, AWS: AWSConfig{Region: settings.Region, AccountID: settings.AccountID}, Network: settings.Network, RDS: settings.RDS, FirstZone: shared.FirstZone,
 		SPIRE:    SPIREConfig{Version: shared.SPIRE.Version, TrustDomain: shared.SPIRE.TrustDomain, Image: shared.SPIRE.Image, AMIID: settings.SPIREHost.AMIID, InstanceType: settings.SPIREHost.InstanceType, StorageGiB: settings.SPIREHost.StorageGiB},
 		Platform: PlatformConfig{CraneAPIImage: shared.Platform.CraneAPIImage, DominatorImage: shared.Platform.DominatorImage, KubernetesVersion: shared.Platform.KubernetesVersion, CiliumVersion: shared.Platform.CiliumVersion, PodCIDR: shared.Platform.PodCIDR, AMIID: settings.PlatformHost.AMIID, InstanceType: settings.PlatformHost.InstanceType, StorageGiB: settings.PlatformHost.StorageGiB},
 	}
@@ -75,22 +73,19 @@ func sharedConfig(cfg bootstrapConfig) bootstrap.Config {
 		Platform: bootstrap.PlatformConfig{CraneAPIImage: cfg.Platform.CraneAPIImage, DominatorImage: cfg.Platform.DominatorImage, KubernetesVersion: cfg.Platform.KubernetesVersion, CiliumVersion: cfg.Platform.CiliumVersion, PodCIDR: cfg.Platform.PodCIDR}}
 }
 func settingsFor(cfg bootstrapConfig) BootstrapSettings {
-	return BootstrapSettings{Region: cfg.AWS.Region, AccountID: cfg.AWS.AccountID, Network: cfg.Network, RDS: cfg.RDS, Observability: cfg.Observability,
+	return BootstrapSettings{Region: cfg.AWS.Region, AccountID: cfg.AWS.AccountID, Network: cfg.Network, RDS: cfg.RDS,
 		SPIREHost:    BootstrapHost{AMIID: cfg.SPIRE.AMIID, InstanceType: cfg.SPIRE.InstanceType, StorageGiB: cfg.SPIRE.StorageGiB},
 		PlatformHost: BootstrapHost{AMIID: cfg.Platform.AMIID, InstanceType: cfg.Platform.InstanceType, StorageGiB: cfg.Platform.StorageGiB}}
 }
 func (s *bootstrapSession) Resolve(ctx context.Context, previous json.RawMessage, prepare bool) (json.RawMessage, error) {
 	if len(previous) > 0 {
-		prior, err := decodeBootstrapSettings(previous)
+		prior, err := decodePinnedBootstrapSettings(previous)
 		if err != nil {
 			return nil, err
 		}
 		if err := mergePinnedSettings(&s.cfg, prior); err != nil {
 			return nil, err
 		}
-	}
-	if !prepare && strings.TrimSpace(s.cfg.Observability.NewRelicSecretARN) == "" {
-		return nil, fmt.Errorf("provider_config.observability.new_relic_secret_arn is required for bootstrap")
 	}
 	if !prepare && (s.cfg.SPIRE.AMIID == "" || s.cfg.Platform.AMIID == "") {
 		return nil, fmt.Errorf("provide provider_config.spire_host.ami_id and platform_host.ami_id after preparing the endpoint and building golden AMIs")

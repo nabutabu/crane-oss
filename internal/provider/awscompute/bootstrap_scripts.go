@@ -143,12 +143,6 @@ func RenderPlatformScript(cfg bootstrapConfig, infra Infrastructure, spireAddres
 	if err := requireInfra(infra, "DBEndpoint", "RuntimeSecretARN"); err != nil {
 		return "", err
 	}
-	if err := validateNewRelicSecretARN(data.Config.Observability.NewRelicSecretARN, data.Config.AWS.Region, data.Config.AWS.AccountID); err != nil {
-		return "", err
-	}
-	if err := validateNewRelicEndpoint(data.Config.Observability.NewRelicOTLPEndpoint); err != nil {
-		return "", err
-	}
 	if spireAddress != infra.SpireAddress || spireAddress == "" {
 		return "", errors.New("platform requires the prepared SPIRE load balancer hostname")
 	}

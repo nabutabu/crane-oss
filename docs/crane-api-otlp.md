@@ -54,8 +54,8 @@ Standard SDK configuration is honored:
 - `PROTOCOL`, including per-signal overrides, must be `grpc`. Unsupported
   protocols return a configuration error and disable export with a local warning.
 
-The applications never need the New Relic ingest key when exporting to a
-Collector. Give that key only to the Collector. Use application OTLP as the only
+The applications use only internal receiver credentials when exporting to a
+Collector. Supply backend credentials only to the Collector through its Kubernetes Secret. Use application OTLP as the only
 Crane API and Dominator log ingestion path; exclude both stdout streams from any
 filelog pipeline.
 
@@ -88,7 +88,7 @@ The application pipeline, HTTP request instrumentation, background context,
 and Collector deployment are separate review units. See
 [Collector deployment and live acceptance](../deploy/observability/README.md)
 for manifests, dashboard inputs, and the acceptance procedure. Keep zone provisioning paused until the complete gate is
-recorded: startup, request, background and controlled error logs in New Relic;
+recorded: startup, request, background and controlled error logs in the configured backend;
 searchable resource metadata and log-to-trace correlation; synthetic-secret
 redaction in stdout and export; graceful-termination flush; Collector restart and
 backend-outage queue recovery within configured capacity. No acceptance is
