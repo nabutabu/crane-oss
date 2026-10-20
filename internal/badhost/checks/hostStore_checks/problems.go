@@ -25,7 +25,7 @@ func (check *UnhealthyHostStoreCheck) Name() string {
 }
 
 func (check *UnhealthyHostStoreCheck) Detect(ctx context.Context, host *api.Host) ([]problem.Problem, error) {
-	slog.Debug("running host store check", "host_id", host.ID)
+	slog.DebugContext(ctx, "running host store check", "host_id", host.ID)
 	var problems []problem.Problem
 
 	if host.Health == api.HostHealthUnhealthy {

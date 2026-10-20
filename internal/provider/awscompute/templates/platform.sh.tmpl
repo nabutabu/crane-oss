@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # First-cluster platform host bootstrap. Idempotent; run after the SPIRE
 # identity entries exist. Uses golden-image tools, installs Cilium, seeds the
-# pending first-zone schema, and deploys crane-api and dominator.
+# pending first-zone schema, the shared OTLP Collector, crane-api and dominator.
 set -euo pipefail
 
 export AWS_REGION="[[ .Region ]]"
@@ -38,7 +38,7 @@ chmod 600 "$SECRET_DIR/runtime-secret.json"
 # Tools, policy, SPIRE configuration and service are installed by Packer.
 # Only deployment data is delivered through SSM.
 step "verifying golden image and starting SPIRE agent"
-for executable in kubeadm kubectl kubelet helm aws spire-agent; do command -v "$executable" >/dev/null; done
+for executable in kubeadm kubectl kubelet helm aws spire-agent openssl gzip tr mktemp df awk sha256sum; do command -v "$executable" >/dev/null; done
 test -x "$CRANE_DIR/bin/crane-bootstrap"
 test -x "$CRANE_DIR/bin/crane-bootstrap-probe"
 test -r "$CRANE_DIR/policy/os.star"
@@ -149,6 +149,75 @@ metadata:
   name: crane-system
 NS
 
+step "installing the shared OTLP Collector and private receiver credentials"
+# The deployment system owns backend configuration. Never print, copy or
+# overwrite its contents; inspect only key presence and object identity.
+if ! EXPORTER_CONFIG_PRESENT="$(kubectl -n crane-system get secret otel-exporter-config --ignore-not-found -o go-template='{{if index .data "exporter.yaml"}}present{{end}}')"; then
+  echo "Could not inspect Collector backend Secret crane-system/otel-exporter-config. Check Kubernetes access and availability, then retry bootstrap with the same deployment state. Do not replace the existing Secret to resolve an access error." >&2
+  exit 1
+fi
+if [ "$EXPORTER_CONFIG_PRESENT" != present ]; then
+  echo "Collector backend configuration required: create Secret crane-system/otel-exporter-config with a nonempty exporter.yaml key, then rerun bootstrap with the same deployment state. Use private administrative access and kubectl create secret generic otel-exporter-config -n crane-system --from-file=exporter.yaml=/secure/exporter.yaml. See docs/bootstrap-observability.md. Readiness has not been finalized." >&2
+  exit 1
+fi
+EXPORTER_SECRET_VERSION="$(kubectl -n crane-system get secret otel-exporter-config -o jsonpath='{.metadata.uid}:{.metadata.resourceVersion}')"
+readonly OTEL_STATE_DIR="$SECRET_DIR/otel"
+readonly OTEL_QUEUE_DIR="/var/lib/crane/otel-queue"
+install -d -m 0700 "$OTEL_STATE_DIR"
+install -d -o 10001 -g 10001 -m 0700 "$OTEL_QUEUE_DIR"
+QUEUE_AVAILABLE_BYTES="$(df -P -B1 "$OTEL_QUEUE_DIR" | awk 'NR == 2 {print $4}')"
+case "$QUEUE_AVAILABLE_BYTES" in
+  ''|*[!0-9]*) echo "could not determine free space for the Collector queue" >&2; exit 1 ;;
+esac
+if [ "$QUEUE_AVAILABLE_BYTES" -lt 10737418240 ]; then
+  echo "Collector queue requires at least 10 GiB free on the platform host; increase platform_host.storage_gib and retry" >&2
+  exit 1
+fi
+if [ ! -s "$OTEL_STATE_DIR/receiver-token" ]; then
+  openssl rand -hex 32 | tr -d '\n' > "$OTEL_STATE_DIR/receiver-token"
+  chmod 0600 "$OTEL_STATE_DIR/receiver-token"
+fi
+if [ ! -s "$OTEL_STATE_DIR/tls.crt" ] || [ ! -s "$OTEL_STATE_DIR/tls.key" ]; then
+  openssl req -x509 -newkey rsa:2048 -nodes -quiet \
+    -keyout "$OTEL_STATE_DIR/tls.key" \
+    -out "$OTEL_STATE_DIR/tls.crt" \
+    -days 3650 \
+    -subj '/CN=otel-collector.crane-system.svc.cluster.local' \
+    -addext 'subjectAltName=DNS:otel-collector.crane-system.svc.cluster.local' \
+    -addext 'basicConstraints=critical,CA:TRUE' \
+    -addext 'keyUsage=critical,digitalSignature,keyEncipherment,keyCertSign'
+  chmod 0600 "$OTEL_STATE_DIR/tls.key"
+  chmod 0644 "$OTEL_STATE_DIR/tls.crt"
+fi
+chmod 0600 "$OTEL_STATE_DIR/receiver-token" "$OTEL_STATE_DIR/tls.key"
+chmod 0644 "$OTEL_STATE_DIR/tls.crt"
+
+OTEL_TMP_DIR="$(mktemp -d)"
+trap 'rm -rf "$OTEL_TMP_DIR"' EXIT
+OTEL_TOKEN="$(cat "$OTEL_STATE_DIR/receiver-token")"
+printf 'Authorization=Bearer%%20%s' "$OTEL_TOKEN" > "$OTEL_TMP_DIR/headers"
+kubectl create secret generic crane-otel-receiver -n crane-system \
+  --from-file=token="$OTEL_STATE_DIR/receiver-token" --dry-run=client -o yaml | kubectl apply -f -
+kubectl create secret generic crane-otel-client -n crane-system \
+  --from-file=headers="$OTEL_TMP_DIR/headers" --dry-run=client -o yaml | kubectl apply -f -
+kubectl create secret generic otel-collector-tls -n crane-system \
+  --from-file=tls.crt="$OTEL_STATE_DIR/tls.crt" \
+  --from-file=tls.key="$OTEL_STATE_DIR/tls.key" --dry-run=client -o yaml | kubectl apply -f -
+kubectl create configmap otel-collector-ca -n crane-system \
+  --from-file=ca.crt="$OTEL_STATE_DIR/tls.crt" --dry-run=client -o yaml | kubectl apply -f -
+
+NODE_NAME="$(kubectl get nodes -o jsonpath='{.items[0].metadata.name}')"
+case "$NODE_NAME" in
+  ''|*[!A-Za-z0-9.-]*) echo "Kubernetes returned an invalid protected node name" >&2; exit 1 ;;
+esac
+printf %s '[[ .CollectorManifestGzipBase64 ]]' | base64 -d | gzip -d > "$CRANE_DIR/otel-collector.yaml"
+sed "s/REPLACE_PROTECTED_PLATFORM_NODE/$NODE_NAME/g" "$CRANE_DIR/otel-collector.yaml" > "$CRANE_DIR/otel-collector.node.yaml"
+OTEL_CONFIG_HASH="$({ sha256sum "$CRANE_DIR/otel-collector.node.yaml" "$OTEL_TMP_DIR/headers" "$OTEL_STATE_DIR/receiver-token" "$OTEL_STATE_DIR/tls.crt" "$OTEL_STATE_DIR/tls.key" | awk '{print $1}'; printf '%s\n' "$EXPORTER_SECRET_VERSION"; } | sha256sum | awk '{print $1}')"
+sed "s/REPLACE_OTEL_CONFIG_HASH/$OTEL_CONFIG_HASH/g" "$CRANE_DIR/otel-collector.node.yaml" > "$CRANE_DIR/otel-collector.rendered.yaml"
+chmod 0600 "$CRANE_DIR/otel-collector.yaml" "$CRANE_DIR/otel-collector.rendered.yaml"
+kubectl apply -f "$CRANE_DIR/otel-collector.rendered.yaml"
+kubectl -n crane-system rollout status deployment/otel-collector --timeout=600s
+
 SECRET_FILE="$(mktemp)"
 DB_URL="$DB_URL" python3 - "$SECRET_FILE" <<'PY'
 import base64, json, os, sys
@@ -222,6 +291,27 @@ spec:
           env:
             - name: AWS_REGION
               value: "[[ .Region ]]"
+            - name: ENVIRONMENT
+              value: production
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: https://otel-collector.crane-system.svc.cluster.local:4317
+            - name: OTEL_EXPORTER_OTLP_PROTOCOL
+              value: grpc
+            - name: OTEL_EXPORTER_OTLP_CERTIFICATE
+              value: /etc/crane-otel/ca.crt
+            - name: OTEL_EXPORTER_OTLP_HEADERS
+              valueFrom:
+                secretKeyRef:
+                  name: crane-otel-client
+                  key: headers
+            - name: OTEL_SERVICE_NAME
+              value: crane-api
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: deployment.environment.name=production,k8s.cluster.name=layer-zero,deployment.id=[[ .Config.Name ]],service.instance.id=$(POD_NAME)
             - name: SPIFFE_ENDPOINT_SOCKET
               value: "unix:///run/spire/sockets/agent.sock"
           ports:
@@ -251,6 +341,9 @@ spec:
             - name: host-certs
               mountPath: /etc/ssl/certs
               readOnly: true
+            - name: otel-ca
+              mountPath: /etc/crane-otel
+              readOnly: true
             - name: tmp
               mountPath: /tmp
       volumes:
@@ -267,6 +360,9 @@ spec:
         - name: host-certs
           hostPath:
             path: /etc/ssl/certs
+        - name: otel-ca
+          configMap:
+            name: otel-collector-ca
         - name: tmp
           emptyDir: {}
 ---
@@ -310,6 +406,27 @@ spec:
           env:
             - name: AWS_REGION
               value: "[[ .Region ]]"
+            - name: ENVIRONMENT
+              value: production
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: https://otel-collector.crane-system.svc.cluster.local:4317
+            - name: OTEL_EXPORTER_OTLP_PROTOCOL
+              value: grpc
+            - name: OTEL_EXPORTER_OTLP_CERTIFICATE
+              value: /etc/crane-otel/ca.crt
+            - name: OTEL_EXPORTER_OTLP_HEADERS
+              valueFrom:
+                secretKeyRef:
+                  name: crane-otel-client
+                  key: headers
+            - name: OTEL_SERVICE_NAME
+              value: dominator
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: deployment.environment.name=production,k8s.cluster.name=layer-zero,deployment.id=[[ .Config.Name ]],service.instance.id=$(POD_NAME)
             - name: SPIFFE_ENDPOINT_SOCKET
               value: "unix:///run/spire/sockets/agent.sock"
           ports:
@@ -337,6 +454,9 @@ spec:
             - name: host-certs
               mountPath: /etc/ssl/certs
               readOnly: true
+            - name: otel-ca
+              mountPath: /etc/crane-otel
+              readOnly: true
             - name: tmp
               mountPath: /tmp
       volumes:
@@ -353,6 +473,9 @@ spec:
         - name: host-certs
           hostPath:
             path: /etc/ssl/certs
+        - name: otel-ca
+          configMap:
+            name: otel-collector-ca
         - name: tmp
           emptyDir: {}
 YAML

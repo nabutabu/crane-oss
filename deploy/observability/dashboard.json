@@ -1,0 +1,172 @@
+{
+  "name": "Crane API and Collector",
+  "description": "Replace every accountId=0 with the target account ID before dashboardCreate. Queries require live qualification.",
+  "permissions": "PRIVATE",
+  "pages": [
+    {
+      "name": "API and delivery",
+      "widgets": [
+        {
+          "title": "Requests per minute",
+          "layout": {
+            "column": 1,
+            "row": 1,
+            "width": 6,
+            "height": 3
+          },
+          "visualization": {
+            "id": "viz.line"
+          },
+          "rawConfiguration": {
+            "nrqlQueries": [
+              {
+                "accountId": 0,
+                "query": "FROM Log SELECT rate(count(*), 1 minute) WHERE `service.name` = 'crane-api' AND message = 'HTTP request completed' FACET method, route TIMESERIES"
+              }
+            ]
+          }
+        },
+        {
+          "title": "HTTP error percentage",
+          "layout": {
+            "column": 7,
+            "row": 1,
+            "width": 6,
+            "height": 3
+          },
+          "visualization": {
+            "id": "viz.line"
+          },
+          "rawConfiguration": {
+            "nrqlQueries": [
+              {
+                "accountId": 0,
+                "query": "FROM Log SELECT percentage(count(*), WHERE status >= 500) WHERE `service.name` = 'crane-api' AND message = 'HTTP request completed' TIMESERIES"
+              }
+            ]
+          }
+        },
+        {
+          "title": "Request latency (ms)",
+          "layout": {
+            "column": 1,
+            "row": 4,
+            "width": 6,
+            "height": 3
+          },
+          "visualization": {
+            "id": "viz.line"
+          },
+          "rawConfiguration": {
+            "nrqlQueries": [
+              {
+                "accountId": 0,
+                "query": "FROM Log SELECT percentile(duration_ms, 50, 95, 99) WHERE `service.name` = 'crane-api' AND message = 'HTTP request completed' FACET route TIMESERIES"
+              }
+            ]
+          }
+        },
+        {
+          "title": "Crane API errors",
+          "layout": {
+            "column": 7,
+            "row": 4,
+            "width": 6,
+            "height": 3
+          },
+          "visualization": {
+            "id": "viz.table"
+          },
+          "rawConfiguration": {
+            "nrqlQueries": [
+              {
+                "accountId": 0,
+                "query": "FROM Log SELECT timestamp, message, operation, route, status, request_id, `trace.id` WHERE `service.name` = 'crane-api' AND `severity.number` >= 17 LIMIT 100"
+              }
+            ]
+          }
+        },
+        {
+          "title": "Collector queue occupancy",
+          "layout": {
+            "column": 1,
+            "row": 7,
+            "width": 6,
+            "height": 3
+          },
+          "visualization": {
+            "id": "viz.line"
+          },
+          "rawConfiguration": {
+            "nrqlQueries": [
+              {
+                "accountId": 0,
+                "query": "FROM Metric SELECT latest(otelcol_exporter_queue_size), latest(otelcol_exporter_queue_capacity) WHERE `service.name` = 'otel-collector' FACET exporter, data_type TIMESERIES"
+              }
+            ]
+          }
+        },
+        {
+          "title": "Collector delivery failures",
+          "layout": {
+            "column": 7,
+            "row": 7,
+            "width": 6,
+            "height": 3
+          },
+          "visualization": {
+            "id": "viz.line"
+          },
+          "rawConfiguration": {
+            "nrqlQueries": [
+              {
+                "accountId": 0,
+                "query": "FROM Metric SELECT rate(sum(otelcol_exporter_send_failed_log_records), 1 minute), rate(sum(otelcol_exporter_enqueue_failed_log_records), 1 minute), rate(sum(otelcol_processor_memory_limiter_refused_log_records), 1 minute) WHERE `service.name` = 'otel-collector' TIMESERIES"
+              }
+            ]
+          }
+        },
+        {
+          "title": "Collector delivered logs",
+          "layout": {
+            "column": 1,
+            "row": 10,
+            "width": 6,
+            "height": 3
+          },
+          "visualization": {
+            "id": "viz.line"
+          },
+          "rawConfiguration": {
+            "nrqlQueries": [
+              {
+                "accountId": 0,
+                "query": "FROM Metric SELECT rate(sum(otelcol_exporter_sent_log_records), 1 minute) WHERE `service.name` = 'otel-collector' TIMESERIES"
+              }
+            ]
+          }
+        },
+        {
+          "title": "New Relic ingest errors",
+          "layout": {
+            "column": 7,
+            "row": 10,
+            "width": 6,
+            "height": 3
+          },
+          "visualization": {
+            "id": "viz.table"
+          },
+          "rawConfiguration": {
+            "nrqlQueries": [
+              {
+                "accountId": 0,
+                "query": "FROM NrIntegrationError SELECT * WHERE newRelicFeature = 'opentelemetry' LIMIT 100"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

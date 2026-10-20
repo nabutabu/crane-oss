@@ -1,6 +1,8 @@
 package awscompute
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -127,7 +129,16 @@ func pause(ctx context.Context, d time.Duration) error {
 func runScript(ctx context.Context, cli AWSClient, reporter *bootstrap.Reporter, instance, name, script string) error {
 	command := "set -eu\ncloud-init status --wait >/dev/null\ninstall -d -m 0755 /var/lib/crane\n"
 	path := "/var/lib/crane/" + name + ".sh"
-	body := "set -eu\numask 077\nprintf %s " + shellQuote(base64.StdEncoding.EncodeToString([]byte(script))) + " | base64 -d > " + shellQuote(path) + "\nbash " + shellQuote(path)
+	var compressed bytes.Buffer
+	compressor := gzip.NewWriter(&compressed)
+	if _, err := compressor.Write([]byte(script)); err != nil {
+		return fmt.Errorf("compress bootstrap %s script: %w", name, err)
+	}
+	if err := compressor.Close(); err != nil {
+		return fmt.Errorf("compress bootstrap %s script: %w", name, err)
+	}
+	encodedScript := base64.StdEncoding.EncodeToString(compressed.Bytes())
+	body := "set -eu\numask 077\nprintf %s " + shellQuote(encodedScript) + " | base64 -d | gzip -d > " + shellQuote(path) + "\nbash " + shellQuote(path)
 	command += "flock -w 3500 /var/lib/crane-bootstrap.lock bash -c " + shellQuote(body)
 	if len(command) > 23000 {
 		return fmt.Errorf("bootstrap %s exceeds SSM command size; move reusable setup into the golden image", name)

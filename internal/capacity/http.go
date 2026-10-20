@@ -10,6 +10,7 @@ import (
 	"github.com/nabutabu/crane-oss/pkg/api"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const maxBodyBytes = 1 << 20
@@ -68,7 +69,11 @@ func (a *API) adapter(next http.HandlerFunc) http.Handler {
 			http.Error(w, "forbidden cluster identity", http.StatusForbidden)
 			return
 		}
-		r = r.WithContext(otel.GetTextMapPropagator().Extract(r.Context(), propagation.HeaderCarrier(r.Header)))
+		// Preserve an entrypoint's active server span. Standalone handlers still
+		// accept incoming propagation when no server instrumentation is present.
+		if !trace.SpanContextFromContext(r.Context()).IsValid() {
+			r = r.WithContext(otel.GetTextMapPropagator().Extract(r.Context(), propagation.HeaderCarrier(r.Header)))
+		}
 		next.ServeHTTP(w, r)
 	})
 }

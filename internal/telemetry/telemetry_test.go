@@ -62,3 +62,19 @@ func TestNew_InvalidEndpointFallsBack(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestUnsupportedProtocolAndSignalEndpoint(t *testing.T) {
+	t.Setenv(EnvOTLPEndpoint, "")
+	t.Setenv("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", "https://collector.example:4317")
+	t.Setenv("OTEL_EXPORTER_OTLP_LOGS_PROTOCOL", "http/protobuf")
+	p, err := New(context.Background(), Config{ServiceName: "test", EnableLogs: true})
+	if err == nil || p == nil {
+		t.Fatal("expected safe fallback and protocol rejection")
+	}
+	t.Setenv("OTEL_EXPORTER_OTLP_LOGS_PROTOCOL", "grpc")
+	t.Setenv("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", "https://user:password@collector.example:4317")
+	p, err = New(context.Background(), Config{ServiceName: "test", EnableLogs: true})
+	if err == nil || p == nil {
+		t.Fatal("expected safe endpoint rejection")
+	}
+}

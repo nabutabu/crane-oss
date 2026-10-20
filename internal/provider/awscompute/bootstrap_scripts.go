@@ -2,6 +2,7 @@ package awscompute
 
 import (
 	"bytes"
+	"compress/gzip"
 	"embed"
 	"encoding/base64"
 	"encoding/json"
@@ -34,18 +35,19 @@ type scriptData struct {
 	Config bootstrapConfig
 	Infra  Infrastructure
 
-	TrustDomain        string
-	Region             string
-	AccountID          string
-	BundleParameter    string
-	FirstZoneBase64    string
-	BHDBase64          string
-	SpireImage         string
-	KubernetesVersion  string
-	CiliumVersion      string
-	PodCIDR            string
-	SpireAddress       string
-	PlatformInstanceID string
+	TrustDomain                 string
+	Region                      string
+	AccountID                   string
+	BundleParameter             string
+	FirstZoneBase64             string
+	BHDBase64                   string
+	CollectorManifestGzipBase64 string
+	SpireImage                  string
+	KubernetesVersion           string
+	CiliumVersion               string
+	PodCIDR                     string
+	SpireAddress                string
+	PlatformInstanceID          string
 }
 
 type bootstrapAgentHost struct {
@@ -89,6 +91,17 @@ func baseScriptData(cfg bootstrapConfig, infra Infrastructure) (scriptData, erro
 }
 
 func renderScript(name string, data scriptData) (string, error) {
+	script, err := renderTemplate(name, data)
+	if err != nil {
+		return "", err
+	}
+	if !strings.HasPrefix(script, "#!") {
+		return "", fmt.Errorf("%s: rendered script is missing a shebang", name)
+	}
+	return script, nil
+}
+
+func renderTemplate(name string, data scriptData) (string, error) {
 	tmpl, err := template.New(name).Delims("[[", "]]").ParseFS(scriptTemplates, "templates/"+name)
 	if err != nil {
 		return "", fmt.Errorf("parse %s: %w", name, err)
@@ -97,11 +110,7 @@ func renderScript(name string, data scriptData) (string, error) {
 	if err := tmpl.ExecuteTemplate(&buf, name, data); err != nil {
 		return "", fmt.Errorf("render %s: %w", name, err)
 	}
-	script := buf.String()
-	if !strings.HasPrefix(script, "#!") {
-		return "", fmt.Errorf("%s: rendered script is missing a shebang", name)
-	}
-	return script, nil
+	return buf.String(), nil
 }
 
 // RenderSpireScript renders the layer-zero SPIRE server bootstrap that runs on
@@ -149,6 +158,19 @@ func RenderPlatformScript(cfg bootstrapConfig, infra Infrastructure, spireAddres
 	data.FirstZoneBase64 = base64.StdEncoding.EncodeToString(first)
 	bhd, _ := json.Marshal(map[string]any{"zone": in.Zone.ID, "scan_interval": 5, "checks": []string{"aws.ec2.unhealthy"}})
 	data.BHDBase64 = base64.StdEncoding.EncodeToString(bhd)
+	collectorManifest, err := renderTemplate("otel-collector.yaml.tmpl", data)
+	if err != nil {
+		return "", err
+	}
+	var compressedManifest bytes.Buffer
+	compressor := gzip.NewWriter(&compressedManifest)
+	if _, err := compressor.Write([]byte(collectorManifest)); err != nil {
+		return "", fmt.Errorf("compress Collector manifest: %w", err)
+	}
+	if err := compressor.Close(); err != nil {
+		return "", fmt.Errorf("compress Collector manifest: %w", err)
+	}
+	data.CollectorManifestGzipBase64 = base64.StdEncoding.EncodeToString(compressedManifest.Bytes())
 	return renderScript("platform.sh.tmpl", data)
 }
 

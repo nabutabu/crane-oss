@@ -6,6 +6,21 @@ import (
 	"reflect"
 )
 
+// Only pinned state may contain the retired backend-specific block. Input
+// configuration still uses the strict decoder and rejects it.
+func decodePinnedBootstrapSettings(raw json.RawMessage) (BootstrapSettings, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return BootstrapSettings{}, fmt.Errorf("decode pinned AWS configuration: %w", err)
+	}
+	delete(fields, "observability")
+	normalized, err := json.Marshal(fields)
+	if err != nil {
+		return BootstrapSettings{}, err
+	}
+	return decodeBootstrapSettings(normalized)
+}
+
 // Only image IDs may be filled after preparation. All other choices are pinned.
 func mergePinnedSettings(cfg *bootstrapConfig, previous BootstrapSettings) error {
 	candidate := settingsFor(*cfg)

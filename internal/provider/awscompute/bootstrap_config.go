@@ -108,7 +108,7 @@ func (c bootstrapConfig) WithDefaults() bootstrapConfig {
 		c.Platform.InstanceType = "t3.medium"
 	}
 	if c.Platform.StorageGiB == 0 {
-		c.Platform.StorageGiB = 30
+		c.Platform.StorageGiB = 40
 	}
 	if c.Platform.KubernetesVersion == "" {
 		c.Platform.KubernetesVersion = "v1.35.0"

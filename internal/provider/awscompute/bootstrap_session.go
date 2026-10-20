@@ -79,7 +79,7 @@ func settingsFor(cfg bootstrapConfig) BootstrapSettings {
 }
 func (s *bootstrapSession) Resolve(ctx context.Context, previous json.RawMessage, prepare bool) (json.RawMessage, error) {
 	if len(previous) > 0 {
-		prior, err := decodeBootstrapSettings(previous)
+		prior, err := decodePinnedBootstrapSettings(previous)
 		if err != nil {
 			return nil, err
 		}

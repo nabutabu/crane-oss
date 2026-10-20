@@ -7,6 +7,9 @@ import (
 	"os"
 	"strings"
 
+	"go.opentelemetry.io/contrib/bridges/otelslog"
+	otellog "go.opentelemetry.io/otel/log"
+
 	"github.com/nabutabu/crane-oss/internal/version"
 )
 
@@ -22,6 +25,16 @@ type Logger struct {
 
 // New creates a new logger for the given service.
 func New(service string) *Logger {
+	return newLogger(service, nil, false)
+}
+
+// NewWithOTLP preserves JSON stdout and adds standard OTel records. Redaction
+// wraps both destinations; LOG_LEVEL controls both without sampling.
+func NewWithOTLP(service string, provider otellog.LoggerProvider) *Logger {
+	return newLogger(service, provider, true)
+}
+
+func newLogger(service string, provider otellog.LoggerProvider, jsonOutput bool) *Logger {
 	levelStr := strings.ToLower(strings.TrimSpace(os.Getenv(EnvLogLevel)))
 	if levelStr == "" {
 		levelStr = "info"
@@ -53,10 +66,17 @@ func New(service string) *Logger {
 		Level: level,
 	}
 
-	if formatStr == "json" {
+	if formatStr == "json" || jsonOutput {
 		handler = slog.NewJSONHandler(w, opts)
 	} else {
 		handler = slog.NewTextHandler(w, opts)
+	}
+
+	if provider != nil {
+		handler = &fanoutHandler{local: handler, remote: otelslog.NewHandler(service, otelslog.WithLoggerProvider(provider)), level: level}
+	}
+	if jsonOutput {
+		handler = &correlationHandler{inner: handler}
 	}
 
 	// Redaction is applied at the handler level so every attribute, group,

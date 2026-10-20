@@ -28,7 +28,7 @@
     },
     "platform_host": {
       "instance_type": "t3.small",
-      "storage_gib": 20
+      "storage_gib": 40
     }
   },
   "spire": {

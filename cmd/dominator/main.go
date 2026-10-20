@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -20,19 +19,20 @@ import (
 	"github.com/nabutabu/crane-oss/internal/telemetry"
 	"github.com/nabutabu/crane-oss/internal/version"
 	"github.com/spiffe/go-spiffe/v2/workloadapi"
+	"go.opentelemetry.io/otel"
 )
 
 func main() {
 	if err := run(); err != nil {
-		slog.Error("dominator stopped", "error", err)
 		os.Exit(1)
 	}
 }
 
-func run() error {
-	logger := logging.New("dominator")
-	logger.SetDefault()
-	logger.Info("dominator", "version", version.String())
+func run() (runErr error) {
+	// Exporter diagnostics must remain local to avoid recursively exporting
+	// failures from the logging pipeline itself.
+	localLogger := logging.NewWithOTLP("dominator", nil)
+	localLogger.SetDefault()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -40,17 +40,29 @@ func run() error {
 		ServiceName:    "dominator",
 		ServiceVersion: version.Version,
 		Environment:    config.GetEnv("ENVIRONMENT", ""),
+		EnableLogs:     true,
+		ErrorHandler: otel.ErrorHandlerFunc(func(error) {
+			localLogger.Warn("telemetry export failed; check collector delivery health")
+		}),
 	})
+	logger := logging.NewWithOTLP("dominator", telemetryProvider.LoggerProvider)
+	logger.SetDefault()
 	if err != nil {
 		logger.Warn("telemetry disabled; continuing with no-op providers", "error", err)
 	}
 	defer func() {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if runErr != nil {
+			logger.ErrorContext(ctx, "dominator stopped", "error", runErr)
+		} else {
+			logger.InfoContext(ctx, "dominator stopped")
+		}
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := telemetryProvider.Shutdown(shutdownCtx); err != nil {
-			logger.Error("telemetry shutdown failed", "error", err)
+			localLogger.Error("telemetry shutdown failed")
 		}
 	}()
+	logger.InfoContext(ctx, "dominator starting", "version", version.String())
 
 	source, err := workloadapi.NewX509Source(ctx)
 	if err != nil {

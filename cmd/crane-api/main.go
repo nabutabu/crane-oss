@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -30,6 +31,7 @@ import (
 	"github.com/nabutabu/crane-oss/internal/provider/awscompute"
 	"github.com/nabutabu/crane-oss/internal/telemetry"
 	"github.com/nabutabu/crane-oss/internal/version"
+	"go.opentelemetry.io/otel"
 )
 
 const BHD_CONFIG_YAML_PATH = "bhd.json"
@@ -81,14 +83,14 @@ type healthHandler struct {
 }
 
 func (h *healthHandler) health(w http.ResponseWriter, r *http.Request) {
-	h.logger.Info("healthy", "path", r.URL.Path)
+	h.logger.InfoContext(r.Context(), "healthy")
 	fmt.Fprintf(w, `{"status": "available"}`)
 }
 
 func (h *healthHandler) dbHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := h.db.PingContext(r.Context()); err != nil {
-		h.logger.Error("database health check failed", "error", err)
+		h.logger.ErrorContext(r.Context(), "database health check failed", "error", err)
 		w.WriteHeader(http.StatusServiceUnavailable)
 		fmt.Fprint(w, `{"status": "unavailable"}`)
 		return
@@ -99,15 +101,14 @@ func (h *healthHandler) dbHealth(w http.ResponseWriter, r *http.Request) {
 
 func main() {
 	if err := run(); err != nil {
-		slog.Error("crane-api stopped", "error", err)
 		os.Exit(1)
 	}
 }
 
-func run() error {
-	logger := logging.New("crane-api")
-	logger.SetDefault()
-	logger.Info("crane-api", "version", version.String())
+func run() (runErr error) {
+	// Exporter diagnostics retain a local-only, redacting handler.
+	localLogger := logging.NewWithOTLP("crane-api", nil)
+	localLogger.SetDefault()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -115,17 +116,30 @@ func run() error {
 		ServiceName:    "crane-api",
 		ServiceVersion: version.Version,
 		Environment:    intconfig.GetEnv("ENVIRONMENT", ""),
+		EnableLogs:     true,
+		ErrorHandler: otel.ErrorHandlerFunc(func(error) {
+			localLogger.Warn("telemetry export failed; check collector delivery health")
+		}),
 	})
+	logger := logging.NewWithOTLP("crane-api", telemetryProvider.LoggerProvider)
+	logger.SetDefault()
 	if err != nil {
 		logger.Warn("telemetry disabled; continuing with no-op providers", "error", err)
 	}
 	defer func() {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if runErr != nil {
+			logger.ErrorContext(ctx, "crane-api stopped", "error", runErr)
+		} else {
+			logger.InfoContext(ctx, "crane-api stopped")
+		}
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := telemetryProvider.Shutdown(shutdownCtx); err != nil {
-			logger.Error("telemetry shutdown failed", "error", err)
+			localLogger.Error("telemetry shutdown failed")
 		}
 	}()
+
+	logger.InfoContext(ctx, "crane-api starting", "version", version.String())
 
 	db, err := sql.Open("pgx", intconfig.DatabaseURL(5432))
 	if err != nil {
@@ -184,14 +198,14 @@ func run() error {
 
 	manager := activitymanager.NewActivityManager(problemStore, actionStore, problemcache.NewCache(10, time.Hour), time.Minute*5, time.Minute)
 
-	// Activity Manager - Create actions based on problems seen by BHD
-	go manager.Run(ctx)
-
-	// Bad Host Detector - Detect problems with existing Hosts in a Zone
-	go bhd.Run(ctx)
-
-	// Worker to put the hosts in appropriate states once detected by BHD
-	go worker.Run(ctx)
+	// Stop and join background loops before closing the database and flushing
+	// telemetry, so their final context-aware records participate in shutdown.
+	var background sync.WaitGroup
+	for _, loop := range []func(context.Context){manager.Run, bhd.Run, worker.Run} {
+		background.Add(1)
+		go func() { defer background.Done(); loop(ctx) }()
+	}
+	defer func() { stop(); background.Wait() }()
 
 	health := &healthHandler{logger: logger.Logger, db: db}
 
@@ -205,7 +219,7 @@ func run() error {
 	capacityAPI := capacity.NewAPI(capacity.NewStore(db), intconfig.GetEnv("CRANE_ADMIN_TOKEN", ""), intconfig.GetEnv("CRANE_ADAPTER_TOKEN", ""), intconfig.GetEnv("CRANE_ADAPTER_CLUSTER_ID", ""))
 	mux.Handle("/v1/", capacityAPI.Handler())
 
-	server := &http.Server{Addr: ":43060", Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+	server := &http.Server{Addr: ":43060", Handler: telemetryProvider.HTTPHandler(mux, logger.Logger), ReadHeaderTimeout: 10 * time.Second}
 	shutdownDone := make(chan struct{})
 	go func() {
 		defer close(shutdownDone)

@@ -1,6 +1,7 @@
 package awscompute
 
 import (
+	"encoding/json"
 	"testing"
 )
 
@@ -14,6 +15,9 @@ func TestEmptyAccountConfig(t *testing.T) {
 	}
 	if !cfg.RDS.ManageMasterUserPassword || !cfg.RDS.DeletionProtection {
 		t.Fatal("RDS must protect storage and manage the master secret")
+	}
+	if cfg.Platform.StorageGiB != 40 {
+		t.Fatalf("platform volume default must reserve room for the Collector queue, got %d GiB", cfg.Platform.StorageGiB)
 	}
 }
 
@@ -48,5 +52,16 @@ func TestRejectInvalidBootstrapNetwork(t *testing.T) {
 				t.Fatal("expected invalid configuration")
 			}
 		})
+	}
+}
+
+func TestInputRejectsRetiredBackendConfiguration(t *testing.T) {
+	for _, raw := range []string{
+		`{"observability":{"new_relic_secret_arn":"retired-reference"}}`,
+		`{"unexpected_field":true}`,
+	} {
+		if _, err := decodeBootstrapSettings(json.RawMessage(raw)); err == nil {
+			t.Fatal("input accepted unsupported provider settings")
+		}
 	}
 }

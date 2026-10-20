@@ -86,6 +86,45 @@ func TestBootstrapAccountMismatchAndMissingImages(t *testing.T) {
 	}
 }
 
+func TestPinnedSettingsDiscardOnlyRetiredBackendBlock(t *testing.T) {
+	cfg := testConfig().WithDefaults()
+	cfg.SPIRE.AMIID, cfg.Platform.AMIID = "ami-pinned", "ami-pinned"
+	cfg.Network.AvailabilityZones = []string{"us-west-2a", "us-west-2b"}
+	fields := map[string]json.RawMessage{}
+	data, _ := json.Marshal(settingsFor(cfg))
+	json.Unmarshal(data, &fields)
+	fields["observability"] = json.RawMessage(`{"new_relic_secret_arn":"retired-reference","new_relic_otlp_endpoint":"https://retired.example"}`)
+	oldState, _ := json.Marshal(fields)
+	session := &bootstrapSession{cfg: cfg, client: &fakeAWS{call: func(_, op string, _ any) (any, error) {
+		if op != "get-caller-identity" {
+			t.Fatalf("unexpected provider operation: %s", op)
+		}
+		return map[string]string{"Account": cfg.AWS.AccountID}, nil
+	}}}
+	normalized, err := session.Resolve(context.Background(), oldState, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(normalized), "observability") {
+		t.Fatal("deprecated block survived resolution")
+	}
+	fields["unexpected_field"] = json.RawMessage("true")
+	invalid, _ := json.Marshal(fields)
+	if _, err := decodePinnedBootstrapSettings(invalid); err == nil {
+		t.Fatal("discarded unknown pinned field")
+	}
+	// Removing the retired block must not relax placement or resource ownership.
+	candidate := cfg
+	candidate.Platform.AMIID = "ami-other"
+	denied := &bootstrapSession{cfg: candidate, client: &fakeAWS{call: func(_, op string, _ any) (any, error) {
+		t.Fatalf("provider call after changed pinned infrastructure: %s", op)
+		return nil, nil
+	}}}
+	if _, err := denied.Resolve(context.Background(), oldState, false); err == nil {
+		t.Fatal("accepted changed infrastructure")
+	}
+}
+
 func TestImageReferencesFollowReleaseWorkflow(t *testing.T) {
 	for _, ref := range []string{"ghcr.io/nabutabu/crane-oss:0.2.0", "ghcr.io/nabutabu/crane-oss:" + strings.Repeat("a", 40), "123456789012.dkr.ecr.us-west-2.amazonaws.com/crane-oss@sha256:" + strings.Repeat("a", 64), "ghcr.io/nabutabu/crane-oss:latest", "ghcr.io/nabutabu/crane-oss"} {
 		cfg := testConfig()
