@@ -300,3 +300,11 @@ If running as non-root:
 | 4 | Authorization based on SPIFFE ID structure |
 | 5 | No runtime metadata resolution |
 | 6 | Strict mTLS everywhere |
+
+# Kubernetes administration
+
+The Secret management endpoint uses `CRANE_ADMIN_TOKEN`. Reach Crane API only
+through an encrypted private connection when submitting credentials. Its
+downstream Dominator connection uses the exact `/crane-api` SPIFFE identity;
+Dominator pins each Subd host identity independently. See
+[Kubernetes operations](kubernetes-operations.md).

@@ -62,6 +62,19 @@ CREATE TABLE IF NOT EXISTS host (
  FOREIGN KEY(node_group_id, node_pool_id, crane_zone) REFERENCES node_groups(id, node_pool_id, zone_id) MATCH FULL,
  CHECK(state IN ('REQUESTED','PROVISIONING','BOOTING','REGISTERING','CONVERGING','READY','DRAINING','TERMINATING','TERMINATED','FAILED','UNHEALTHY'))
 );
+CREATE TABLE IF NOT EXISTS zone_dominators (
+ zone_id text PRIMARY KEY REFERENCES zones(id),
+ endpoint text NOT NULL, identity text NOT NULL,
+ observability_status text NOT NULL DEFAULT 'configuration_pending'
+ CHECK(observability_status IN ('configuration_pending','ready','failed'))
+);
+-- Secret values are never stored here. Explicit retries resubmit their payload.
+CREATE TABLE IF NOT EXISTS host_state_requests (
+ host_id text NOT NULL REFERENCES host(id), request_id text NOT NULL, fingerprint text NOT NULL,
+ revision bigint NOT NULL CHECK(revision > 0), outcome text NOT NULL DEFAULT 'pending'
+ CHECK(outcome IN ('pending','applied','failed','unknown')),
+ result jsonb, PRIMARY KEY(host_id,request_id), UNIQUE(host_id,revision)
+);
 CREATE TABLE IF NOT EXISTS operations (
  id text PRIMARY KEY, kind text NOT NULL CHECK(kind IN ('provision', 'create_zone', 'remove_node')),
  zone_id text NOT NULL REFERENCES zones(id), group_id text REFERENCES node_groups(id),

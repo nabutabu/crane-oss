@@ -36,6 +36,7 @@ type KubernetesResult struct {
 }
 
 type SecretResult struct {
+	Error      string            `json:"error,omitempty"`
 	HostID     string            `json:"host_id"`
 	ZoneID     string            `json:"zone_id"`
 	RequestID  string            `json:"request_id"`

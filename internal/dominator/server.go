@@ -12,17 +12,21 @@ import (
 
 	"github.com/nabutabu/crane-oss/internal/config"
 	"github.com/nabutabu/crane-oss/internal/hostcatalog/service"
+	"github.com/nabutabu/crane-oss/internal/hostoperations"
+	"github.com/nabutabu/crane-oss/internal/hostrpc"
+	"github.com/nabutabu/crane-oss/pkg/api"
 	"github.com/spiffe/go-spiffe/v2/spiffeid"
 	"github.com/spiffe/go-spiffe/v2/spiffetls/tlsconfig"
 	"github.com/spiffe/go-spiffe/v2/workloadapi"
 )
 
 type Server struct {
-	addr     string
-	db       *sql.DB
-	catalog  *service.HostCatalogService
-	resolver *PolicyResolver
-	logger   *slog.Logger
+	addr       string
+	db         *sql.DB
+	catalog    *service.HostCatalogService
+	resolver   *PolicyResolver
+	logger     *slog.Logger
+	Middleware func(http.Handler) http.Handler
 }
 
 func NewServer(addr string, db *sql.DB, catalog *service.HostCatalogService, resolver *PolicyResolver, loggers ...*slog.Logger) *Server {
@@ -45,23 +49,44 @@ func (s *Server) Start(source *workloadapi.X509Source) error {
 
 func (s *Server) StartContext(ctx context.Context, source *workloadapi.X509Source) error {
 	mux := http.NewServeMux()
+	domain := config.GetEnv("SPIFFE_TRUST_DOMAIN", "crane-oss")
+	zone := config.GetEnv("CRANE_ZONE_ID", "")
+	if zone == "" {
+		return errors.New("CRANE_ZONE_ID is required")
+	}
+	apiID, err := spiffeid.FromString("spiffe://" + domain + "/crane-api")
+	if err != nil {
+		return errors.New("invalid Crane API identity")
+	}
+	own, err := source.GetX509SVID()
+	if err != nil {
+		return errors.New("Dominator workload identity unavailable")
+	}
+	controller := hostoperations.Controller{Store: hostoperations.Store{DB: s.db}, Caller: hostrpc.Client{Source: source}, ZoneID: zone, TrustDomain: domain, OwnIdentity: own.ID.String()}
+	mux.Handle("PUT "+hostoperations.InternalPath, controller.Handler(apiID.String()))
 
 	mux.HandleFunc("/v1/health", s.Health)
 	mux.HandleFunc("/v1/db/health", s.dbHealth)
 
 	s.logger.Info("dominator listening", "addr", s.addr)
 
-	allowedID, err := spiffeid.FromString("spiffe://" + config.GetEnv("SPIFFE_TRUST_DOMAIN", "crane-oss") + "/subd")
+	allowedID, err := spiffeid.FromString("spiffe://" + domain + "/subd")
 	if err != nil {
 		return fmt.Errorf("invalid SPIFFE trust domain: %w", err)
 	}
 
-	tlsConfig := tlsconfig.MTLSServerConfig(source, source, tlsconfig.AuthorizeOneOf(allowedID))
+	tlsConfig := tlsconfig.MTLSServerConfig(source, source, tlsconfig.AuthorizeOneOf(allowedID, apiID))
+	var handler http.Handler = mux
+	if s.Middleware != nil {
+		handler = s.Middleware(handler)
+	}
 	server := &http.Server{
 		Addr:              s.addr,
-		Handler:           mux,
+		Handler:           handler,
 		TLSConfig:         tlsConfig,
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      api.OperationTimeout + time.Minute,
 	}
 
 	ln, err := tls.Listen("tcp", s.addr, tlsConfig)
