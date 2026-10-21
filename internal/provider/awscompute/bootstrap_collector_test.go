@@ -41,8 +41,8 @@ kubectl() {
 					t.Fatalf("access failure was misreported as missing configuration: %v, %s", err, output)
 				}
 			} else {
-				if err == nil || !strings.Contains(string(output), "then rerun bootstrap with the same deployment state") || strings.Contains(string(output), "handoff-complete") {
-					t.Fatalf("missing configuration did not stop with recovery instructions: %v, %s", err, output)
+				if err != nil || string(output) != "handoff-complete:missing" {
+					t.Fatalf("missing configuration blocked API handoff: %v, %s", err, output)
 				}
 			}
 		})
@@ -102,5 +102,58 @@ printf '%s' "$OTEL_CONFIG_HASH"`
 	}
 	if hash("uid:1") == first {
 		t.Fatal("receiver rotation did not change rollout")
+	}
+}
+
+func TestObservabilityReadinessIsSeparateFromCore(t *testing.T) {
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("jq required")
+	}
+	scripts := renderAll(t)
+	for _, name := range []string{"platform", "validate"} {
+		if strings.Contains(scripts[name], "rollout status deployment/otel-collector") {
+			t.Fatal("Collector readiness blocks core bootstrap")
+		}
+	}
+	script := scripts["validate"]
+	_, section, ok := strings.Cut(script, "# ---- Observability is reported separately from core zone readiness ---------")
+	if !ok {
+		t.Fatal("missing independent observability check")
+	}
+	section, _, ok = strings.Cut(section, "# ---- SPIRE workload attestation")
+	if !ok {
+		t.Fatal("missing core identity check")
+	}
+	for _, state := range []string{"missing", "ready", "failed", "access-error"} {
+		t.Run(state, func(t *testing.T) {
+			harness := `set -euo pipefail
+kubectl(){
+ case "$*" in
+  *"get secret"*) case "$TEST_STATE" in missing) :;; access-error) return 1;; *) printf present;; esac;;
+  *"get deployment"*)
+   if [ "$TEST_STATE" = ready ]; then
+    printf '%s' '{"metadata":{"generation":2},"spec":{"replicas":1},"status":{"observedGeneration":2,"updatedReplicas":1,"replicas":1,"availableReplicas":1}}'
+   else printf '%s' '{"metadata":{"generation":2},"spec":{"replicas":1},"status":{}}'; fi;;
+  *) return 99;;
+ esac
+}
+` + section + `printf '%s' "$OBSERVABILITY_STATUS"`
+			cmd := exec.Command("bash", "-c", harness)
+			cmd.Env = append(os.Environ(), "TEST_STATE="+state)
+			out, err := cmd.CombinedOutput()
+			if state == "access-error" {
+				if err == nil {
+					t.Fatal("Kubernetes access error was hidden")
+				}
+				return
+			}
+			want := state
+			if state == "missing" {
+				want = "configuration_pending"
+			}
+			if err != nil || string(out) != want {
+				t.Fatal("incorrect independent readiness", string(out), err)
+			}
+		})
 	}
 }

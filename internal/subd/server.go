@@ -202,8 +202,7 @@ func (s *Server) update(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		slog.ErrorContext(r.Context(), "host update failed", "revision", in.Revision)
 		if in.Secret != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			writeJSON(w, s.status())
+			hostrpc.JSON(w, http.StatusInternalServerError, s.status())
 			return
 		}
 		http.Error(w, "host update failed", http.StatusInternalServerError)

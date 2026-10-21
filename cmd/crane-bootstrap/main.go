@@ -121,6 +121,19 @@ func run(parent context.Context, args []string, out io.Writer) error {
 		}
 
 		_, err = fmt.Fprintf(out, "platform %s: %s; provider=%s; identity=%s; state=%s\n", result.Name, status, result.Provider, result.IdentityEndpoint, *stateDir)
+		if err == nil && result.ControlPlaneEndpoint != "" {
+			_, err = fmt.Fprintf(out, "Crane API: %s; target host: %s\n", result.ControlPlaneEndpoint, result.TargetHostID)
+			if err == nil {
+				if result.ObservabilityStatus == "configuration_pending" {
+					_, err = fmt.Fprintln(out, "Observability configuration pending")
+				} else {
+					_, err = fmt.Fprintf(out, "Observability: %s\n", result.ObservabilityStatus)
+				}
+			}
+			if err == nil {
+				_, err = fmt.Fprintln(out, result.ConnectionInstructions)
+			}
+		}
 		return err
 	}
 	if *prepareImages {

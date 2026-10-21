@@ -29,6 +29,7 @@ its configured Dominator identity. API and Dominator require Workload API access
 The response contains host, zone, request ID, revision, overall outcome, and
 sanitized Secret/rollout stages. HTTP 200 requires successful readback and any
 requested Deployment rollout. A ready collector does not prove backend delivery.
+The requested Deployment must have at least one replica to report readiness.
 400 is invalid input, 401/403 is failed authentication/authorization, 404 is a
 missing host, 409 is a conflicting or superseded operation, 502 is downstream
 failure, 503 is unavailable control-plane state, and 504 is deadline expiry.

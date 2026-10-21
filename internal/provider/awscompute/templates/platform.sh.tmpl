@@ -156,11 +156,10 @@ if ! EXPORTER_CONFIG_PRESENT="$(kubectl -n crane-system get secret otel-exporter
   echo "Could not inspect Collector backend Secret crane-system/otel-exporter-config. Check Kubernetes access and availability, then retry bootstrap with the same deployment state. Do not replace the existing Secret to resolve an access error." >&2
   exit 1
 fi
-if [ "$EXPORTER_CONFIG_PRESENT" != present ]; then
-  echo "Collector backend configuration required: create Secret crane-system/otel-exporter-config with a nonempty exporter.yaml key, then rerun bootstrap with the same deployment state. Use private administrative access and kubectl create secret generic otel-exporter-config -n crane-system --from-file=exporter.yaml=/secure/exporter.yaml. See docs/bootstrap-observability.md. Readiness has not been finalized." >&2
-  exit 1
+EXPORTER_SECRET_VERSION=missing
+if [ "$EXPORTER_CONFIG_PRESENT" = present ]; then
+  EXPORTER_SECRET_VERSION="$(kubectl -n crane-system get secret otel-exporter-config -o jsonpath='{.metadata.uid}:{.metadata.resourceVersion}')"
 fi
-EXPORTER_SECRET_VERSION="$(kubectl -n crane-system get secret otel-exporter-config -o jsonpath='{.metadata.uid}:{.metadata.resourceVersion}')"
 readonly OTEL_STATE_DIR="$SECRET_DIR/otel"
 readonly OTEL_QUEUE_DIR="/var/lib/crane/otel-queue"
 install -d -m 0700 "$OTEL_STATE_DIR"
@@ -216,7 +215,8 @@ OTEL_CONFIG_HASH="$({ sha256sum "$CRANE_DIR/otel-collector.node.yaml" "$OTEL_TMP
 sed "s/REPLACE_OTEL_CONFIG_HASH/$OTEL_CONFIG_HASH/g" "$CRANE_DIR/otel-collector.node.yaml" > "$CRANE_DIR/otel-collector.rendered.yaml"
 chmod 0600 "$CRANE_DIR/otel-collector.yaml" "$CRANE_DIR/otel-collector.rendered.yaml"
 kubectl apply -f "$CRANE_DIR/otel-collector.rendered.yaml"
-kubectl -n crane-system rollout status deployment/otel-collector --timeout=600s
+# A missing backend Secret leaves the Collector pending, while Crane API and
+# Dominator start with local logging and telemetry export retries.
 
 SECRET_FILE="$(mktemp)"
 DB_URL="$DB_URL" python3 - "$SECRET_FILE" <<'PY'
@@ -235,6 +235,7 @@ values = {
     'DB_SSLMODE': 'verify-full',
     'DB_SSLROOTCERT': '/etc/crane/rds-ca.pem',
     'SPIFFE_TRUST_DOMAIN': '[[ .TrustDomain ]]',
+    'CRANE_ZONE_ID': json.load(open('/etc/crane/first-zone.rendered.json'))['zone']['id'],
 }
 manifest = {
     'apiVersion': 'v1',

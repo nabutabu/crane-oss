@@ -10,8 +10,11 @@ import (
 
 	"github.com/nabutabu/crane-oss/pkg/api"
 	apps "k8s.io/api/apps/v1"
+	core "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes/fake"
 	ktesting "k8s.io/client-go/testing"
 )
@@ -36,7 +39,7 @@ func TestSecretProtocolPersistsFinalOutcomeAndRetries(t *testing.T) {
 	body := `{"revision":2,"secret":{"namespace":"default","name":"config","stringData":{"key":"synthetic-value"},"rollout_deployment":"collector"}}`
 	w := request(t, s, testConfig().WriterIdentity, "PUT", "/v1/expected-state", body)
 	var status api.HostAgentStatus
-	if w.Code != 500 || json.Unmarshal(w.Body.Bytes(), &status) != nil || status.Kubernetes.Secret != "verified" || status.Kubernetes.Rollout != "failed" || strings.Contains(w.Body.String(), "synthetic") {
+	if w.Code != 500 || w.Header().Get("Content-Type") != "application/json" || json.Unmarshal(w.Body.Bytes(), &status) != nil || status.Kubernetes.Secret != "verified" || status.Kubernetes.Rollout != "failed" || strings.Contains(w.Body.String(), "synthetic") {
 		t.Fatal("incorrect or unsafe failure response")
 	}
 	h.rolloutFails = false
@@ -107,6 +110,43 @@ func TestSecretErrorsDoNotExposeKubernetesBodies(t *testing.T) {
 	result, err := ensureSecret(context.Background(), client, "id", api.KubernetesSecret{Namespace: "default", Name: "config"}, time.Millisecond)
 	if err == nil || strings.Contains(err.Error(), "synthetic-private-body") || result.Secret != "failed" {
 		t.Fatal("unsafe error")
+	}
+}
+
+func TestSecretConflictRetryAndReadbackMismatch(t *testing.T) {
+	client := fake.NewClientset(&core.Secret{ObjectMeta: metav1.ObjectMeta{Name: "config", Namespace: "default"}, Type: core.SecretTypeOpaque, Data: map[string][]byte{"key": []byte("old")}})
+	updates := 0
+	client.PrependReactor("update", "secrets", func(ktesting.Action) (bool, runtime.Object, error) {
+		updates++
+		if updates == 1 {
+			return true, nil, apierrors.NewConflict(schema.GroupResource{Resource: "secrets"}, "config", errors.New("synthetic conflict"))
+		}
+		return false, nil, nil
+	})
+	in := api.KubernetesSecret{Namespace: "default", Name: "config", StringData: map[string]string{"key": "new"}}
+	if _, err := ensureSecret(context.Background(), client, "id", in, time.Millisecond); err != nil || updates != 2 {
+		t.Fatal("conflict did not retry", err, updates)
+	}
+	gets := 0
+	client.PrependReactor("get", "secrets", func(ktesting.Action) (bool, runtime.Object, error) {
+		gets++
+		if gets == 2 {
+			return true, &core.Secret{Type: core.SecretTypeOpaque, Data: map[string][]byte{"key": []byte("drift")}}, nil
+		}
+		return false, nil, nil
+	})
+	result, err := ensureSecret(context.Background(), client, "next", in, time.Millisecond)
+	if err == nil || result.Secret != "failed" {
+		t.Fatal("readback mismatch accepted")
+	}
+}
+
+func TestZeroReplicaDeploymentIsNotReady(t *testing.T) {
+	zero := int32(0)
+	client := fake.NewClientset(&apps.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "collector", Namespace: "default"}, Spec: apps.DeploymentSpec{Replicas: &zero}})
+	result, err := ensureSecret(context.Background(), client, "id", api.KubernetesSecret{Namespace: "default", Name: "config", RolloutDeployment: "collector"}, time.Millisecond)
+	if err == nil || result.Secret != "verified" || result.Rollout != "failed" {
+		t.Fatal(result, err)
 	}
 }
 

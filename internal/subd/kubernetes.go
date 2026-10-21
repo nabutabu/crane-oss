@@ -25,17 +25,21 @@ type secretHost interface {
 }
 
 func (h LocalHost) EnsureSecret(ctx context.Context, token string, secret api.KubernetesSecret) (*api.KubernetesResult, error) {
+	failed := &api.KubernetesResult{Secret: "failed", Rollout: "not_requested"}
+	if secret.RolloutDeployment != "" {
+		failed.Rollout = "pending"
+	}
 	if h.Kubeconfig == "" {
-		return nil, errors.New("local Kubernetes credentials are not configured")
+		return failed, errors.New("local Kubernetes credentials are not configured")
 	}
 	config, err := clientcmd.BuildConfigFromFlags("", h.Kubeconfig)
 	if err != nil {
-		return nil, errors.New("cannot load local Kubernetes credentials")
+		return failed, errors.New("cannot load local Kubernetes credentials")
 	}
 	config.Timeout = 30 * time.Second
 	client, err := kubernetes.NewForConfig(config)
 	if err != nil {
-		return nil, errors.New("cannot initialize local Kubernetes client")
+		return failed, errors.New("cannot initialize local Kubernetes client")
 	}
 	return ensureSecret(ctx, client, token, secret, time.Second)
 }
@@ -117,6 +121,9 @@ func ensureSecret(ctx context.Context, client kubernetes.Interface, token string
 		replicas := int32(1)
 		if current.Spec.Replicas != nil {
 			replicas = *current.Spec.Replicas
+		}
+		if replicas == 0 {
+			return false, errors.New("Deployment has no replicas")
 		}
 		return current.Status.ObservedGeneration >= current.Generation && current.Status.UpdatedReplicas == replicas && current.Status.Replicas == replicas && current.Status.AvailableReplicas >= replicas, nil
 	})

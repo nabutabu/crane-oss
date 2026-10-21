@@ -11,11 +11,21 @@ import (
 )
 
 func TestProbeSubdRolesAndFailures(t *testing.T) {
-	for _, mode := range []string{"writer", "reader", "wrong-identity", "non-2xx", "invalid-json", "reader-can-write"} {
+	for _, mode := range []string{"writer", "writer-managed", "reader", "wrong-identity", "non-2xx", "invalid-json", "reader-can-write"} {
 		t.Run(mode, func(t *testing.T) {
 			writes := 0
 			id := "spiffe://test.internal/subd/host"
 			status := api.HostAgentStatus{Identity: id, Ready: true, AcceptedRevision: 1, AppliedRevision: 1, Outcome: "applied"}
+			if mode == "writer" {
+				status.AcceptedRevision = 0
+				status.AppliedRevision = 0
+				status.Outcome = "unconfigured"
+			}
+			if mode == "writer-managed" {
+				status.AcceptedRevision = 7
+				status.AppliedRevision = 6
+				status.Outcome = "failed"
+			}
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if mode == "non-2xx" {
 					w.WriteHeader(503)
@@ -30,6 +40,10 @@ func TestProbeSubdRolesAndFailures(t *testing.T) {
 				}
 				if r.Method == http.MethodPut {
 					writes++
+					if mode == "writer" || mode == "writer-managed" {
+						w.WriteHeader(400)
+						return
+					}
 					if mode == "reader" {
 						w.WriteHeader(403)
 						return
@@ -42,15 +56,12 @@ func TestProbeSubdRolesAndFailures(t *testing.T) {
 				json.NewEncoder(w).Encode(status)
 			}))
 			defer server.Close()
-			err := probeSubd(context.Background(), server.Client(), server.URL, id, mode == "writer")
-			if mode == "writer" || mode == "reader" {
+			err := probeSubd(context.Background(), server.Client(), server.URL, id, mode == "writer" || mode == "writer-managed")
+			if mode == "writer" || mode == "reader" || mode == "writer-managed" {
 				if err != nil {
 					t.Fatal(err)
 				}
 				want := 1
-				if mode == "writer" {
-					want = 2
-				}
 				if writes != want {
 					t.Fatal(writes)
 				}

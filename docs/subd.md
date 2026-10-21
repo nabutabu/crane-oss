@@ -59,7 +59,10 @@ deadline and two-minute command deadlines. Failed collections return 503;
 invalid updates return 400; forbidden writes return 403. Older revisions and
 same-revision different payloads return 409. Revisions are positive integers.
 Successful equal-revision retries do not execute commands again. An empty
-`{"revision":1}` is bootstrap's harmless update and may be replayed safely.
+`{"revision":1}` is a valid harmless update. Bootstrap does not allocate or
+apply revisions: its writer probe submits invalid revision zero and expects
+400, while the reader probe expects 403. This verifies authorization without
+competing with API-managed operations.
 
 Subd persists payload digest, accepted/applied revisions and outcome under
 `/var/lib/crane/subd/state.json`, with mode 0600 and atomic durable replacement.

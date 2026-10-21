@@ -127,6 +127,10 @@ func pause(ctx context.Context, d time.Duration) error {
 }
 
 func runScript(ctx context.Context, cli AWSClient, reporter *bootstrap.Reporter, instance, name, script string) error {
+	return runScriptObserved(ctx, cli, reporter, instance, name, script, nil)
+}
+
+func runScriptObserved(ctx context.Context, cli AWSClient, reporter *bootstrap.Reporter, instance, name, script string, observe func(string)) error {
 	command := "set -eu\ncloud-init status --wait >/dev/null\ninstall -d -m 0755 /var/lib/crane\n"
 	path := "/var/lib/crane/" + name + ".sh"
 	var compressed bytes.Buffer
@@ -179,6 +183,9 @@ func runScript(ctx context.Context, cli AWSClient, reporter *bootstrap.Reporter,
 				}
 				if err := reporter.Output(name, "stderr", logging.RedactText(status.StandardErrorContent)); err != nil {
 					return err
+				}
+				if observe != nil {
+					observe(status.StandardOutputContent)
 				}
 				return nil
 			case "Failed", "Cancelled", "TimedOut", "Cancelling":
