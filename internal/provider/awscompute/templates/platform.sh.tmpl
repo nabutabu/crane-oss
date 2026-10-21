@@ -178,7 +178,7 @@ if [ ! -s "$OTEL_STATE_DIR/receiver-token" ]; then
   chmod 0600 "$OTEL_STATE_DIR/receiver-token"
 fi
 if [ ! -s "$OTEL_STATE_DIR/tls.crt" ] || [ ! -s "$OTEL_STATE_DIR/tls.key" ]; then
-  openssl req -x509 -newkey rsa:2048 -nodes -quiet \
+  openssl req -x509 -newkey rsa:2048 -nodes \
     -keyout "$OTEL_STATE_DIR/tls.key" \
     -out "$OTEL_STATE_DIR/tls.crt" \
     -days 3650 \
