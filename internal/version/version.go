@@ -9,7 +9,7 @@ import "fmt"
 
 // Version is synced by the release workflow (keep the `var Version = "x.y.z"`
 // form on a single line — the workflow parses it with sed).
-var Version = "0.2.4"
+var Version = "0.2.5"
 
 // Commit is the git SHA the binary was built from, injected via -ldflags.
 var Commit = "unknown"
