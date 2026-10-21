@@ -181,6 +181,10 @@ load-balancer endpoint with `-prepare-images` before building deployment AMIs.
 Bootstrap uses released service images and local deployment state; it uses no S3 bucket.
 Bootstrap-managed Collector deployment and backend configuration through a
 Kubernetes Secret are described in [AWS bootstrap](docs/aws-bootstrap.md#configure-the-collector-backend).
+Bootstrap starts Crane API before backend observability configuration exists.
+Use the blocking [Secret management endpoint](docs/kubernetes-operations.md)
+to configure or rotate the backend and await the Collector rollout through
+Dominator and Subd.
 
 Bootstrap uses version 3 config with an explicit `provider` and separate
 `provider_config`. AWS is the only registered implementation. Shared workflow

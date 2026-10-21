@@ -33,7 +33,7 @@ func TestBootstrapHostPhasesUseTheCorrectProtectedHost(t *testing.T) {
 					}
 					return map[string]any{"Command": map[string]string{"CommandId": "command-test"}}, nil
 				case "get-command-invocation":
-					return map[string]string{"Status": "Success"}, nil
+					return map[string]string{"Status": "Success", "StandardOutputContent": "crane-observability-status:ready"}, nil
 				default:
 					t.Fatalf("unexpected operation %s", op)
 					return nil, nil
@@ -48,6 +48,12 @@ func TestBootstrapHostPhasesUseTheCorrectProtectedHost(t *testing.T) {
 			}
 			if sent != wantSent {
 				t.Fatalf("sent %d commands", sent)
+			}
+			if phase == bootstrap.ValidateHandoff {
+				result := session.Result()
+				if result.ObservabilityStatus != "ready" || result.TargetHostID != "crane-platform/bootstrap/platform" || result.ControlPlaneEndpoint != "http://10.80.0.12:43060" || result.ConnectionInstructions == "" {
+					t.Fatal("invalid API handoff result")
+				}
 			}
 		})
 	}

@@ -22,3 +22,14 @@ This extends ADR-011's explicit-update resources. Kubernetes node readiness,
 drain and eviction remain control-plane duties. Workload rollout readiness
 here is part of the requested Secret operation, not a node readiness decision.
 Only new deployments are supported; services never migrate existing databases.
+
+Initial bootstrap marks the zone ready after core Kubernetes, Cilium, identity,
+database and private Subd validation. Observability is a separate condition:
+`configuration_pending`, `ready`, or `failed`. Missing backend configuration
+must not prevent Crane API from starting, because its first administrative
+request supplies that configuration. The request may optionally identify a
+same-namespace Deployment to restart and await; observability requests explicitly
+name `otel-collector`. Bootstrap preserves operator-owned backend Secrets and
+prints an API-ready handoff with an encrypted private connection method.
+Bootstrap's writer probe now uses invalid revision zero to verify authorization
+without applying state or competing with Dominator's revision allocation.

@@ -126,6 +126,33 @@
       }
     },
     {
+      "Sid": "TunnelToDeploymentHosts",
+      "Effect": "Allow",
+      "Action": "ssm:StartSession",
+      "Resource": "arn:aws:ec2:REGION:ACCOUNT_ID:instance/*",
+      "Condition": {
+        "StringEquals": {
+          "ssm:resourceTag/CraneBootstrap": "DEPLOYMENT_NAME"
+        }
+      }
+    },
+    {
+      "Sid": "UsePrivatePortForwardingDocument",
+      "Effect": "Allow",
+      "Action": "ssm:StartSession",
+      "Resource": "arn:aws:ssm:REGION::document/AWS-StartPortForwardingSession"
+    },
+    {
+      "Sid": "ManageOwnPrivateTunnel",
+      "Effect": "Allow",
+      "Action": [
+        "ssmmessages:OpenDataChannel",
+        "ssm:ResumeSession",
+        "ssm:TerminateSession"
+      ],
+      "Resource": "arn:aws:ssm:REGION:ACCOUNT_ID:session/${aws:userid}-*"
+    },
+    {
       "Sid": "UseAWSRunShellScriptDocument",
       "Effect": "Allow",
       "Action": "ssm:SendCommand",

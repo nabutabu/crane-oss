@@ -54,6 +54,9 @@ func (s Store) lock(ctx context.Context, host string) (*sql.Conn, func(), error)
 		var locked bool
 		err = conn.QueryRowContext(ctx, `SELECT pg_try_advisory_lock(hashtextextended($1,724163012))`, host).Scan(&locked)
 		if err != nil {
+			// A cancelled query may have acquired the session lock before its
+			// result was lost. Never return that connection to the pool.
+			_ = conn.Raw(func(any) error { return driver.ErrBadConn })
 			conn.Close()
 			if ctx.Err() != nil {
 				return nil, nil, fail(504, "host operation deadline exceeded")

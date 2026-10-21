@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/nabutabu/crane-oss/internal/bootstrap"
 )
@@ -25,10 +26,11 @@ type BootstrapHost struct {
 	StorageGiB   int32  `json:"storage_gib"`
 }
 type bootstrapSession struct {
-	cfg             bootstrapConfig
-	client          AWSClient
-	infra           Infrastructure
-	spire, platform host
+	cfg                 bootstrapConfig
+	client              AWSClient
+	infra               Infrastructure
+	spire, platform     host
+	observabilityStatus string
 }
 
 var _ bootstrap.Session = (*bootstrapSession)(nil)
@@ -209,6 +211,20 @@ func (s *bootstrapSession) RunHostPhase(ctx context.Context, phase bootstrap.Hos
 	if target == "" {
 		return fmt.Errorf("host phase %s requires a protected host", phase)
 	}
+	if phase == bootstrap.ValidateHandoff {
+		return runScriptObserved(ctx, s.client, reporter, target, string(phase), script, func(output string) {
+			for line := range strings.SplitSeq(output, "\n") {
+				value, ok := strings.CutPrefix(strings.TrimSpace(line), "crane-observability-status:")
+				if !ok {
+					continue
+				}
+				switch value {
+				case "configuration_pending", "ready", "failed":
+					s.observabilityStatus = value
+				}
+			}
+		})
+	}
 	return runScript(ctx, s.client, reporter, target, string(phase), script)
 }
 
@@ -227,6 +243,13 @@ func (s *bootstrapSession) Result() bootstrap.Result {
 	result := bootstrap.Result{Name: s.cfg.Name, Provider: "aws", IdentityEndpoint: s.infra.SpireAddress, ProviderOutput: output}
 	if s.platform.PrivateIP != "" {
 		result.APIServerEndpoint = "https://" + s.platform.PrivateIP + ":6443"
+		result.ControlPlaneEndpoint = "http://" + s.platform.PrivateIP + ":43060"
+		result.TargetHostID = s.cfg.Name + "/bootstrap/platform"
+		result.ObservabilityStatus = s.observabilityStatus
+		if result.ObservabilityStatus == "" {
+			result.ObservabilityStatus = "configuration_pending"
+		}
+		result.ConnectionInstructions = "Open an encrypted private tunnel: aws ssm start-session --target " + s.platform.ID + " --document-name AWS-StartPortForwardingSession --parameters '{\"portNumber\":[\"43060\"],\"localPortNumber\":[\"43060\"]}'. Call http://127.0.0.1:43060 using the admin_token from the deployment runtime secret (provider_output.runtime_secret_arn). See docs/kubernetes-operations.md; never print the token."
 	}
 	return result
 }

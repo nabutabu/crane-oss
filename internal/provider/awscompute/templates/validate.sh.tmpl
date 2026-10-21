@@ -26,9 +26,23 @@ chmod 600 "$SECRET_DIR/runtime-secret.json"
 # ---- Kubernetes and Cilium readiness --------------------------------------
 kubectl -n crane-system rollout status deployment/crane-api --timeout=600s
 kubectl -n crane-system rollout status deployment/dominator --timeout=600s
-kubectl -n crane-system rollout status deployment/otel-collector --timeout=600s
 kubectl -n kube-system rollout status daemonset/cilium --timeout=600s
 kubectl wait --for=condition=Ready node --all --timeout=600s
+
+# ---- Observability is reported separately from core zone readiness ---------
+OBSERVABILITY_STATUS=configuration_pending
+EXPORTER_CONFIG_PRESENT="$(kubectl -n crane-system get secret otel-exporter-config --ignore-not-found -o go-template='{{if index .data "exporter.yaml"}}present{{end}}')"
+if [ "$EXPORTER_CONFIG_PRESENT" = present ]; then
+  OBSERVABILITY_STATUS=failed
+  if kubectl -n crane-system get deployment otel-collector -o json | jq -e '
+    (.spec.replicas // 1) > 0 and
+    .status.observedGeneration >= .metadata.generation and
+    .status.updatedReplicas == (.spec.replicas // 1) and
+    .status.replicas == (.spec.replicas // 1) and
+    .status.availableReplicas >= (.spec.replicas // 1)' >/dev/null; then
+    OBSERVABILITY_STATUS=ready
+  fi
+fi
 
 # ---- SPIRE workload attestation and dominator mTLS/database health ---------
 step "validating SPIFFE workload attestation and Dominator mTLS"
@@ -60,7 +74,7 @@ export PGPASSWORD="$(jq -r '.crane_password' "$SECRET_DIR/runtime-secret.json")"
 psql \
   "host=$DB_ENDPOINT port=$DB_PORT user=$DB_USER dbname=crane sslmode=verify-full sslrootcert=$CA_BUNDLE" \
   -v ON_ERROR_STOP=1 \
-  -v zone="$ZONE_ID" -v cluster="$CLUSTER_ID" <<'SQL'
+  -v zone="$ZONE_ID" -v cluster="$CLUSTER_ID" -v observability="$OBSERVABILITY_STATUS" <<'SQL'
 BEGIN;
 SELECT id FROM zones WHERE id = :'zone' FOR UPDATE;
 SELECT id FROM clusters WHERE id = :'cluster' AND zone_id = :'zone' FOR UPDATE;
@@ -79,7 +93,11 @@ DO $$ BEGIN RAISE EXCEPTION 'bootstrap host inventory changed during validation'
 [[ end ]]
 UPDATE zones SET lifecycle_state = 'ready' WHERE id = :'zone';
 UPDATE clusters SET lifecycle_state = 'ready' WHERE id = :'cluster';
+-- Do not overwrite a newer API-managed observability outcome.
+UPDATE zone_dominators SET observability_status=:'observability'
+ WHERE zone_id=:'zone' AND observability_status='configuration_pending';
 COMMIT;
+SELECT 'crane-observability-status:' || observability_status FROM zone_dominators WHERE zone_id=:'zone';
 \else
 ROLLBACK;
 DO $$ BEGIN RAISE EXCEPTION 'bootstrap topology is missing or mismatched'; END $$;

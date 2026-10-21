@@ -21,6 +21,17 @@ SELECT count(*) = 1 AND bool_and(id='[[ $.Config.Name ]]/bootstrap/[[ .Role ]]' 
 DO $$ BEGIN RAISE EXCEPTION 'conflicting bootstrap host catalog record'; END $$;
 \endif
 [[ end ]]
+[[ range .Hosts ]][[ if eq .Role "platform" ]]
+INSERT INTO zone_dominators(zone_id,endpoint,identity)
+VALUES(:'zone','https://[[ .PrivateIP ]]:44000','spiffe://[[ $.TrustDomain ]]/dominator')
+ON CONFLICT(zone_id) DO NOTHING;
+SELECT count(*)=1 AND bool_and(endpoint='https://[[ .PrivateIP ]]:44000' AND identity='spiffe://[[ $.TrustDomain ]]/dominator') AS route_valid
+ FROM zone_dominators WHERE zone_id=:'zone' \gset
+\if :route_valid
+\else
+DO $$ BEGIN RAISE EXCEPTION 'conflicting bootstrap Dominator route'; END $$;
+\endif
+[[ end ]][[ end ]]
 COMMIT;
 SQL
 unset PGPASSWORD
