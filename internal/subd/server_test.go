@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nabutabu/crane-oss/internal/hostrpc"
 	"github.com/nabutabu/crane-oss/pkg/api"
 	"github.com/spiffe/go-spiffe/v2/bundle/x509bundle"
 	"github.com/spiffe/go-spiffe/v2/spiffeid"
@@ -334,6 +335,16 @@ func TestRealMutualTLS(t *testing.T) {
 		}
 		if !tc.ok && err == nil {
 			t.Fatal("unauthorized identity accepted", tc.id, tc.serverID)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		var status api.HostAgentStatus
+		code, rpcErr := (hostrpc.Client{Source: peer}).Call(ctx, server.URL, tc.serverID, http.MethodGet, "/v1/health", nil, &status)
+		cancel()
+		if tc.ok && (rpcErr != nil || code != 200 || status.Identity != s.identity) {
+			t.Fatal("private RPC rejected authorized peer", code, rpcErr)
+		}
+		if !tc.ok && rpcErr == nil {
+			t.Fatal("private RPC accepted unauthorized identity")
 		}
 	}
 	client := &http.Client{Transport: &http.Transport{TLSClientConfig: tlsconfig.TLSClientConfig(own, tlsconfig.AuthorizeID(own.svid.ID))}, Timeout: time.Second}

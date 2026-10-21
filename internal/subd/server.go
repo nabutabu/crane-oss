@@ -16,6 +16,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/nabutabu/crane-oss/internal/hostrpc"
 	"github.com/nabutabu/crane-oss/pkg/api"
 	"github.com/spiffe/go-spiffe/v2/bundle/x509bundle"
 	"github.com/spiffe/go-spiffe/v2/spiffeid"
@@ -131,6 +132,13 @@ func (s *Server) current(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) update(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel, contextErr := hostrpc.Context(r)
+	if contextErr != nil {
+		http.Error(w, "invalid operation deadline", http.StatusBadRequest)
+		return
+	}
+	defer cancel()
+	r = r.WithContext(ctx)
 	var in api.ExpectedHostState
 	d := json.NewDecoder(http.MaxBytesReader(w, r.Body, api.KubernetesBodyLimit))
 	d.DisallowUnknownFields()
@@ -167,8 +175,6 @@ func (s *Server) update(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "cannot publish status", http.StatusInternalServerError)
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), api.OperationTimeout)
-	defer cancel()
 	err := s.host.Apply(ctx, in)
 	if err == nil && in.Secret != nil {
 		if host, ok := s.host.(secretHost); ok {
