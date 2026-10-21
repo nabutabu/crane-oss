@@ -149,7 +149,7 @@ func TestAuthorizationAndValidation(t *testing.T) {
 			t.Errorf("%s %s: %d want %d", tc.method, tc.path, w.Code, tc.code)
 		}
 	}
-	if w := request(t, s, testConfig().WriterIdentity, "PUT", "/v1/expected-state", `{"revision":1,"services":{`+strings.Repeat(" ", 65536)+`}}`); w.Code != 400 {
+	if w := request(t, s, testConfig().WriterIdentity, "PUT", "/v1/expected-state", `{"revision":1,"services":{`+strings.Repeat(" ", api.KubernetesBodyLimit)+`}}`); w.Code != 400 {
 		t.Fatal(w.Code)
 	}
 }
