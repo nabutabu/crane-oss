@@ -15,8 +15,8 @@ import (
 
 const maxBodyBytes = 1 << 20
 
-// API exposes the small platform control-plane surface. Topology mutations
-// require the configured admin bearer token. Adapter requests require a token
+// API exposes the small platform control-plane surface. Inventory reads and
+// topology mutations require the admin bearer token. Adapter requests require a token
 // bound to one configured cluster; the header must match that binding.
 type API struct {
 	store            *Store
@@ -35,6 +35,7 @@ func NewAPI(store *Store, adminToken, adapterToken, adapterClusterID string) *AP
 // Handler returns the router that maps each platform endpoint to its handler.
 func (a *API) Handler() http.Handler {
 	mux := http.NewServeMux()
+	mux.Handle("GET /v1/hosts", a.admin(a.listHosts))
 	mux.Handle("POST /v1/zones", a.admin(a.createZone))
 	mux.Handle("POST /v1/clusters", a.admin(a.createCluster))
 	mux.Handle("POST /v1/node-pools", a.admin(a.createNodePool))
@@ -47,7 +48,7 @@ func (a *API) Handler() http.Handler {
 	return mux
 }
 
-// admin guards topology mutations behind the configured admin bearer token.
+// admin guards platform administration behind the configured admin bearer token.
 func (a *API) admin(next http.HandlerFunc) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if a.adminToken == "" || r.Header.Get("Authorization") != "Bearer "+a.adminToken {
