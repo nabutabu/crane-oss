@@ -44,7 +44,7 @@ func run(path string) error {
 	if err != nil {
 		return err
 	}
-	s, err := subd.NewServer(cfg, own.ID.String(), "/var/lib/crane/subd/state.json", "/run/crane/subd/status.json", subd.LocalHost{})
+	s, err := subd.NewServer(cfg, own.ID.String(), "/var/lib/crane/subd/state.json", "/run/crane/subd/status.json", subd.LocalHost{Kubeconfig: cfg.Kubeconfig})
 	if err != nil {
 		return err
 	}

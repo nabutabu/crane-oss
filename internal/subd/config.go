@@ -17,6 +17,7 @@ type Config struct {
 	TrustDomain      string
 	WriterIdentity   string
 	ReaderIdentities []string
+	Kubeconfig       string
 }
 
 func LoadConfig(path string) (Config, error) {
