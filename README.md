@@ -80,6 +80,7 @@ The crane-api service will start on port 43060 and begin monitoring hosts in the
 
 ### crane-api (Port 43060)
 
+- `GET /v1/hosts?provider=aws&region=us-west-2` - list cataloged hosts in a provider and region (`Authorization: Bearer $CRANE_ADMIN_TOKEN`). Both filters are required. Returns `{"hosts":[...]}` sorted by catalog host ID, or `{"hosts":[]}` when none match. Includes all lifecycle states and protected bootstrap hosts. Region comes from registered zone topology; hosts without a matching zone are excluded. Results include catalog/provider IDs, placement, role, lifecycle/health, protection, and desired/observed state versions. Connection credentials are excluded.
 - `GET /health` - Health check endpoint
 - `GET /v1/db/health` - Database health check
 - `POST /v1/zones`, `/v1/clusters`, `/v1/node-pools`, `/v1/node-groups` - authenticated platform topology creation (`Authorization: Bearer $CRANE_ADMIN_TOKEN`)
