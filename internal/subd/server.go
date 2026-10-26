@@ -11,10 +11,12 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/nabutabu/crane-oss/internal/hostrpc"
 	"github.com/nabutabu/crane-oss/pkg/api"
 	"github.com/spiffe/go-spiffe/v2/bundle/x509bundle"
 	"github.com/spiffe/go-spiffe/v2/spiffeid"
@@ -69,7 +71,7 @@ func digest(in api.ExpectedHostState) string {
 }
 
 func (s *Server) status() api.HostAgentStatus {
-	return api.HostAgentStatus{Identity: s.identity, PID: os.Getpid(), InvocationID: os.Getenv("INVOCATION_ID"), Ready: true, AcceptedRevision: s.saved.Request.Revision, AppliedRevision: s.saved.AppliedRevision, Outcome: s.saved.Outcome}
+	return api.HostAgentStatus{Identity: s.identity, PID: os.Getpid(), InvocationID: os.Getenv("INVOCATION_ID"), Ready: true, AcceptedRevision: s.saved.Request.Revision, AppliedRevision: s.saved.AppliedRevision, Outcome: s.saved.Outcome, Kubernetes: s.saved.Kubernetes}
 }
 
 func (s *Server) publish() error {
@@ -130,12 +132,22 @@ func (s *Server) current(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) update(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel, contextErr := hostrpc.Context(r)
+	if contextErr != nil {
+		http.Error(w, "invalid operation deadline", http.StatusBadRequest)
+		return
+	}
+	defer cancel()
+	r = r.WithContext(ctx)
 	var in api.ExpectedHostState
-	d := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10))
+	d := json.NewDecoder(http.MaxBytesReader(w, r.Body, api.KubernetesBodyLimit))
 	d.DisallowUnknownFields()
 	if d.Decode(&in) != nil || d.Decode(new(any)) != io.EOF || validateExpected(in) != nil {
 		http.Error(w, "invalid expected state", http.StatusBadRequest)
 		return
+	}
+	if in.Secret != nil {
+		_ = in.Secret.Normalize()
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -163,9 +175,14 @@ func (s *Server) update(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "cannot publish status", http.StatusInternalServerError)
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
-	defer cancel()
 	err := s.host.Apply(ctx, in)
+	if err == nil && in.Secret != nil {
+		if host, ok := s.host.(secretHost); ok {
+			s.saved.Kubernetes, err = host.EnsureSecret(ctx, s.identity+"/"+strconv.FormatUint(in.Revision, 10), *in.Secret)
+		} else {
+			err = errors.New("Kubernetes enforcement unavailable")
+		}
+	}
 	s.saved.Outcome = "failed"
 	if err == nil {
 		s.saved.Outcome = "applied"
@@ -184,6 +201,10 @@ func (s *Server) update(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		slog.ErrorContext(r.Context(), "host update failed", "revision", in.Revision)
+		if in.Secret != nil {
+			hostrpc.JSON(w, http.StatusInternalServerError, s.status())
+			return
+		}
 		http.Error(w, "host update failed", http.StatusInternalServerError)
 		return
 	}
@@ -201,7 +222,7 @@ func (s *Server) Serve(ctx context.Context, source IdentitySource) error {
 		ids = append(ids, spiffeid.RequireFromString(raw))
 	}
 	conf := tlsconfig.MTLSServerConfig(source, source, tlsconfig.AuthorizeOneOf(ids...))
-	server := &http.Server{Addr: s.cfg.ListenAddress, Handler: s.Handler(), TLSConfig: conf, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 6 * time.Minute, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10}
+	server := &http.Server{Addr: s.cfg.ListenAddress, Handler: s.Handler(), TLSConfig: conf, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: api.OperationTimeout + time.Minute, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10}
 	listener, err := net.Listen("tcp", s.cfg.ListenAddress)
 	if err != nil {
 		return errors.New("cannot bind Subd listener")

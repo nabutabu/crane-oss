@@ -29,7 +29,7 @@ func main() {
 func run() error {
 	endpoint := flag.String("subd-url", "", "private Subd endpoint; empty checks Dominator")
 	identity := flag.String("subd-id", "", "expected Subd SPIFFE identity")
-	write := flag.Bool("write", false, "validate empty revision 1 as Dominator")
+	write := flag.Bool("write", false, "verify writer authorization without applying expected state")
 	flag.Parse()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -112,24 +112,20 @@ func probeSubd(ctx context.Context, client *http.Client, endpoint, identity stri
 	if !health.Ready || health.Identity != identity {
 		return fmt.Errorf("Subd readiness or identity mismatch")
 	}
+	// A zero revision is invalid after authorization. It proves the writer can
+	// reach validation without competing with Dominator's revision allocation.
+	want := http.StatusForbidden
 	if write {
-		for i := 0; i < 2; i++ {
-			var result api.HostAgentStatus
-			if err := request(http.MethodPut, "/v1/expected-state", []byte(`{"revision":1}`), http.StatusOK, &result); err != nil {
-				return err
-			}
-			if result.Identity != identity || result.AcceptedRevision != 1 || result.AppliedRevision != 1 || result.Outcome != "applied" {
-				return fmt.Errorf("Subd did not apply bootstrap revision")
-			}
-		}
-	} else if err := request(http.MethodPut, "/v1/expected-state", []byte(`{"revision":1}`), http.StatusForbidden, nil); err != nil {
+		want = http.StatusBadRequest
+	}
+	if err := request(http.MethodPut, "/v1/expected-state", []byte(`{"revision":0}`), want, nil); err != nil {
 		return err
 	}
 	var state api.HostAgentState
 	if err := request(http.MethodGet, "/v1/state", nil, http.StatusOK, &state); err != nil {
 		return err
 	}
-	if state.Identity != identity || !state.Ready || state.AppliedRevision != 1 || state.Outcome != "applied" {
+	if state.Identity != identity || !state.Ready || state.AcceptedRevision < health.AcceptedRevision || state.AppliedRevision > state.AcceptedRevision {
 		return fmt.Errorf("Subd current state does not confirm bootstrap update")
 	}
 	fmt.Println("Subd authenticated state and update authorization validated")

@@ -13,6 +13,7 @@ type savedState struct {
 	Digest          string                `json:"digest"`
 	AppliedRevision uint64                `json:"applied_revision"`
 	Outcome         string                `json:"outcome"`
+	Kubernetes      *api.KubernetesResult `json:"kubernetes,omitempty"`
 }
 
 func atomicJSON(path string, value any) error {

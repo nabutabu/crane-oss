@@ -38,12 +38,31 @@ implicit inventory pruning. Names are validated and passed as subprocess
 arguments without a shell. Image replacement, package version pinning, kubeadm
 join, Kubernetes eviction and automatic drift repair are not implemented here.
 
-Updates have a 64 KiB request limit, at most 256 operations, a five-minute total
+An update may also contain one `secret` with `namespace`, `name`, optional
+`type` (default `Opaque`), `data` (base64 values) or `stringData` (text values),
+and optional `rollout_deployment` in the same namespace. Secret data replaces
+the complete data map; unrelated metadata is preserved. Overlapping keys and
+decoded data larger than 1 MiB are rejected. Subd writes and reads back the
+Secret, then optionally restarts the Deployment and waits for the current
+generation to become available. The result's `kubernetes` fields distinguish
+Secret verification from rollout failure. A failed rollout leaves the Secret
+written; retrying the same revision does not restart that rollout again.
+
+`Kubeconfig` in the deployment configuration selects local credentials. An
+empty setting disables Kubernetes operations; credentials are never accepted
+from requests. Kubernetes resources belong to the host's cluster, not to the
+individual machine. Secret-bearing expected state is persisted in the same
+root-only state file; it is never included in status, logs or error text.
+
+Updates have a 2 MiB request limit, at most 256 service/package operations, a ten-minute total
 deadline and two-minute command deadlines. Failed collections return 503;
 invalid updates return 400; forbidden writes return 403. Older revisions and
 same-revision different payloads return 409. Revisions are positive integers.
 Successful equal-revision retries do not execute commands again. An empty
-`{"revision":1}` is bootstrap's harmless update and may be replayed safely.
+`{"revision":1}` is a valid harmless update. Bootstrap does not allocate or
+apply revisions: its writer probe submits invalid revision zero and expects
+400, while the reader probe expects 403. This verifies authorization without
+competing with API-managed operations.
 
 Subd persists payload digest, accepted/applied revisions and outcome under
 `/var/lib/crane/subd/state.json`, with mode 0600 and atomic durable replacement.

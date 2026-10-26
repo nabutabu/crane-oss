@@ -19,7 +19,8 @@ type Host interface {
 }
 
 type LocalHost struct {
-	run func(context.Context, string, ...string) error
+	run        func(context.Context, string, ...string) error
+	Kubeconfig string
 }
 
 var serviceName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.@:-]*\.service$`)
@@ -28,6 +29,12 @@ var packageName = regexp.MustCompile(`^[a-z0-9][a-z0-9+.-]*(:[a-z0-9][a-z0-9-]*)
 func validateExpected(in api.ExpectedHostState) error {
 	if in.Revision == 0 || len(in.Services)+len(in.Packages) > 256 {
 		return errors.New("invalid update revision or size")
+	}
+	if in.Secret != nil {
+		copy := *in.Secret
+		if err := copy.Normalize(); err != nil {
+			return err
+		}
 	}
 	for name := range in.Services {
 		if !serviceName.MatchString(name) {

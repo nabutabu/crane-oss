@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -95,6 +96,7 @@ func run() (runErr error) {
 	}
 
 	server := dominator.NewServer(":44000", db, hostCatalog, resolver, logger.Logger)
+	server.Middleware = func(next http.Handler) http.Handler { return telemetryProvider.HTTPHandler(next, logger.Logger) }
 
 	return server.StartContext(ctx, source)
 }

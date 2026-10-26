@@ -6,6 +6,7 @@ type ExpectedHostState struct {
 	Revision uint64              `json:"revision"`
 	Services map[string]bool     `json:"services,omitempty"`
 	Packages []HostPackageChange `json:"packages,omitempty"`
+	Secret   *KubernetesSecret   `json:"secret,omitempty"`
 }
 
 type HostPackageChange struct {
@@ -14,13 +15,14 @@ type HostPackageChange struct {
 }
 
 type HostAgentStatus struct {
-	Identity         string `json:"identity"`
-	PID              int    `json:"pid"`
-	InvocationID     string `json:"invocation_id"`
-	Ready            bool   `json:"ready"`
-	AcceptedRevision uint64 `json:"accepted_revision"`
-	AppliedRevision  uint64 `json:"applied_revision"`
-	Outcome          string `json:"outcome"`
+	Identity         string            `json:"identity"`
+	PID              int               `json:"pid"`
+	InvocationID     string            `json:"invocation_id"`
+	Ready            bool              `json:"ready"`
+	AcceptedRevision uint64            `json:"accepted_revision"`
+	AppliedRevision  uint64            `json:"applied_revision"`
+	Outcome          string            `json:"outcome"`
+	Kubernetes       *KubernetesResult `json:"kubernetes,omitempty"`
 }
 
 type HostAgentState struct {

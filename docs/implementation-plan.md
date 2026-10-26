@@ -261,6 +261,7 @@ is tracked separately in `docs/compatibility-matrix.md`.
 - Exit: durable state models compile; the atomic mutation boundary is proven by tests (no partial writes); the first-go schema initializes repeatedly on an empty database; control-plane binaries use structured redaction-safe logging.
 
 ### Phase 2 — One zone end-to-end
+- Initial-zone observability setup uses blocking typed Secret operations through Crane API → zone Dominator → Subd. Bootstrap hands off a core-ready zone with observability configuration pending; the Secret request verifies the write and optionally awaits the Collector rollout. See [ADR-012](decisions/adr-012-blocking-kubernetes-operations.md) and [Kubernetes operations](kubernetes-operations.md).
 - Bootstrap layer zero and the platform team's first zone from the operator IAM identity using `crane-bootstrap`; SPIRE and Postgres are included. Subsequent zones are created via the Crane API.
 - Implement adapter-to-Crane target protocol (handler `RequestID`, target revision CAS, replay, lost-response and adapter-crash recovery).
 - Provider-backed create/delete, per-zone cluster record, zone-scoped Dominator reconciler, Subd enrollment via `kubeadm join` (Cilium), endpoint/reporting.

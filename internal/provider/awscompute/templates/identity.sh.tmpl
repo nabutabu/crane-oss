@@ -82,6 +82,7 @@ ensure_entry() {
 # Dominator workload (runs as UID 10002) and the bootstrap probe (UID 10003).
 step "reconciling Dominator and probe workload identities"
 ensure_entry "spiffe://[[ .TrustDomain ]]/dominator" 10002
+ensure_entry "spiffe://[[ .TrustDomain ]]/crane-api" 10001
 ensure_entry "spiffe://[[ .TrustDomain ]]/subd" 10003
 
 [[ range .Hosts ]]

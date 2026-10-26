@@ -86,23 +86,50 @@ URLs, and keep the Secret out of Git, bootstrap JSON, AMIs, SSM payloads and
 logs. A non-secret example is in
 [`deploy/observability/exporter.example.yaml`](../deploy/observability/exporter.example.yaml).
 
-On a fresh deployment, bootstrap creates the cluster and namespace, then stops
-if this Secret or key is missing. Use private administrative access to create
-it after Kubernetes is available, then rerun the command with the same
-configuration and `.crane-bootstrap/<deployment>` state directory:
+On a fresh deployment, bootstrap validates the core cluster, starts Crane API
+and Dominator, and marks the zone ready even when the exporter Secret is absent.
+Its handoff says **Observability configuration pending**, prints the Crane API
+address and target catalog host ID, and includes private connection instructions.
+Structured output and `result.json` include `control_plane_endpoint`,
+`target_host_id`, `observability_status`, and `connection_instructions`.
+
+Install the AWS Session Manager plugin locally, then open the SSM port-forwarding
+session shown in the handoff. In a second terminal,
+write the request and authorization header into protected local files. Retrieve
+the deployment runtime secret ARN from `provider_output.runtime_secret_arn` in
+the saved bootstrap result; never print its `admin_token`. For example:
 
 ```sh
-kubectl -n crane-system create secret generic otel-exporter-config \
-  --from-file=exporter.yaml=/secure/exporter.yaml
-AWS_PROFILE=crane-bootstrap go run ./cmd/crane-bootstrap \
-  -bootstrap-config bootstrap.example.json
+umask 077
+mkdir -p /tmp/crane-operator
+aws secretsmanager get-secret-value --secret-id '<runtime-secret-arn>' \
+  --query SecretString --output text \
+  | jq -r '"Authorization: Bearer " + .admin_token' > /tmp/crane-operator/admin-header
+jq -n --rawfile exporter /secure/exporter.yaml \
+  '{request_id:"configure-observability-1",stringData:{"exporter.yaml":$exporter},rollout_deployment:"otel-collector"}' \
+  > /tmp/crane-operator/observability-request.json
+curl --request PUT --max-time 620 \
+  --header @/tmp/crane-operator/admin-header \
+  --header 'Content-Type: application/json' \
+  --data-binary @/tmp/crane-operator/observability-request.json \
+  'http://127.0.0.1:43060/v1/hosts/crane-platform%2Fbootstrap%2Fplatform/kubernetes/namespaces/crane-system/secrets/otel-exporter-config'
 ```
 
-Bootstrap never creates, overwrites or deletes this operator-owned Secret. It
-checks only the key's presence and reads Secret metadata to roll the Collector
-when the Secret changes. Kubernetes/API access failures are distinct from a
-missing Secret and should be resolved before retrying. An invalid exporter
-fragment blocks Collector readiness and prevents bootstrap handoff completion.
+Replace the encoded host ID with the handoff's `target_host_id`, URL-encoding
+the complete ID as one segment. The request blocks through Crane API,
+Dominator and Subd until the Secret is verified and the Collector rollout is
+ready. No bootstrap rerun is required. HTTP 200 proves readiness, not New Relic
+delivery. A failed rollout leaves the Secret written and returns the failed
+stage; retry identical contents with the same request ID, or use a new ID when
+fixing the configuration or rotating credentials. See
+[Kubernetes operations](kubernetes-operations.md) for the protocol and limits.
+
+Bootstrap preserves this operator-owned Secret on reruns and reports missing
+configuration separately from Kubernetes access errors. Core zone readiness
+and observability readiness are separate. Subd's platform configuration uses
+the existing local `/etc/kubernetes/admin.conf`; other bootstrap hosts do not
+receive Kubernetes credentials. Protect and remove local request/header files
+when finished.
 
 The bootstrap-created internal Collector objects have separate responsibilities:
 
@@ -117,7 +144,8 @@ The bootstrap-created internal Collector objects have separate responsibilities:
 The applications use only the internal receiver credentials. They never receive
 the backend credential. Backend credential rotation requires restarting or
 rerunning the Collector; it does not require restarting Crane API or Dominator.
-Receiver token or certificate rotation requires rerunning bootstrap so the
+Use the Secret endpoint with a new request ID and `rollout_deployment` for backend
+rotation. Receiver token or certificate rotation requires rerunning bootstrap so the
 Collector and both applications update together.
 
 Packer uses the normal AWS credential chain, for example
@@ -242,10 +270,16 @@ Replace `ACCOUNT_ID`, `REGION` and `DEPLOYMENT_NAME` throughout it.
 
 The operator needs EC2/network provisioning and discovery, encrypted RDS
 provisioning, deployment runtime IAM role/profile creation and pass-role,
-Secrets Manager access, Systems Manager host commands, and ELBv2 creation,
+Secrets Manager access, Systems Manager host commands and private port-forwarding
+sessions, and ELBv2 creation,
 target registration and discovery. First use may create RDS and ELB
 service-linked roles. No S3 permissions are needed. Runtime hosts use instance
 roles, never operator keys.
+
+The template scopes tunnel targets to the deployment tag, permits only the
+`AWS-StartPortForwardingSession` session document, and scopes session data-channel
+and resume/termination permissions to the caller's own sessions, following
+[AWS's Session Manager policy examples](https://docs.aws.amazon.com/systems-manager/latest/userguide/getting-started-restrict-access-quickstart.html).
 
 Building the golden image with Packer uses the same operator identity and needs
 the additional EC2 image-build permissions in

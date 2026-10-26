@@ -33,6 +33,7 @@ func InitializeSchema(ctx context.Context, db *sql.DB) error {
 // Services call this at startup and never alter the database schema.
 func CheckSchema(ctx context.Context, db *sql.DB) error {
 	required := []string{
+		"zone_dominators", "host_state_requests",
 		"zones", "clusters", "team_budgets", "node_pools", "node_groups",
 		"capacity_requests", "host", "operations", "credit_reservations",
 		"zone_bootstrap_operations", "node_removal_operations", "actions",

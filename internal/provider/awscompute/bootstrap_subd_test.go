@@ -101,7 +101,7 @@ source ` + shellQuote(path)
 		}
 	}
 	data, err := os.ReadFile(filepath.Join(dir, "creates"))
-	if err != nil || strings.Count(string(data), "create") != 4 {
+	if err != nil || strings.Count(string(data), "create") != 5 {
 		t.Fatal("registrations duplicated", err, string(data))
 	}
 	entry := filepath.Join(dir, "spiffe:__crane.internal_subd_"+testAgentHosts()[0].ID)

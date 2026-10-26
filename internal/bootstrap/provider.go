@@ -33,9 +33,13 @@ type Session interface {
 }
 
 type Result struct {
-	Name              string          `json:"name"`
-	Provider          string          `json:"provider"`
-	IdentityEndpoint  string          `json:"identity_endpoint"`
-	APIServerEndpoint string          `json:"api_server_endpoint,omitempty"`
-	ProviderOutput    json.RawMessage `json:"provider_output,omitempty"`
+	Name                   string          `json:"name"`
+	Provider               string          `json:"provider"`
+	IdentityEndpoint       string          `json:"identity_endpoint"`
+	APIServerEndpoint      string          `json:"api_server_endpoint,omitempty"`
+	ControlPlaneEndpoint   string          `json:"control_plane_endpoint,omitempty"`
+	TargetHostID           string          `json:"target_host_id,omitempty"`
+	ObservabilityStatus    string          `json:"observability_status,omitempty"`
+	ConnectionInstructions string          `json:"connection_instructions,omitempty"`
+	ProviderOutput         json.RawMessage `json:"provider_output,omitempty"`
 }
