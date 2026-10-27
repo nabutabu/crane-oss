@@ -176,7 +176,7 @@ func RenderPlatformScript(cfg bootstrapConfig, infra Infrastructure, spireAddres
 
 // RenderIdentityScript renders the registration step executed on the SPIRE
 // host. It binds the deterministically known platform agent parent ID to the
-// dominator (UID 10002) and probe (UID 10003) workload identities.
+// Kubernetes service identities and the Unix-attested probe identity.
 func RenderIdentityScript(cfg bootstrapConfig, infra Infrastructure, platformInstanceID, spireInstanceID string) (string, error) {
 	if strings.TrimSpace(platformInstanceID) == "" {
 		return "", errors.New("platformInstanceID is required to render the identity script")

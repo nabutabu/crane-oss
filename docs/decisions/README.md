@@ -12,3 +12,4 @@ Architecture decisions:
 - ADR-008: Private SPIRE endpoint and golden-image bootstrap
 - [ADR-009: Vendor-agnostic control plane and bootstrap](adr-009-vendor-agnostic-architecture.md) (accepted)
 - [ADR-012: Blocking Kubernetes operations through expected state](adr-012-blocking-kubernetes-operations.md) (accepted)
+- [ADR-013: Kubernetes attestation for control-plane workloads](adr-013-kubernetes-workload-attestation.md) (accepted)

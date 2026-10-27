@@ -1,0 +1,11 @@
+[Unit]
+Description=Check SPIRE Kubernetes attestor credentials twice daily
+
+[Timer]
+OnBootSec=5m
+OnUnitActiveSec=12h
+RandomizedDelaySec=5m
+Persistent=true
+
+[Install]
+WantedBy=timers.target
