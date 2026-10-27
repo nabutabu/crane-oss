@@ -48,22 +48,22 @@ func TestSPIREKubernetesAttestorCredentials(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	certificate := func(name string) ([]byte, []byte) {
+	certificate := func(name string, lifetime time.Duration) ([]byte, []byte) {
 		t.Helper()
 		key, err := rsa.GenerateKey(rand.Reader, 2048)
 		if err != nil {
 			t.Fatal(err)
 		}
 		now := time.Now()
-		cert := &x509.Certificate{SerialNumber: big.NewInt(now.UnixNano()), Subject: pkix.Name{CommonName: name}, DNSNames: []string{name}, NotBefore: now.Add(-time.Hour), NotAfter: now.Add(48 * time.Hour), IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth}}
+		cert := &x509.Certificate{SerialNumber: big.NewInt(now.UnixNano()), Subject: pkix.Name{CommonName: name}, DNSNames: []string{name}, NotBefore: now.Add(-48 * time.Hour), NotAfter: now.Add(lifetime), IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth}}
 		der, err := x509.CreateCertificate(rand.Reader, cert, cert, &key.PublicKey, key)
 		if err != nil {
 			t.Fatal(err)
 		}
 		return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
 	}
-	ca, key := certificate("cluster-ca")
-	serving, servingKey := certificate("node.test")
+	ca, key := certificate("cluster-ca", 48*time.Hour)
+	serving, servingKey := certificate("node.test", 48*time.Hour)
 	write("etc/kubernetes/pki/ca.crt", ca, 0600)
 	write("etc/kubernetes/pki/ca.key", key, 0600)
 	write("var/lib/kubelet/pki/kubelet.crt", serving, 0600)
@@ -92,7 +92,9 @@ func TestSPIREKubernetesAttestorCredentials(t *testing.T) {
 		}
 		w.WriteHeader(int(response.Load()))
 	}))
-	server.TLS = &tls.Config{Certificates: []tls.Certificate{pair}, ClientAuth: tls.RequireAndVerifyClientCert, ClientCAs: pool, MinVersion: tls.VersionTLS12}
+	var serverPair atomic.Pointer[tls.Certificate]
+	serverPair.Store(&pair)
+	server.TLS = &tls.Config{GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) { return serverPair.Load(), nil }, ClientAuth: tls.RequireAndVerifyClientCert, ClientCAs: pool, MinVersion: tls.VersionTLS12}
 	server.Config.ErrorLog = log.New(io.Discard, "", 0)
 	server.StartTLS()
 	defer server.Close()
@@ -171,6 +173,28 @@ func TestSPIREKubernetesAttestorCredentials(t *testing.T) {
 	if next != old {
 		t.Fatal("TLS failure replaced valid credentials")
 	}
+	// Even a locally trusted certificate must have the expected hostname and
+	// be within its validity interval.
+	for _, bad := range []struct {
+		name     string
+		lifetime time.Duration
+	}{
+		{"other.test", 48 * time.Hour}, {"node.test", -time.Hour},
+	} {
+		badCert, badKey := certificate(bad.name, bad.lifetime)
+		badPair, err := tls.X509KeyPair(badCert, badKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+		serverPair.Store(&badPair)
+		write("var/lib/kubelet/pki/kubelet.crt", badCert, 0600)
+		run(false, false)
+		next, _ = os.Readlink(current)
+		if next != old {
+			t.Fatal("invalid server identity replaced trusted credentials")
+		}
+	}
+	serverPair.Store(&pair)
 	write("var/lib/kubelet/pki/kubelet.crt", serving, 0600)
 	// A broken local credential is replaced and verified before being published.
 	write("var/lib/crane/spire-k8s/current/client.crt", []byte("invalid certificate"), 0600)

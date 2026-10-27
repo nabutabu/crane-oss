@@ -54,3 +54,10 @@ registration entries. The image includes the systemd workload attestor and
 Subd's root-owned private mTLS service. Bootstrap configures both host listeners
 and validates them; it never downloads replacement agent binaries at runtime.
 Use a release and AMI containing [the private endpoint protocol](../docs/subd.md).
+
+The image installs `crane-configure-spire-k8s` and its credential renewal units
+without activating them. Platform bootstrap invokes the helper after kubeadm
+and scoped attestor RBAC are ready. Non-Kubernetes hosts retain the base agent
+configuration. Rebuild the golden image when changing these installed files;
+bootstrap does not distribute replacement binaries or installers. See
+[ADR-013](../docs/decisions/adr-013-kubernetes-workload-attestation.md).
