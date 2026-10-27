@@ -41,6 +41,7 @@ step "verifying golden image and starting SPIRE agent"
 for executable in kubeadm kubectl kubelet helm aws spire-agent openssl gzip tr mktemp df awk sha256sum; do command -v "$executable" >/dev/null; done
 test -x "$CRANE_DIR/bin/crane-bootstrap"
 test -x "$CRANE_DIR/bin/crane-bootstrap-probe"
+test -x /usr/local/bin/crane-configure-spire-k8s
 test -r "$CRANE_DIR/policy/os.star"
 grep -Fx '    server_address = "[[ .SpireAddress ]]"' /etc/spire/agent.conf >/dev/null
 grep -Fx '    trust_domain = "[[ .TrustDomain ]]"' /etc/spire/agent.conf >/dev/null
@@ -149,6 +150,61 @@ metadata:
   name: crane-system
 NS
 
+# Resolve the protected node by this host's private address, not list ordering.
+NODE_NAME="$(kubectl get nodes -o json | PRIVATE_IP="$PRIVATE_IP" python3 -c '
+import json, os, sys
+nodes = [n["metadata"]["name"] for n in json.load(sys.stdin)["items"]
+         if any(a["type"] == "InternalIP" and a["address"] == os.environ["PRIVATE_IP"]
+                for a in n["status"]["addresses"])]
+if len(nodes) != 1:
+    raise SystemExit("cannot uniquely identify protected platform node")
+print(nodes[0])')"
+case "$NODE_NAME" in
+  ''|*[!A-Za-z0-9.-]*) echo "Kubernetes returned an invalid protected node name" >&2; exit 1 ;;
+esac
+
+step "configuring Kubernetes workload attestation"
+kubectl apply -f - <<YAML
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: crane-api
+  namespace: crane-system
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: dominator
+  namespace: crane-system
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: crane-spire-attestor
+rules:
+  - apiGroups: [""]
+    resources: ["nodes/pods"]
+    resourceNames: ["$NODE_NAME"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: crane-spire-attestor
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: crane-spire-attestor
+subjects:
+  - kind: User
+    apiGroup: rbac.authorization.k8s.io
+    name: "crane-spire-attestor:$NODE_NAME"
+YAML
+/usr/local/bin/crane-configure-spire-k8s "$NODE_NAME"
+
+
 step "installing the shared OTLP Collector and private receiver credentials"
 # The deployment system owns backend configuration. Never print, copy or
 # overwrite its contents; inspect only key presence and object identity.
@@ -205,10 +261,6 @@ kubectl create secret generic otel-collector-tls -n crane-system \
 kubectl create configmap otel-collector-ca -n crane-system \
   --from-file=ca.crt="$OTEL_STATE_DIR/tls.crt" --dry-run=client -o yaml | kubectl apply -f -
 
-NODE_NAME="$(kubectl get nodes -o jsonpath='{.items[0].metadata.name}')"
-case "$NODE_NAME" in
-  ''|*[!A-Za-z0-9.-]*) echo "Kubernetes returned an invalid protected node name" >&2; exit 1 ;;
-esac
 printf %s '[[ .CollectorManifestGzipBase64 ]]' | base64 -d | gzip -d > "$CRANE_DIR/otel-collector.yaml"
 sed "s/REPLACE_PROTECTED_PLATFORM_NODE/$NODE_NAME/g" "$CRANE_DIR/otel-collector.yaml" > "$CRANE_DIR/otel-collector.node.yaml"
 OTEL_CONFIG_HASH="$({ sha256sum "$CRANE_DIR/otel-collector.node.yaml" "$OTEL_TMP_DIR/headers" "$OTEL_STATE_DIR/receiver-token" "$OTEL_STATE_DIR/tls.crt" "$OTEL_STATE_DIR/tls.key" | awk '{print $1}'; printf '%s\n' "$EXPORTER_SECRET_VERSION"; } | sha256sum | awk '{print $1}')"
@@ -269,6 +321,16 @@ spec:
       labels:
         app: crane-api
     spec:
+      serviceAccountName: crane-api
+      automountServiceAccountToken: false
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchFields:
+                  - key: metadata.name
+                    operator: In
+                    values: ["$NODE_NAME"]
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
       tolerations:
@@ -384,6 +446,16 @@ spec:
       labels:
         app: dominator
     spec:
+      serviceAccountName: dominator
+      automountServiceAccountToken: false
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchFields:
+                  - key: metadata.name
+                    operator: In
+                    values: ["$NODE_NAME"]
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
       tolerations:

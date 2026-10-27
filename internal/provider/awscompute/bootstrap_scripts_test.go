@@ -165,9 +165,9 @@ func TestRenderIdentityScript(t *testing.T) {
 	want := []string{
 		`spiffe://crane.internal/dominator`,
 		`spiffe://crane.internal/subd`,
-		`ensure_entry "spiffe://crane.internal/dominator" 10002`,
-		`ensure_entry "spiffe://crane.internal/crane-api" 10001`,
-		`ensure_entry "spiffe://crane.internal/subd" 10003`,
+		`k8s:ns:crane-system k8s:sa:dominator`,
+		`k8s:ns:crane-system k8s:sa:crane-api`,
+		`ensure_entry "spiffe://crane.internal/subd" "$PARENT_ID" unix:uid:10003`,
 		`entry show`,
 		`entry create`,
 		`-parentID "$parent"`,

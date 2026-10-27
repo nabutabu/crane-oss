@@ -49,9 +49,11 @@ if [ "$server_ready" != "1" ]; then
 fi
 
 ensure_entry() {
-  local spiffe_id="$1" uid="$2" parent="${3:-$PARENT_ID}"
-  local selector="unix:uid:$uid"
-  if [ "$uid" = systemd ]; then selector='systemd:id:subd.service'; fi
+  local spiffe_id="$1" parent="$2" selector
+  shift 2
+  local -a selector_args=()
+  for selector in "$@"; do selector_args+=(-selector "$selector"); done
+  [ "${#selector_args[@]}" -gt 0 ]
   local all matched count
   all="$(docker exec "$CONTAINER" /opt/spire/bin/spire-server entry show \
       -socketPath "$SOCKET_PATH" -spiffeID "$spiffe_id")"
@@ -63,7 +65,7 @@ ensure_entry() {
   if [ "$count" = "1" ]; then
     matched="$(docker exec "$CONTAINER" /opt/spire/bin/spire-server entry show \
       -socketPath "$SOCKET_PATH" -spiffeID "$spiffe_id" -parentID "$parent" \
-      -selector "$selector" -matchSelectorsOn exact)"
+      "${selector_args[@]}" -matchSelectorsOn exact)"
     if ! printf '%s\n' "$matched" | grep -q "Entry ID"; then
       echo "existing SPIRE entry has a different parent or workload selector" >&2
       return 1
@@ -75,19 +77,22 @@ ensure_entry() {
     -socketPath "$SOCKET_PATH" \
     -parentID "$parent" \
     -spiffeID "$spiffe_id" \
-    -selector "$selector"
+    "${selector_args[@]}"
   echo "registered SPIRE entry for $spiffe_id"
 }
 
-# Dominator workload (runs as UID 10002) and the bootstrap probe (UID 10003).
-step "reconciling Dominator and probe workload identities"
-ensure_entry "spiffe://[[ .TrustDomain ]]/dominator" 10002
-ensure_entry "spiffe://[[ .TrustDomain ]]/crane-api" 10001
-ensure_entry "spiffe://[[ .TrustDomain ]]/subd" 10003
+# Kubernetes workloads retain their exact platform-host parent boundary.
+step "reconciling Kubernetes service and probe workload identities"
+ensure_entry "spiffe://[[ .TrustDomain ]]/dominator" "$PARENT_ID" \
+  k8s:ns:crane-system k8s:sa:dominator
+ensure_entry "spiffe://[[ .TrustDomain ]]/crane-api" "$PARENT_ID" \
+  k8s:ns:crane-system k8s:sa:crane-api
+ensure_entry "spiffe://[[ .TrustDomain ]]/subd" "$PARENT_ID" unix:uid:10003
 
 [[ range .Hosts ]]
-ensure_entry "spiffe://[[ $.TrustDomain ]]/subd/[[ .ID ]]" systemd \
-  "spiffe://[[ $.TrustDomain ]]/spire/agent/aws_iid/[[ $.AccountID ]]/[[ $.Region ]]/[[ .ID ]]"
+ensure_entry "spiffe://[[ $.TrustDomain ]]/subd/[[ .ID ]]" \
+  "spiffe://[[ $.TrustDomain ]]/spire/agent/aws_iid/[[ $.AccountID ]]/[[ $.Region ]]/[[ .ID ]]" \
+  systemd:id:subd.service
 [[ end ]]
 
 echo "platform workload identities are registered; parent ID $PARENT_ID"
