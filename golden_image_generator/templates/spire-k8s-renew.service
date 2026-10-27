@@ -1,0 +1,9 @@
+[Unit]
+Description=Renew local SPIRE Kubernetes attestor credentials
+After=network-online.target kubelet.service
+ConditionPathExists=/etc/spire/k8s-node
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/crane-configure-spire-k8s
+UMask=0077

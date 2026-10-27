@@ -23,7 +23,11 @@ curl -fsSL "https://github.com/spiffe/spire/releases/download/v${SPIRE_VERSION}/
 tar -xzf spire.tar.gz
 sudo install -m 0755 "spire-${SPIRE_VERSION}/bin/spire-agent" /usr/local/bin/spire-agent
 sudo install -m 0644 /tmp/spire-agent.conf /etc/spire/agent.conf
+sudo install -m 0644 /tmp/spire-agent.conf /etc/spire/agent-base.conf
 sudo install -m 0644 /tmp/spire-agent.service /etc/systemd/system/spire-agent.service
+sudo install -m 0755 /tmp/crane-configure-spire-k8s /usr/local/bin/crane-configure-spire-k8s
+sudo install -m 0644 /tmp/spire-k8s-renew.service /etc/systemd/system/crane-spire-k8s-renew.service
+sudo install -m 0644 /tmp/spire-k8s-renew.timer /etc/systemd/system/crane-spire-k8s-renew.timer
 sudo install -m 0755 /tmp/crane-fetch-spire-bundle /usr/local/bin/crane-fetch-spire-bundle
 sudo install -m 0644 /tmp/subd.service /etc/systemd/system/subd.service
 sudo systemctl daemon-reload

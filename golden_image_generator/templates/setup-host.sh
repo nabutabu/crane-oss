@@ -3,7 +3,7 @@ set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 sudo cloud-init status --wait >/dev/null
 sudo apt-get update
-sudo apt-get install -y ca-certificates curl unzip jq python3 postgresql-client docker.io openssl util-linux gzip
+sudo apt-get install -y ca-certificates curl unzip jq python3 python3-yaml postgresql-client docker.io openssl util-linux gzip
 sudo install -d -m 0755 /etc/crane /opt/crane/bin /var/lib/crane /etc/spire
 curl -fsSL https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem | sudo tee /etc/crane/rds-ca.pem >/dev/null
 case "$(uname -m)" in

@@ -133,6 +133,18 @@ build {
     destination = "/tmp/crane-fetch-spire-bundle"
   }
   provisioner "file" {
+    source      = "${path.root}/configure-spire-k8s.sh"
+    destination = "/tmp/crane-configure-spire-k8s"
+  }
+  provisioner "file" {
+    source      = "${path.root}/spire-k8s-renew.service"
+    destination = "/tmp/spire-k8s-renew.service"
+  }
+  provisioner "file" {
+    source      = "${path.root}/spire-k8s-renew.timer"
+    destination = "/tmp/spire-k8s-renew.timer"
+  }
+  provisioner "file" {
     source      = "${path.root}/subd.service"
     destination = "/tmp/subd.service"
   }
