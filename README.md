@@ -84,7 +84,9 @@ The crane-api service will start on port 43060 and begin monitoring hosts in the
 - `GET /health` - Health check endpoint
 - `GET /v1/db/health` - Database health check
 - `POST /v1/zones`, `/v1/clusters`, `/v1/node-pools`, `/v1/node-groups` - authenticated platform topology creation (`Authorization: Bearer $CRANE_ADMIN_TOKEN`)
-- `POST /v1/first-zone` - atomically seeds the platform team's first ready topology; it leaves capacity at target revision 0
+- `POST /v1/cluster-zones` - admin-only membership registration; defaults to `requested/pending`
+- `PATCH /v1/cluster-zones/{cluster_id}/{zone_id}` - admin-only operator-validated membership policy; requires both `lifecycle_state` (`requested`, `initializing`, `ready`, `failed`) and `access_state` (`pending`, `approved`, `revoked`)
+- `POST /v1/first-zone` - atomically seeds the first shared topology and membership; new groups start at target/revision 0 and retries preserve runtime state
 - `POST /v1/capacity` - capacity admission; the adapter token is bound to `CRANE_ADAPTER_CLUSTER_ID`, and `X-Crane-Cluster-ID` must match
 - `GET /v1/node-groups/{id}/target` - authenticated target/revision read for adapter recovery
 - `POST /v1/node-removals` - authenticated atomic admission of explicit named-node removals; credits remain held until termination
