@@ -46,7 +46,16 @@ type NodePoolInput struct {
 	Limits Resources `json:"limits"`
 }
 
+type NodeGroupNaming struct {
+	Provider         string `json:"provider"`
+	DevelopmentStage string `json:"development_stage"`
+	Region           string `json:"region"`
+	AZ               string `json:"az"`
+	Group            string `json:"group"`
+}
+
 type NodeGroupInput struct {
+	Naming           NodeGroupNaming `json:"naming"`
 	ID               string          `json:"id"`
 	ClusterID        string          `json:"cluster_id"`
 	NodePoolID       string          `json:"node_pool_id"`
