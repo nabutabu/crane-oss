@@ -40,6 +40,7 @@ func main() {
 func run() error {
 	addr := flag.String("listen", "127.0.0.1:50051", "gRPC listen address")
 	craneURL := flag.String("crane-url", "http://127.0.0.1:43060", "Crane API base URL")
+	kubeconfig := flag.String("kubeconfig", "", "Kubernetes credentials (empty uses in-cluster service account)")
 	cert := flag.String("tls-cert", "", "server certificate PEM")
 	key := flag.String("tls-key", "", "server private key PEM")
 	ca := flag.String("client-ca", "", "trusted CA for CA client certificates")
@@ -53,6 +54,11 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	verifier, err := autoscaler.NewKubernetesNodeVerifier(*kubeconfig)
+	if err != nil {
+		return err
+	}
+	service.SetNodeVerifier(verifier)
 	opts, err := transportOptions(*addr, *cert, *key, *ca)
 	if err != nil {
 		return err

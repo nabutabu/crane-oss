@@ -1,8 +1,8 @@
-# Cluster Autoscaler external gRPC prototype
+# Cluster Autoscaler external gRPC adapter
 
 `cmd/crane-autoscaler-adapter` serves the unmodified CA v1.35.0 external gRPC
-protocol. Each process has one configured cluster and immutable static groups,
-templates, and inventory. Group discovery filters by cluster. Node ownership
+protocol. Each process has one configured cluster and reads groups, templates,
+and inventory from Crane API. Group discovery is bound to that cluster. Node ownership
 uses provider identity, never node labels; an unmanaged node returns an empty
 group as specified by upstream. Unknown group IDs return gRPC `NotFound`.
 
@@ -16,13 +16,13 @@ OS is Linux; `architecture` defaults to `amd64` and also accepts `arm64`.
 
 ```sh
 go build -o /tmp/crane-autoscaler-adapter ./cmd/crane-autoscaler-adapter
-/tmp/crane-autoscaler-adapter -config internal/adapter/autoscaler/example.json \
+/tmp/crane-autoscaler-adapter \
   -crane-url http://127.0.0.1:43060
 ```
 
-Set `CRANE_ADAPTER_TOKEN` in both processes, and set
-`CRANE_ADAPTER_CLUSTER_ID=platform-cluster` in `crane-api`. Provision the same
-group and template revision through bootstrap/topology administration first.
+Set `CRANE_ADAPTER_TOKEN` and `CRANE_ADAPTER_CLUSTER_ID` in both processes.
+Provision the groups and scheduling templates through topology administration
+first. Groups without scheduling metadata cannot be used as autoscaler templates.
 An unset or mismatched cluster binding denies adapter requests. This deployment
 supports one token bound to one cluster; the future workload identity registry
 is needed for multiple independent cluster principals.
@@ -45,7 +45,7 @@ shutdown follow the shared control-plane packages. Tokens and backend response
 bodies are never forwarded in gRPC errors.
 
 Build a container with `docker build -f Dockerfile.crane-autoscaler-adapter .`.
-Mount configuration and certificate files at deployment time; inject the token
+Mount certificate files at deployment time; inject the token
 through the deployment's secret mechanism. No release publication is configured
 for this prototype.
 
@@ -53,14 +53,17 @@ for this prototype.
 
 Target callbacks always read `GET /v1/node-groups/{id}/target`; target state is
 never cached in the adapter. Increase/decrease computes a desired target and
-uses `POST /v1/capacity` with the selected group, current revision, static template
+uses `POST /v1/capacity` with the selected group, current revision, discovered template
 revision, and a fresh handler UUID. Three attempts at most reuse exactly the same
 intent after transport/unavailability errors, with 50/100 ms backoff and the
 caller's cancellation/deadline. A definite CAS conflict returns `Aborted` and
 lets CA refresh; it is never silently rebased into a new intent.
 
-`DeleteNodes` validates every supplied name/provider ID against static group
-inventory, then uses `POST /v1/node-removals`. Crane atomically checks catalog
+`DeleteNodes` validates provider identity against catalog inventory and reads the
+Kubernetes Node by name to verify its `spec.providerID`. Grant the adapter service
+account read-only `get` access to Nodes, or provide `-kubeconfig` for a local
+deployment. An unavailable Kubernetes API blocks deletion. It then uses
+`POST /v1/node-removals`. Crane atomically checks catalog
 ownership, lowers the target, and creates exclusive per-host removal operations.
 The immutable operation parameters store the handler request for replay. Any
 invalid node or failed write rolls back the entire batch. The drain deadline is
@@ -73,12 +76,11 @@ loss, `TargetSize` reads the committed target. This does not claim deduplication
 of arbitrary repeated CA RPCs across restarts. Reconciliation and CA's next target
 refresh are required for recovery.
 
-Inventory and templates are static until process restart. `Refresh` therefore
-has no adapter cache to invalidate, while the upstream client invalidates its
-own discovery/ownership caches. Pricing and options return `Unimplemented`;
+Inventory and templates refresh from Crane. A failed refresh retains the last
+successful snapshot for ownership, while new admissions still recheck Crane
+policy. Pricing and options return `Unimplemented`;
 GPU discovery returns empty supported sets, as the required callbacks expect.
-Live discovery, watcher updates, cloud provisioning, readiness, and production
-identity authorization remain in later phases.
+Cloud provisioning and readiness remain in later phases.
 
 ## Verify
 

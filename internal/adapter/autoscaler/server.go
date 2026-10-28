@@ -45,7 +45,10 @@ type Server struct {
 	discoverer interface {
 		Discover(context.Context) (api.AutoscalerDiscovery, error)
 	}
+	verifier NodeVerifier
 }
+
+func (s *Server) SetNodeVerifier(v NodeVerifier) { s.verifier = v }
 
 func NewServer(cfg Config, client CraneClient) (*Server, error) {
 	if cfg.ClusterID == "" || client == nil {
@@ -208,6 +211,7 @@ func (s *Server) NodeGroupForNode(ctx context.Context, req *pb.NodeGroupForNodeR
 }
 
 func (s *Server) NodeGroupTargetSize(ctx context.Context, req *pb.NodeGroupTargetSizeRequest) (*pb.NodeGroupTargetSizeResponse, error) {
+	_ = s.refresh(ctx)
 	g, err := s.group(req.GetId())
 	if err != nil {
 		return nil, err
@@ -305,13 +309,18 @@ func (s *Server) NodeGroupDeleteNodes(ctx context.Context, req *pb.NodeGroupDele
 	for _, node := range req.Nodes {
 		var match *Node
 		for _, known := range g.Nodes {
-			if known.ProviderID == node.GetProviderID() && known.Name == node.GetName() {
+			if known.ProviderID == node.GetProviderID() && (s.verifier != nil || known.Name == node.GetName()) {
 				match = &known
 				break
 			}
 		}
 		if match == nil || seen[match.HostID] {
 			return nil, status.Error(codes.InvalidArgument, "node does not belong to group or is duplicated")
+		}
+		if s.verifier != nil {
+			if err := s.verifier.VerifyNode(ctx, node.GetName(), node.GetProviderID()); err != nil {
+				return nil, err
+			}
 		}
 		seen[match.HostID] = true
 		removal.Nodes = append(removal.Nodes, api.RemovalNode{HostID: match.HostID, NodeName: match.Name, ProviderID: match.ProviderID})
@@ -327,7 +336,8 @@ func (s *Server) NodeGroupDeleteNodes(ctx context.Context, req *pb.NodeGroupDele
 	return &pb.NodeGroupDeleteNodesResponse{}, nil
 }
 
-func (s *Server) NodeGroupNodes(_ context.Context, req *pb.NodeGroupNodesRequest) (*pb.NodeGroupNodesResponse, error) {
+func (s *Server) NodeGroupNodes(ctx context.Context, req *pb.NodeGroupNodesRequest) (*pb.NodeGroupNodesResponse, error) {
+	_ = s.refresh(ctx)
 	g, err := s.group(req.GetId())
 	if err != nil {
 		return nil, err
