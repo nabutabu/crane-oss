@@ -43,6 +43,7 @@ func (a *API) Handler() http.Handler {
 	mux.Handle("PATCH /v1/cluster-zones/{cluster_id}/{zone_id}", a.admin(a.updateClusterZone))
 	mux.Handle("POST /v1/node-pools", a.admin(a.createNodePool))
 	mux.Handle("POST /v1/node-groups", a.admin(a.createNodeGroup))
+	mux.Handle("PATCH /v1/node-groups/{id}/template", a.admin(a.updateNodeGroupTemplate))
 	mux.Handle("POST /v1/first-zone", a.admin(a.seedFirstZone))
 	mux.Handle("POST /v1/bootstrap", a.admin(a.createZoneBootstrap))
 	mux.Handle("POST /v1/capacity", a.adapter(a.setTarget))
@@ -133,6 +134,23 @@ func (a *API) createNodeGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, in)
+}
+
+func (a *API) updateNodeGroupTemplate(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		ExpectedTemplateRevision string                 `json:"expected_template_revision"`
+		TemplateRevision         string                 `json:"template_revision"`
+		Scheduling               api.SchedulingTemplate `json:"scheduling"`
+		LaunchParameters         json.RawMessage        `json:"launch_parameters"`
+	}
+	if !decodeJSON(w, r, &in) {
+		return
+	}
+	if err := a.store.UpdateNodeGroupScheduling(r.Context(), r.PathValue("id"), in.ExpectedTemplateRevision, in.TemplateRevision, in.Scheduling, in.LaunchParameters); err != nil {
+		capacityError(w, err)
+		return
+	}
+	writeJSON(w, map[string]string{"status": "updated"})
 }
 
 func (a *API) seedFirstZone(w http.ResponseWriter, r *http.Request) {

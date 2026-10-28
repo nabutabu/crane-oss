@@ -123,15 +123,33 @@ func NewServer(cfg Config, client CraneClient) (*Server, error) {
 
 func discoveredGroups(d api.AutoscalerDiscovery) ([]StaticNodeGroup, error) {
 	groups := make([]StaticNodeGroup, 0, len(d.Groups))
+	ids, nodes := map[string]bool{}, map[string]bool{}
 	for _, g := range d.Groups {
-		if g.MinNodes < 0 || g.MaxNodes < g.MinNodes || g.MaxNodes > math.MaxInt32 || g.CPU <= 0 || g.MemoryMiB <= 0 || g.Scheduling.Zone == "" || g.Scheduling.Region == "" || g.Scheduling.InstanceType == "" {
+		if g.ID == "" || ids[g.ID] || g.ClusterID == "" || g.Pool == "" || g.TemplateRevision == "" || g.MinNodes < 0 || g.MaxNodes < g.MinNodes || g.MaxNodes > math.MaxInt32 || g.CPU <= 0 || g.MemoryMiB <= 0 || g.Scheduling.Zone == "" || g.Scheduling.Region == "" || g.Scheduling.InstanceType == "" || g.MemoryMiB > math.MaxInt64/(1024*1024) {
 			return nil, status.Error(codes.Internal, "invalid Crane group metadata")
+		}
+		ids[g.ID] = true
+		if g.Scheduling.Architecture != "" && g.Scheduling.Architecture != "amd64" && g.Scheduling.Architecture != "arm64" {
+			return nil, status.Error(codes.Internal, "invalid Crane architecture")
+		}
+		canonical := map[string]string{"kubernetes.io/os": "linux", "topology.kubernetes.io/region": g.Scheduling.Region, "topology.kubernetes.io/zone": g.Scheduling.Zone, "platform.crane.io/node-pool": g.Pool, "node.kubernetes.io/instance-type": g.Scheduling.InstanceType}
+		if g.Scheduling.Architecture != "" {
+			canonical["kubernetes.io/arch"] = g.Scheduling.Architecture
+		}
+		for key, want := range canonical {
+			if got, ok := g.Scheduling.Labels[key]; ok && got != want {
+				return nil, status.Error(codes.Internal, "invalid Crane topology label")
+			}
 		}
 		group := StaticNodeGroup{ID: g.ID, ClusterID: g.ClusterID, TemplateRevision: g.TemplateRevision, Zone: g.Scheduling.Zone, Region: g.Scheduling.Region, Pool: g.Pool, MinNodes: int(g.MinNodes), MaxNodes: int(g.MaxNodes), InstanceType: g.Scheduling.InstanceType, Architecture: g.Scheduling.Architecture, CPU: g.CPU, MemoryMB: g.MemoryMiB, Labels: g.Scheduling.Labels}
 		for _, t := range g.Scheduling.Taints {
 			group.Taints = append(group.Taints, Taint{Key: t.Key, Value: t.Value, Effect: t.Effect})
 		}
 		for _, n := range g.Nodes {
+			if n.HostID == "" || n.ProviderID == "" || nodes[n.ProviderID] {
+				return nil, status.Error(codes.Internal, "duplicate Crane node identity")
+			}
+			nodes[n.ProviderID] = true
 			state := "creating"
 			switch n.State {
 			case "READY", "CONVERGING", "REGISTERING", "UNHEALTHY":

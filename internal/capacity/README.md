@@ -19,6 +19,17 @@ memberships across zones, accounts, regions and providers; groups reference a
 membership and the zone's native placement. Membership policy is an operator
 assertion, not automated network qualification or proof of provider runtime support.
 
+Autoscaler discovery reads `GET /v1/autoscaler/discovery` with the adapter token
+bound to one cluster. Group scheduling metadata is stored separately from provider
+launch parameters. Populate `scheduling` with instance type, architecture, and
+Kubernetes region/zone labels for existing groups before enabling the live adapter.
+An administrator updates scheduling and launch parameters together with a new
+template revision through `PATCH /v1/node-groups/{id}/template`, supplying the
+expected current revision; exact retries
+are accepted. Run the explicit `crane-bootstrap` schema initialization before
+starting services against an older database so the additive scheduling column
+exists. Services never apply this schema change at startup.
+
 `Store.SetTarget` accepts a `pkg/api.CapacityRequest`. Its `ClusterID` must be
 derived from authenticated adapter identity by the future API handler. One
 transaction checks policy, locks the group and shared pool, checks the target

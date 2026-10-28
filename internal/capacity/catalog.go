@@ -85,6 +85,11 @@ func createGroup(ctx context.Context, db topologyWriter, g api.NodeGroupInput) e
 	if err != nil {
 		return ErrInvalid
 	}
+	if g.Scheduling.InstanceType != "" || g.Scheduling.Region != "" || g.Scheduling.Zone != "" || g.Scheduling.Architecture != "" || len(g.Scheduling.Labels) > 0 || len(g.Scheduling.Taints) > 0 {
+		if err := validateScheduling(g.Scheduling, g.NodePoolID); err != nil {
+			return err
+		}
+	}
 	return immutableInsert(ctx, db, `INSERT INTO node_groups(id,cluster_id,zone_id,node_pool_id,capacity_class,provider_zone_id,min_nodes,max_nodes,template_revision,vcpu,memory_mib,launch_parameters,naming_provider,development_stage,naming_region,naming_az,naming_group,scheduling)
  VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
  ON CONFLICT(id) DO UPDATE SET id=EXCLUDED.id
