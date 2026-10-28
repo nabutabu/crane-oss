@@ -28,8 +28,12 @@ func TestPersistedConfigNullFirstZoneUsesDefaultTopology(t *testing.T) {
 	if len(cfg.FirstZone) != 0 {
 		t.Fatal("null first_zone must normalize to omitted")
 	}
-	if _, err := topology(cfg, testInfra()); err != nil {
+	in, err := topology(cfg, testInfra())
+	if err != nil {
 		t.Fatal(err)
+	}
+	if in.Group.Scheduling.InstanceType != cfg.Platform.InstanceType || in.Group.Scheduling.Zone != "us-west-2a" || in.Group.Scheduling.Region != cfg.AWS.Region || in.Group.Scheduling.Architecture != "amd64" {
+		t.Fatalf("bootstrap group lacks local autoscaler template: %+v", in.Group.Scheduling)
 	}
 }
 

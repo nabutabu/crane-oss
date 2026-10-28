@@ -55,3 +55,18 @@ func TestTemplateUpdateRequiresAdmin(t *testing.T) {
 		}
 	}
 }
+
+func TestBootstrapRetryEnrichesEmptySchedulingOnce(t *testing.T) {
+	db := database(t)
+	s := NewStore(db)
+	g := api.NodeGroupInput{Naming: api.NodeGroupNaming{Provider: "aws", DevelopmentStage: "test", Region: "us-west-2", AZ: "a", Group: "general"}, ClusterID: "cluster", ZoneID: "zone", NodePoolID: "pool", CapacityClass: "general", ProviderZoneID: "us-west-2a", MaxNodes: 8, TemplateRevision: "template-1", PerNode: api.Resources{VCPU: 4, MemoryMiB: 8192}, LaunchParameters: []byte(`{"image_id":"ami-pinned","instance_type":"m7i.xlarge"}`), Scheduling: api.SchedulingTemplate{InstanceType: "m7i.xlarge", Architecture: "amd64", Region: "us-west-2", Zone: "us-west-2a"}}
+	for i := 0; i < 2; i++ {
+		if err := s.CreateNodeGroup(context.Background(), g); err != nil {
+			t.Fatalf("retry %d: %v", i, err)
+		}
+	}
+	g.Scheduling.Zone = "us-west-2b"
+	if err := s.CreateNodeGroup(context.Background(), g); !errors.Is(err, ErrConflict) {
+		t.Fatalf("changed retry: %v", err)
+	}
+}
