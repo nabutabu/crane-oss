@@ -1,5 +1,14 @@
 # Bootstrap the AWS platform
 
+Use a fresh deployment and empty database for this baseline. There is no migration
+or reuse workflow for previous Crane bootstraps. Set required `development_stage`
+and `group_suffix` in the shared bootstrap configuration (see `bootstrap.example.json`).
+The initial worker group uses `<provider>-<development_stage>-<region>-<az>-<group_suffix>`;
+AWS maps a native standard AZ such as `us-west-2a` to naming region `us-west-2`
+and AZ `a`. Choose an explicit distinguishing suffix for additional clusters/accounts.
+The first cluster, membership, and shared pool need no team records. Admission
+opens only after the validated handoff marks the membership ready/approved.
+
 Bootstrap uses the repository's Packer golden-image generator for host software
 and versioned GHCR images for Crane API and Dominator. It creates a private
 SPIRE Network Load Balancer (NLB) before image generation so the AMI can contain

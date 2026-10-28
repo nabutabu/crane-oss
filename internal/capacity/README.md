@@ -9,24 +9,26 @@ repeatable on the dedicated, initially empty `crane` database; it does not keep 
 version ledger or upgrade earlier POC schemas. It includes the host/action and
 health tables required by the current control loops.
 
-Platform configuration seeds `team_budgets`, `zones`, `clusters`, `node_pools`, and
-`node_groups`. Memory entitlement is in MiB, CPU in integer vCPUs, and node count
+Platform configuration seeds `zones`, `clusters`, `cluster_zones`, `node_pools`, and
+`node_groups`, without team records. Memory reservation is in MiB, CPU in integer vCPUs, and node count
 in machines. Group launch parameters are version-pinned JSON (for example
 `{"image_id":"ami-pinned","instance_type":"m7i.xlarge"}`). A group is admitted
-only when its zone and cluster are ready, its pool is enabled, and its own state
-is active. A cluster belongs to one zone, and groups cannot name a different
-provider zone. The pool determines team identity; clients cannot choose it.
+only when its zone and cluster are ready, its membership is ready with approved
+access, its pool is enabled, and its own state is active. Clusters have explicit
+memberships across zones, accounts, regions and providers; groups reference a
+membership and the zone's native placement. Membership policy is an operator
+assertion, not automated network qualification or proof of provider runtime support.
 
 `Store.SetTarget` accepts a `pkg/api.CapacityRequest`. Its `ClusterID` must be
 derived from authenticated adapter identity by the future API handler. One
-transaction checks policy, locks the group and team budget, checks the target
-revision, and commits the target, request outcome, per-host credit reservations,
+transaction checks policy, locks the group and shared pool, checks the target
+revision, and commits the target, request outcome, per-host infrastructure reservations,
 host intents, and executable provisioning operations. `(group_id, request_id)`
 deduplicates only retries of one handler. Changing any request field while
 reusing the key returns `ErrReplayMismatch`; a new key with an old revision
 returns `ErrConflict`. `Target` supports restart recovery and target refresh.
 
-Budget checks include every unreleased reservation, including launched excess
+Pool limit checks include every unreleased reservation, including launched excess
 capacity. Decreases cancel only pending, unclaimed provisioning intents. They
 mark those hosts terminated and release their reservations atomically. Claimed
 or launched work keeps its reservation and is marked excess when required;
@@ -71,6 +73,17 @@ CRANE_TEST_DATABASE_URL='postgres://postgres:password@localhost:5432/crane_test?
 
 Each test creates and removes only its own randomly named schema. CI supplies
 PostgreSQL 16 and runs these tests as part of `go test ./...`. Tests exercise
-rollback at every write stage, concurrent replay/CAS, cross-group team budgets,
+rollback at every write stage, concurrent replay/CAS, cross-zone shared pool limits,
 safe cancellation, retained credits, provider-token recovery, fencing,
 bootstrap handoff, and exclusive removal ownership.
+
+Node groups persist explicit `naming` inputs: `provider`, `development_stage`,
+`region`, `az`, and `group`. IDs use `<provider>-<development_stage>-<region>-<az>-<group>`;
+omitted IDs are generated and supplied IDs must match. Exact retries succeed,
+conflicts return 409, and IDs are never parsed for policy. Naming AZ values are
+separate from native placement and Kubernetes topology labels.
+
+This baseline targets a fresh deployment and empty database, with no migration
+or data conversion workflow. Infrastructure reservations measure pending and
+allocated machines; final-phase team accounting will separately measure declared
+Kubernetes workload requests.
