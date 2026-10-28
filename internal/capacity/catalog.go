@@ -81,17 +81,21 @@ func createGroup(ctx context.Context, db topologyWriter, g api.NodeGroupInput) e
 		g.PerNode.VCPU <= 0 || g.PerNode.MemoryMiB <= 0 || !json.Valid(g.LaunchParameters) {
 		return ErrInvalid
 	}
-	return immutableInsert(ctx, db, `INSERT INTO node_groups(id,cluster_id,zone_id,node_pool_id,capacity_class,provider_zone_id,min_nodes,max_nodes,template_revision,vcpu,memory_mib,launch_parameters,naming_provider,development_stage,naming_region,naming_az,naming_group)
- VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+	scheduling, err := json.Marshal(g.Scheduling)
+	if err != nil {
+		return ErrInvalid
+	}
+	return immutableInsert(ctx, db, `INSERT INTO node_groups(id,cluster_id,zone_id,node_pool_id,capacity_class,provider_zone_id,min_nodes,max_nodes,template_revision,vcpu,memory_mib,launch_parameters,naming_provider,development_stage,naming_region,naming_az,naming_group,scheduling)
+ VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
  ON CONFLICT(id) DO UPDATE SET id=EXCLUDED.id
  WHERE (node_groups.cluster_id,node_groups.zone_id,node_groups.node_pool_id,node_groups.capacity_class,node_groups.provider_zone_id,
  node_groups.min_nodes,node_groups.max_nodes,node_groups.template_revision,node_groups.vcpu,node_groups.memory_mib,node_groups.launch_parameters,
- node_groups.naming_provider,node_groups.development_stage,node_groups.naming_region,node_groups.naming_az,node_groups.naming_group)=
+ node_groups.naming_provider,node_groups.development_stage,node_groups.naming_region,node_groups.naming_az,node_groups.naming_group,node_groups.scheduling)=
  (EXCLUDED.cluster_id,EXCLUDED.zone_id,EXCLUDED.node_pool_id,EXCLUDED.capacity_class,EXCLUDED.provider_zone_id,
  EXCLUDED.min_nodes,EXCLUDED.max_nodes,EXCLUDED.template_revision,EXCLUDED.vcpu,EXCLUDED.memory_mib,EXCLUDED.launch_parameters,
- EXCLUDED.naming_provider,EXCLUDED.development_stage,EXCLUDED.naming_region,EXCLUDED.naming_az,EXCLUDED.naming_group)`,
+ EXCLUDED.naming_provider,EXCLUDED.development_stage,EXCLUDED.naming_region,EXCLUDED.naming_az,EXCLUDED.naming_group,EXCLUDED.scheduling)`,
 		g.ID, g.ClusterID, g.ZoneID, g.NodePoolID, g.CapacityClass, g.ProviderZoneID, g.MinNodes, g.MaxNodes, g.TemplateRevision,
-		g.PerNode.VCPU, g.PerNode.MemoryMiB, []byte(g.LaunchParameters), g.Naming.Provider, g.Naming.DevelopmentStage, g.Naming.Region, g.Naming.AZ, g.Naming.Group)
+		g.PerNode.VCPU, g.PerNode.MemoryMiB, []byte(g.LaunchParameters), g.Naming.Provider, g.Naming.DevelopmentStage, g.Naming.Region, g.Naming.AZ, g.Naming.Group, scheduling)
 }
 
 func normalizeMembership(m *api.ClusterZoneInput) error {

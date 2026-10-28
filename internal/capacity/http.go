@@ -47,6 +47,7 @@ func (a *API) Handler() http.Handler {
 	mux.Handle("POST /v1/bootstrap", a.admin(a.createZoneBootstrap))
 	mux.Handle("POST /v1/capacity", a.adapter(a.setTarget))
 	mux.Handle("GET /v1/node-groups/{id}/target", a.adapter(a.target))
+	mux.Handle("GET /v1/autoscaler/discovery", a.adapter(a.discovery))
 	mux.Handle("POST /v1/node-removals", a.adapter(a.removeNodes))
 	return mux
 }
@@ -238,6 +239,15 @@ func (a *API) setTarget(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) target(w http.ResponseWriter, r *http.Request) {
 	out, err := a.store.Target(r.Context(), a.adapterClusterID, r.PathValue("id"))
+	if err != nil {
+		capacityError(w, err)
+		return
+	}
+	writeJSON(w, out)
+}
+
+func (a *API) discovery(w http.ResponseWriter, r *http.Request) {
+	out, err := a.store.AutoscalerDiscovery(r.Context(), a.adapterClusterID)
 	if err != nil {
 		capacityError(w, err)
 		return

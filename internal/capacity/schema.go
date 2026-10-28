@@ -13,7 +13,7 @@ var baselineSchema string
 
 // InitializeSchema installs Crane's first-go PostgreSQL schema. It is safe to
 // run repeatedly and is intended for the explicit crane-bootstrap command.
-// It does not track versions or upgrade an existing schema.
+// It also applies repeatable additive schema changes when explicitly invoked.
 func InitializeSchema(ctx context.Context, db *sql.DB) error {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
@@ -62,7 +62,7 @@ func CheckSchema(ctx context.Context, db *sql.DB) error {
 	var compatible bool
 	if err := db.QueryRowContext(ctx, `SELECT
  (SELECT count(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='cluster_zones' AND column_name IN ('cluster_id','zone_id','lifecycle_state','access_state'))=4
- AND (SELECT count(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='node_groups' AND column_name IN ('naming_provider','development_stage','naming_region','naming_az','naming_group'))=5
+ AND (SELECT count(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='node_groups' AND column_name IN ('naming_provider','development_stage','naming_region','naming_az','naming_group','scheduling'))=6
  AND NOT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND ((table_name='clusters' AND column_name='zone_id') OR (table_name='node_pools' AND column_name='team_id')))
  AND EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='node_groups'::regclass AND confrelid='cluster_zones'::regclass AND contype='f' AND cardinality(conkey)=2)`).Scan(&compatible); err != nil {
 		return fmt.Errorf("check topology schema readiness: %w", err)
