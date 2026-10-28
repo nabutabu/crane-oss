@@ -21,6 +21,9 @@ func TestAutoscalerDiscoveryClusterScopeAndDisabledHost(t *testing.T) {
 	}
 	mustExec(t, db, `UPDATE zones SET lifecycle_state='ready' WHERE id='other-zone'`)
 	g := api.NodeGroupInput{Naming: api.NodeGroupNaming{Provider: "aws", DevelopmentStage: "test", Region: "us-west-2", AZ: "b", Group: "memory"}, ClusterID: "cluster", NodePoolID: "pool", ZoneID: z.ID, ProviderZoneID: z.ProviderZoneID, CapacityClass: "memory", MaxNodes: 4, TemplateRevision: "template-1", PerNode: api.Resources{VCPU: 8, MemoryMiB: 16384}, LaunchParameters: []byte(`{"image_id":"ami-pinned"}`), Scheduling: api.SchedulingTemplate{InstanceType: "r7i.2xlarge", Architecture: "amd64", Region: "us-west-2", Zone: "us-west-2b"}}
+	if err := g.NormalizeID(); err != nil {
+		t.Fatal(err)
+	}
 	if err := s.CreateNodeGroup(ctx, g); err != nil {
 		t.Fatal(err)
 	}
