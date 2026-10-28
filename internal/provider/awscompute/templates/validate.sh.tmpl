@@ -77,9 +77,10 @@ psql \
   -v zone="$ZONE_ID" -v cluster="$CLUSTER_ID" -v observability="$OBSERVABILITY_STATUS" <<'SQL'
 BEGIN;
 SELECT id FROM zones WHERE id = :'zone' FOR UPDATE;
-SELECT id FROM clusters WHERE id = :'cluster' AND zone_id = :'zone' FOR UPDATE;
+SELECT id FROM clusters WHERE id = :'cluster' FOR UPDATE;
+SELECT cluster_id FROM cluster_zones WHERE cluster_id = :'cluster' AND zone_id = :'zone' FOR UPDATE;
 SELECT (SELECT count(*) FROM zones WHERE id = :'zone') = 1
-   AND (SELECT count(*) FROM clusters WHERE id = :'cluster' AND zone_id = :'zone') = 1 AS topology_valid \gset
+   AND (SELECT count(*) FROM cluster_zones WHERE cluster_id = :'cluster' AND zone_id = :'zone') = 1 AS topology_valid \gset
 \if :topology_valid
 [[ range .Hosts ]]
 SELECT id FROM host WHERE id='[[ $.Config.Name ]]/bootstrap/[[ .Role ]]' FOR UPDATE;
@@ -93,6 +94,7 @@ DO $$ BEGIN RAISE EXCEPTION 'bootstrap host inventory changed during validation'
 [[ end ]]
 UPDATE zones SET lifecycle_state = 'ready' WHERE id = :'zone';
 UPDATE clusters SET lifecycle_state = 'ready' WHERE id = :'cluster';
+UPDATE cluster_zones SET lifecycle_state = 'ready', access_state = 'approved' WHERE cluster_id = :'cluster' AND zone_id = :'zone';
 -- Do not overwrite a newer API-managed observability outcome.
 UPDATE zone_dominators SET observability_status=:'observability'
  WHERE zone_id=:'zone' AND observability_status='configuration_pending';

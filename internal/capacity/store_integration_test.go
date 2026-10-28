@@ -54,10 +54,10 @@ func database(t *testing.T) *sql.DB {
 	}
 	_, err = db.Exec(`
 INSERT INTO zones(id,provider,account_id,region,provider_zone_id,lifecycle_state) VALUES('zone','aws','account','us-west-2','us-west-2a','ready');
-INSERT INTO clusters(id,zone_id,kubeadm_version,kubelet_version,container_runtime,cni,lifecycle_state) VALUES('cluster','zone','1.35.0','1.35.0','containerd','cilium','ready');
-INSERT INTO team_budgets(team_id,vcpu,memory_mib,nodes) VALUES('team',32,65536,8);
-INSERT INTO node_pools(id,team_id,max_vcpu,max_memory_mib,max_nodes) VALUES('pool','team',32,65536,8);
-INSERT INTO node_groups(id,cluster_id,zone_id,node_pool_id,capacity_class,provider_zone_id,min_nodes,max_nodes,template_revision,vcpu,memory_mib,launch_parameters) VALUES('group','cluster','zone','pool','general','us-west-2a',0,8,'template-1',4,8192,'{"image_id":"ami-pinned","instance_type":"m7i.xlarge"}');`)
+INSERT INTO clusters(id,kubeadm_version,kubelet_version,container_runtime,cni,lifecycle_state) VALUES('cluster','1.35.0','1.35.0','containerd','cilium','ready');
+INSERT INTO cluster_zones(cluster_id,zone_id,lifecycle_state,access_state) VALUES('cluster','zone','ready','approved');
+INSERT INTO node_pools(id,max_vcpu,max_memory_mib,max_nodes) VALUES('pool',32,65536,8);
+INSERT INTO node_groups(naming_provider,development_stage,naming_region,naming_az,naming_group,id,cluster_id,zone_id,node_pool_id,capacity_class,provider_zone_id,min_nodes,max_nodes,template_revision,vcpu,memory_mib,launch_parameters) VALUES('aws','test','us-west-2','a','general','aws-test-us-west-2-a-general','cluster','zone','pool','general','us-west-2a',0,8,'template-1',4,8192,'{"image_id":"ami-pinned","instance_type":"m7i.xlarge"}');`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +65,7 @@ INSERT INTO node_groups(id,cluster_id,zone_id,node_pool_id,capacity_class,provid
 }
 
 func request(id string, revision, target int64) api.CapacityRequest {
-	return api.CapacityRequest{NodeGroupID: "group", ClusterID: "cluster", RequestID: id, ExpectedTargetRevision: revision, DesiredTarget: target, TemplateRevision: "template-1"}
+	return api.CapacityRequest{NodeGroupID: "aws-test-us-west-2-a-general", ClusterID: "cluster", RequestID: id, ExpectedTargetRevision: revision, DesiredTarget: target, TemplateRevision: "template-1"}
 }
 func mustExec(t *testing.T, db *sql.DB, query string, args ...any) {
 	t.Helper()
@@ -100,12 +100,12 @@ func TestPostgresAtomicMutationReplayAndEqualDeltas(t *testing.T) {
 	if _, err = s.SetTarget(ctx, request("second", 1, 2)); err != nil {
 		t.Fatal(err)
 	}
-	for _, table := range []string{"capacity_requests", "operations", "host", "credit_reservations"} {
+	for _, table := range []string{"capacity_requests", "operations", "host", "infrastructure_reservations"} {
 		if n := count(t, db, table); n != 2 {
 			t.Errorf("%s count=%d", table, n)
 		}
 	}
-	r, err = s.Target(ctx, "cluster", "group")
+	r, err = s.Target(ctx, "cluster", "aws-test-us-west-2-a-general")
 	if err != nil || r.TargetNodes != 2 || r.TargetRevision != 2 {
 		t.Fatalf("restart target refresh: %#v %v", r, err)
 	}
@@ -125,7 +125,7 @@ func TestPostgresAtomicMutationReplayAndEqualDeltas(t *testing.T) {
 }
 
 func TestPostgresNoPartialWrites(t *testing.T) {
-	for _, table := range []string{"capacity_requests", "node_groups", "operations", "host", "credit_reservations"} {
+	for _, table := range []string{"capacity_requests", "node_groups", "operations", "host", "infrastructure_reservations"} {
 		t.Run(table, func(t *testing.T) {
 			db := database(t)
 			s := NewStore(db)
@@ -134,12 +134,12 @@ func TestPostgresNoPartialWrites(t *testing.T) {
 			if _, err := s.SetTarget(context.Background(), request("fail", 0, 2)); err == nil || !strings.Contains(err.Error(), "injected failure") {
 				t.Fatalf("expected injected failure at %s, got %v", table, err)
 			}
-			for _, name := range []string{"capacity_requests", "operations", "host", "credit_reservations"} {
+			for _, name := range []string{"capacity_requests", "operations", "host", "infrastructure_reservations"} {
 				if n := count(t, db, name); n != 0 {
 					t.Errorf("partial %s writes: %d", name, n)
 				}
 			}
-			r, err := s.Target(context.Background(), "cluster", "group")
+			r, err := s.Target(context.Background(), "cluster", "aws-test-us-west-2-a-general")
 			if err != nil || r.TargetNodes != 0 || r.TargetRevision != 0 {
 				t.Fatalf("partial target mutation: %#v %v", r, err)
 			}
@@ -147,14 +147,14 @@ func TestPostgresNoPartialWrites(t *testing.T) {
 	}
 }
 
-func TestPostgresConcurrentTeamAdmission(t *testing.T) {
+func TestPostgresConcurrentPoolAdmission(t *testing.T) {
 	db := database(t)
 	s := NewStore(db)
-	mustExec(t, db, `UPDATE team_budgets SET nodes=1; INSERT INTO node_groups SELECT 'group2',cluster_id,zone_id,node_pool_id,capacity_class,provider_zone_id,target_nodes,target_revision,min_nodes,max_nodes,template_revision,lifecycle_state,vcpu,memory_mib,launch_parameters FROM node_groups WHERE id='group'`)
+	mustExec(t, db, `UPDATE node_pools SET max_nodes=1; INSERT INTO node_groups SELECT naming_provider,development_stage,naming_region,naming_az,'second','aws-test-us-west-2-a-second',cluster_id,zone_id,node_pool_id,capacity_class,provider_zone_id,target_nodes,target_revision,min_nodes,max_nodes,template_revision,lifecycle_state,vcpu,memory_mib,launch_parameters FROM node_groups WHERE id='aws-test-us-west-2-a-general'`)
 	start := make(chan struct{})
 	results := make(chan error, 2)
 	var wg sync.WaitGroup
-	for _, id := range []string{"group", "group2"} {
+	for _, id := range []string{"aws-test-us-west-2-a-general", "aws-test-us-west-2-a-second"} {
 		wg.Add(1)
 		go func(id string) {
 			defer wg.Done()
@@ -178,7 +178,7 @@ func TestPostgresConcurrentTeamAdmission(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if success != 1 || denied != 1 || count(t, db, "credit_reservations") != 1 {
+	if success != 1 || denied != 1 || count(t, db, "infrastructure_reservations") != 1 {
 		t.Fatalf("success=%d denied=%d", success, denied)
 	}
 }
@@ -210,7 +210,7 @@ func TestPostgresConcurrentCASAndReplay(t *testing.T) {
 			} else if !((e1 == nil && errors.Is(e2, ErrConflict)) || (e2 == nil && errors.Is(e1, ErrConflict))) {
 				t.Fatalf("CAS concurrency: %v %v", e1, e2)
 			}
-			if count(t, db, "operations") != 1 || count(t, db, "credit_reservations") != 1 {
+			if count(t, db, "operations") != 1 || count(t, db, "infrastructure_reservations") != 1 {
 				t.Fatal("duplicate allocation")
 			}
 		})
@@ -232,7 +232,7 @@ func TestPostgresCancellationAndFencing(t *testing.T) {
 		t.Fatal(err)
 	}
 	var released, retained int
-	if err = db.QueryRow(`SELECT count(*) FILTER(WHERE state='released'),count(*) FILTER(WHERE state='reserved') FROM credit_reservations`).Scan(&released, &retained); err != nil {
+	if err = db.QueryRow(`SELECT count(*) FILTER(WHERE state='released'),count(*) FILTER(WHERE state='reserved') FROM infrastructure_reservations`).Scan(&released, &retained); err != nil {
 		t.Fatal(err)
 	}
 	if released != 1 || retained != 1 {
@@ -293,14 +293,14 @@ func TestPostgresDecreaseCannotRemoveReadyNode(t *testing.T) {
 func TestPostgresBaselineSchemaCanBeAppliedRepeatedly(t *testing.T) {
 	db := database(t)
 	ctx := context.Background()
-	mustExec(t, db, `INSERT INTO team_budgets(team_id,vcpu,memory_mib,nodes) VALUES('existing-record',4,8192,1)`)
+	mustExec(t, db, `INSERT INTO node_pools(id,max_vcpu,max_memory_mib,max_nodes) VALUES('existing-record',4,8192,1)`)
 	if err := InitializeSchema(ctx, db); err != nil {
 		t.Fatalf("repeat baseline schema setup: %v", err)
 	}
 	if err := CheckSchema(ctx, db); err != nil {
 		t.Fatalf("schema readiness after repeat: %v", err)
 	}
-	if got := count(t, db, "team_budgets"); got != 2 {
+	if got := count(t, db, "node_pools"); got != 2 {
 		t.Fatalf("repeat setup changed existing records: got %d budgets", got)
 	}
 	var migrationLedgerExists bool
@@ -369,8 +369,10 @@ func TestPostgresAdmissionPolicy(t *testing.T) {
 		name, sql string
 		expected  error
 	}{
-		{"team_cpu", `UPDATE team_budgets SET vcpu=3`, ErrLimit},
-		{"team_memory", `UPDATE team_budgets SET memory_mib=8191`, ErrLimit},
+		{"pool_cpu", `UPDATE node_pools SET max_vcpu=3`, ErrLimit},
+		{"pool_memory", `UPDATE node_pools SET max_memory_mib=8191`, ErrLimit},
+		{"membership_not_ready", `UPDATE cluster_zones SET lifecycle_state='initializing'`, ErrInactive},
+		{"membership_revoked", `UPDATE cluster_zones SET access_state='revoked'`, ErrInactive},
 		{"pool_nodes", `UPDATE node_pools SET max_nodes=0`, ErrLimit},
 		{"zone_disabled", `UPDATE zones SET enabled=false`, ErrInactive},
 		{"cluster_not_ready", `UPDATE clusters SET lifecycle_state='requested'`, ErrInactive},
@@ -433,7 +435,7 @@ func TestPostgresBootstrapAndRemovalOwnership(t *testing.T) {
 	if err = s.RecordLaunch(ctx, provision, "i-node"); err != nil {
 		t.Fatal(err)
 	}
-	removal := api.NodeRemovalOperation{Operation: api.Operation{NodeGroupID: "group", HostID: provision.HostID}, NodeName: "node", ProviderID: "i-node", Reason: "maintenance", PreserveDesiredCapacity: true, DrainDeadline: time.Now().Add(time.Hour)}
+	removal := api.NodeRemovalOperation{Operation: api.Operation{NodeGroupID: "aws-test-us-west-2-a-general", HostID: provision.HostID}, NodeName: "node", ProviderID: "i-node", Reason: "maintenance", PreserveDesiredCapacity: true, DrainDeadline: time.Now().Add(time.Hour)}
 	if _, err = s.CreateRemoval(ctx, "cluster", 1, removal); err != nil {
 		t.Fatal(err)
 	}

@@ -73,8 +73,13 @@ func run(parent context.Context, args []string, out io.Writer) error {
 		if err != nil {
 			return err
 		}
-		if err = json.Unmarshal(data, &in); err != nil {
+		decoder := json.NewDecoder(bytes.NewReader(data))
+		decoder.DisallowUnknownFields()
+		if err = decoder.Decode(&in); err != nil {
 			return fmt.Errorf("decode first zone configuration: %w", err)
+		}
+		if decoder.Decode(&struct{}{}) != io.EOF {
+			return fmt.Errorf("first zone configuration must contain one JSON object")
 		}
 		cfg.FirstZone = data
 	}

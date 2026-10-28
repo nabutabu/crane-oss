@@ -40,6 +40,10 @@ func TestDatabaseInitializationAndPendingSeedingAreRepeatable(t *testing.T) {
 	}
 	in.Zone.Provider, in.Zone.AccountID, in.Zone.Region, in.Zone.ProviderZoneID = "unit", "account", "region", "zone"
 	in.Group.ProviderZoneID = "zone"
+	in.Group.Naming.Region, in.Group.Naming.AZ = "region", "a"
+	if err := in.Group.NormalizeID(); err != nil {
+		t.Fatal(err)
+	}
 	in.Group.LaunchParameters = []byte(`{"image":"pinned"}`)
 	for i := 0; i < 2; i++ {
 		if err := InitializeDatabase(context.Background(), db, in, true, NewReporter(io.Discard, false)); err != nil {
@@ -48,7 +52,7 @@ func TestDatabaseInitializationAndPendingSeedingAreRepeatable(t *testing.T) {
 	}
 	var zone, cluster string
 	var target int64
-	if err := db.QueryRow(`SELECT z.lifecycle_state,c.lifecycle_state,g.target_nodes FROM zones z JOIN clusters c ON c.zone_id=z.id JOIN node_groups g ON g.cluster_id=c.id WHERE z.id=$1`, in.Zone.ID).Scan(&zone, &cluster, &target); err != nil {
+	if err := db.QueryRow(`SELECT z.lifecycle_state,c.lifecycle_state,g.target_nodes FROM zones z JOIN cluster_zones m ON m.zone_id=z.id JOIN clusters c ON c.id=m.cluster_id JOIN node_groups g ON g.cluster_id=c.id AND g.zone_id=z.id WHERE z.id=$1`, in.Zone.ID).Scan(&zone, &cluster, &target); err != nil {
 		t.Fatal(err)
 	}
 	if zone != "initializing" || cluster != "initializing" || target != 0 {

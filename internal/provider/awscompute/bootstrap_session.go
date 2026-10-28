@@ -64,13 +64,13 @@ func NewBootstrap(shared bootstrap.Config) (bootstrap.Session, error) {
 
 func composeBootstrapConfig(shared bootstrap.Config, settings BootstrapSettings) bootstrapConfig {
 	return bootstrapConfig{
-		Name: shared.Name, AWS: AWSConfig{Region: settings.Region, AccountID: settings.AccountID}, Network: settings.Network, RDS: settings.RDS, FirstZone: shared.FirstZone,
+		Name: shared.Name, DevelopmentStage: shared.DevelopmentStage, GroupSuffix: shared.GroupSuffix, AWS: AWSConfig{Region: settings.Region, AccountID: settings.AccountID}, Network: settings.Network, RDS: settings.RDS, FirstZone: shared.FirstZone,
 		SPIRE:    SPIREConfig{Version: shared.SPIRE.Version, TrustDomain: shared.SPIRE.TrustDomain, Image: shared.SPIRE.Image, AMIID: settings.SPIREHost.AMIID, InstanceType: settings.SPIREHost.InstanceType, StorageGiB: settings.SPIREHost.StorageGiB},
 		Platform: PlatformConfig{CraneAPIImage: shared.Platform.CraneAPIImage, DominatorImage: shared.Platform.DominatorImage, KubernetesVersion: shared.Platform.KubernetesVersion, CiliumVersion: shared.Platform.CiliumVersion, PodCIDR: shared.Platform.PodCIDR, AMIID: settings.PlatformHost.AMIID, InstanceType: settings.PlatformHost.InstanceType, StorageGiB: settings.PlatformHost.StorageGiB},
 	}
 }
 func sharedConfig(cfg bootstrapConfig) bootstrap.Config {
-	return bootstrap.Config{Version: 3, Name: cfg.Name, Provider: "aws", ProviderConfig: json.RawMessage("{}"), FirstZone: cfg.FirstZone,
+	return bootstrap.Config{Version: 3, Name: cfg.Name, DevelopmentStage: cfg.DevelopmentStage, GroupSuffix: cfg.GroupSuffix, Provider: "aws", ProviderConfig: json.RawMessage("{}"), FirstZone: cfg.FirstZone,
 		SPIRE:    bootstrap.SPIREConfig{Version: cfg.SPIRE.Version, TrustDomain: cfg.SPIRE.TrustDomain, Image: cfg.SPIRE.Image},
 		Platform: bootstrap.PlatformConfig{CraneAPIImage: cfg.Platform.CraneAPIImage, DominatorImage: cfg.Platform.DominatorImage, KubernetesVersion: cfg.Platform.KubernetesVersion, CiliumVersion: cfg.Platform.CiliumVersion, PodCIDR: cfg.Platform.PodCIDR}}
 }

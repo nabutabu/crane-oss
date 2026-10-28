@@ -8,7 +8,6 @@
   },
   "cluster": {
     "id": "platform-us-west-1",
-    "zone_id": "us-west-1a",
     "api_server_endpoint": "https://api.platform.us-west-1.crane.internal:6443",
     "ca_cert_hash": "REPLACE_WITH_CA_CERT_HASH",
     "kubeadm_version": "v1.31.0",
@@ -16,14 +15,9 @@
     "container_runtime": "containerd://1.7.22",
     "cni": "cilium"
   },
-  "budget": {
-    "vcpu": 256,
-    "memory_mib": 524288,
-    "nodes": 32
-  },
+  "membership": {"cluster_id":"platform-us-west-1","zone_id":"us-west-1a"},
   "pool": {
     "id": "platform-general",
-    "team_id": "platform",
     "limits": {
       "vcpu": 256,
       "memory_mib": 524288,
@@ -31,13 +25,14 @@
     }
   },
   "group": {
-    "id": "platform-general-us-west-1a",
+    "id": "aws-production-us-west-1-a-general",
+    "naming": {"provider":"aws","development_stage":"production","region":"us-west-1","az":"a","group":"general"},
     "cluster_id": "platform-us-west-1",
     "node_pool_id": "platform-general",
     "zone_id": "us-west-1a",
     "capacity_class": "on-demand",
     "provider_zone_id": "usw1-az1",
-    "min_nodes": 3,
+    "min_nodes": 0,
     "max_nodes": 12,
     "template_revision": "v1",
     "per_node": {

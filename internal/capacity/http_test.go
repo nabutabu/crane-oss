@@ -19,7 +19,7 @@ func TestAdapterClusterBinding(t *testing.T) {
 		{"", "cluster", "cluster", 401}, {"wrong", "cluster", "cluster", 401},
 		{"test-only", "other", "cluster", 403}, {"test-only", "cluster", "", 403},
 	} {
-		r := httptest.NewRequest("GET", "/v1/node-groups/group/target", nil)
+		r := httptest.NewRequest("GET", "/v1/node-groups/aws-test-us-west-2-a-general/target", nil)
 		r.Header.Set("Authorization", "Bearer "+tc.token)
 		r.Header.Set("X-Crane-Cluster-ID", tc.cluster)
 		w := httptest.NewRecorder()
@@ -39,13 +39,13 @@ func TestTargetHTTPReadAndSafeErrors(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		query := mock.ExpectQuery("SELECT target_nodes,target_revision FROM node_groups").WithArgs("group", "cluster")
+		query := mock.ExpectQuery("SELECT target_nodes,target_revision FROM node_groups").WithArgs("aws-test-us-west-2-a-general", "cluster")
 		if tc.err != nil {
 			query.WillReturnError(tc.err)
 		} else {
 			query.WillReturnRows(sqlmock.NewRows([]string{"target_nodes", "target_revision"}).AddRow(2, 5))
 		}
-		r := httptest.NewRequest(http.MethodGet, "/v1/node-groups/group/target", nil)
+		r := httptest.NewRequest(http.MethodGet, "/v1/node-groups/aws-test-us-west-2-a-general/target", nil)
 		r.Header.Set("Authorization", "Bearer test-only")
 		r.Header.Set("X-Crane-Cluster-ID", "cluster")
 		w := httptest.NewRecorder()

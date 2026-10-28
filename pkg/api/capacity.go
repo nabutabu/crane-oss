@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// Resources measures simultaneous capacity entitlement, never instance-hours.
+// Resources measures simultaneous infrastructure capacity, never instance-hours.
 // Memory is measured in MiB; VCPU and Nodes are integer quantities.
 type Resources struct {
 	VCPU      int64 `json:"vcpu"`
@@ -31,7 +31,6 @@ type ZoneInput struct {
 
 type ClusterInput struct {
 	ID                string `json:"id"`
-	ZoneID            string `json:"zone_id"`
 	APIServerEndpoint string `json:"api_server_endpoint"`
 	CACertHash        string `json:"ca_cert_hash"`
 	KubeadmVersion    string `json:"kubeadm_version"`
@@ -42,9 +41,19 @@ type ClusterInput struct {
 
 type NodePoolInput struct {
 	ID     string    `json:"id"`
-	TeamID string    `json:"team_id"`
 	Limits Resources `json:"limits"`
 }
+
+// ClusterZoneInput records operator-validated membership policy, independently
+// of cluster control-plane and provider-zone readiness.
+type ClusterZoneInput struct {
+	ClusterID      string `json:"cluster_id"`
+	ZoneID         string `json:"zone_id"`
+	LifecycleState string `json:"lifecycle_state"`
+	AccessState    string `json:"access_state"`
+}
+
+type ClusterZone = ClusterZoneInput
 
 type NodeGroupNaming struct {
 	Provider         string `json:"provider"`
@@ -72,27 +81,28 @@ type NodeGroupInput struct {
 // FirstZoneInput is the complete layer-zero topology seeded by both the
 // crane-bootstrap command and the /v1/first-zone endpoint.
 type FirstZoneInput struct {
-	Zone    ZoneInput      `json:"zone"`
-	Cluster ClusterInput   `json:"cluster"`
-	Budget  Resources      `json:"budget"`
-	Pool    NodePoolInput  `json:"pool"`
-	Group   NodeGroupInput `json:"group"`
+	Zone       ZoneInput        `json:"zone"`
+	Cluster    ClusterInput     `json:"cluster"`
+	Membership ClusterZoneInput `json:"membership"`
+	Pool       NodePoolInput    `json:"pool"`
+	Group      NodeGroupInput   `json:"group"`
 }
 
 // Cluster holds discovery configuration, never a plaintext bootstrap token.
 type Cluster struct {
-	ID, ZoneID, APIServerEndpoint, CACertHash                             string
+	ID, APIServerEndpoint, CACertHash                                     string
 	KubeadmVersion, KubeletVersion, ContainerRuntime, CNI, LifecycleState string
 	JoinConfiguration                                                     json.RawMessage
 }
 
 type NodePool struct {
-	ID, TeamID string
-	Enabled    bool
-	Limits     Resources
+	ID      string
+	Enabled bool
+	Limits  Resources
 }
 
 type NodeGroup struct {
+	Naming                                                           NodeGroupNaming
 	ID, ClusterID, NodePoolID, ZoneID, CapacityClass, ProviderZoneID string
 	TargetNodes, TargetRevision, MinNodes, MaxNodes                  int64
 	TemplateRevision, LifecycleState                                 string
@@ -102,7 +112,7 @@ type NodeGroup struct {
 }
 
 // ClusterID must come from the authenticated adapter identity at the caller.
-// Team identity and launch parameters are resolved from durable group policy.
+// Launch parameters and shared pool limits are resolved from durable policy.
 type CapacityRequest struct {
 	NodeGroupID, RequestID, ClusterID     string
 	ExpectedTargetRevision, DesiredTarget int64
@@ -114,10 +124,10 @@ type CapacityResult struct {
 	TargetNodes, TargetRevision int64
 }
 
-type CreditReservation struct {
-	ID, TeamID, NodeGroupID, CapacityRequestID, HostID string
-	Resources                                          Resources
-	State                                              string
+type InfrastructureReservation struct {
+	ID, NodeGroupID, CapacityRequestID, HostID string
+	Resources                                  Resources
+	State                                      string
 }
 
 type Operation struct {

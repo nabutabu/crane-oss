@@ -32,16 +32,14 @@ type Store struct{ DB *sql.DB }
 func NewStore(db *sql.DB) *Store { return &Store{DB: db} }
 
 type policy struct {
-	group             api.NodeGroup
-	teamID            string
-	budget, poolLimit api.Resources
-	enabled           bool
+	group     api.NodeGroup
+	poolLimit api.Resources
+	enabled   bool
 }
 
 // SetTarget is the only capacity admission mutation. The caller passes a
-// ClusterID obtained from authentication, never a client-supplied team ID.
-// Group serialization makes replay and CAS deterministic; the team row lock
-// serializes entitlement checks across all pools and groups of that team.
+// ClusterID obtained from authentication. Group serialization makes replay and
+// CAS deterministic; the pool row lock serializes shared reservation checks.
 func (s *Store) SetTarget(ctx context.Context, req api.CapacityRequest) (api.CapacityResult, error) {
 	var result api.CapacityResult
 	if req.NodeGroupID == "" || req.RequestID == "" || req.ClusterID == "" ||
@@ -98,19 +96,19 @@ func (s *Store) SetTarget(ctx context.Context, req api.CapacityRequest) (api.Cap
 		return result, ErrLimit
 	}
 
-	// Lock the budget before any reservation changes, including cancellations.
+	// Serialize accounting across every group sharing the pool, including AZs.
 	err = tx.QueryRowContext(
 		ctx,
-		`SELECT vcpu, memory_mib, nodes FROM team_budgets WHERE team_id=$1 FOR UPDATE`,
-		p.teamID,
-	).Scan(&p.budget.VCPU, &p.budget.MemoryMiB, &p.budget.Nodes)
+		`SELECT max_vcpu,max_memory_mib,max_nodes FROM node_pools WHERE id=$1 FOR UPDATE`,
+		p.group.NodePoolID,
+	).Scan(&p.poolLimit.VCPU, &p.poolLimit.MemoryMiB, &p.poolLimit.Nodes)
 	if err != nil {
 		return result, err
 	}
 
 	delta := req.DesiredTarget - p.group.TargetNodes
 	if delta > 0 {
-		if err = checkCredits(ctx, tx, p, delta); err != nil {
+		if err = checkReservations(ctx, tx, p, delta); err != nil {
 			return result, err
 		}
 	}
@@ -183,11 +181,12 @@ func loadPolicy(ctx context.Context, tx *sql.Tx, id string) (policy, error) {
 	var p policy
 	err := tx.QueryRowContext(
 		ctx,
-		`SELECT g.id,g.cluster_id,g.node_pool_id,g.zone_id,g.capacity_class,g.provider_zone_id,g.target_nodes,g.target_revision,g.min_nodes,g.max_nodes,g.template_revision,g.vcpu,g.memory_mib,g.launch_parameters,p.team_id,p.max_vcpu,p.max_memory_mib,p.max_nodes,(g.lifecycle_state='active' AND p.enabled AND z.enabled AND z.lifecycle_state='ready' AND c.lifecycle_state='ready')
+		`SELECT g.id,g.cluster_id,g.node_pool_id,g.zone_id,g.capacity_class,g.provider_zone_id,g.target_nodes,g.target_revision,g.min_nodes,g.max_nodes,g.template_revision,g.vcpu,g.memory_mib,g.launch_parameters,p.max_vcpu,p.max_memory_mib,p.max_nodes,(g.lifecycle_state='active' AND p.enabled AND z.enabled AND z.lifecycle_state='ready' AND c.lifecycle_state='ready' AND m.lifecycle_state='ready' AND m.access_state='approved')
 		 FROM node_groups g
 		 JOIN node_pools p ON p.id=g.node_pool_id
 		 JOIN zones z ON z.id=g.zone_id
 		 JOIN clusters c ON c.id=g.cluster_id
+		 JOIN cluster_zones m ON m.cluster_id=g.cluster_id AND m.zone_id=g.zone_id
 		 WHERE g.id=$1
 		 FOR UPDATE OF g`,
 		id,
@@ -197,13 +196,13 @@ func loadPolicy(ctx context.Context, tx *sql.Tx, id string) (policy, error) {
 		&p.group.TargetNodes, &p.group.TargetRevision, &p.group.MinNodes, &p.group.MaxNodes,
 		&p.group.TemplateRevision, &p.group.PerNode.VCPU, &p.group.PerNode.MemoryMiB,
 		&p.group.LaunchParameters,
-		&p.teamID, &p.poolLimit.VCPU, &p.poolLimit.MemoryMiB, &p.poolLimit.Nodes,
+		&p.poolLimit.VCPU, &p.poolLimit.MemoryMiB, &p.poolLimit.Nodes,
 		&p.enabled,
 	)
 	return p, err
 }
 
-func checkCredits(ctx context.Context, tx *sql.Tx, p policy, nodes int64) error {
+func checkReservations(ctx context.Context, tx *sql.Tx, p policy, nodes int64) error {
 	if nodes > math.MaxInt64/p.group.PerNode.VCPU || nodes > math.MaxInt64/p.group.PerNode.MemoryMiB {
 		return ErrLimit
 	}
@@ -218,15 +217,9 @@ func checkCredits(ctx context.Context, tx *sql.Tx, p policy, nodes int64) error 
 		limit api.Resources
 	}{
 		{
-			p.teamID,
-			`SELECT COALESCE(sum(vcpu),0),COALESCE(sum(memory_mib),0),COALESCE(sum(nodes),0)
-			 FROM credit_reservations WHERE team_id=$1 AND state<>'released'`,
-			p.budget,
-		},
-		{
 			p.group.NodePoolID,
 			`SELECT COALESCE(sum(r.vcpu),0),COALESCE(sum(r.memory_mib),0),COALESCE(sum(r.nodes),0)
-			 FROM credit_reservations r
+			 FROM infrastructure_reservations r
 			 JOIN node_groups g ON g.id=r.group_id
 			 WHERE g.node_pool_id=$1 AND r.state<>'released'`,
 			p.poolLimit,
@@ -270,9 +263,9 @@ func provisionIntent(ctx context.Context, tx *sql.Tx, p policy, requestID string
 	}
 	_, err = tx.ExecContext(
 		ctx,
-		`INSERT INTO credit_reservations(id,team_id,group_id,capacity_request_id,host_id,vcpu,memory_mib,state)
-		 VALUES($1,$2,$3,$4,$5,$6,$7,'reserved')`,
-		uuid.NewString(), p.teamID, p.group.ID, requestID, hostID,
+		`INSERT INTO infrastructure_reservations(id,group_id,capacity_request_id,host_id,vcpu,memory_mib,state)
+		 VALUES($1,$2,$3,$4,$5,$6,'reserved')`,
+		uuid.NewString(), p.group.ID, requestID, hostID,
 		p.group.PerNode.VCPU, p.group.PerNode.MemoryMiB,
 	)
 	return err
@@ -326,7 +319,7 @@ func cancelPending(ctx context.Context, tx *sql.Tx, groupID string, count int64)
 		}
 		if _, err = tx.ExecContext(
 			ctx,
-			`UPDATE credit_reservations SET state='released' WHERE host_id=$1`,
+			`UPDATE infrastructure_reservations SET state='released' WHERE host_id=$1`,
 			i.host,
 		); err != nil {
 			return err
@@ -477,7 +470,7 @@ func (s *Store) RecordLaunch(ctx context.Context, op api.Operation, providerID s
 
 	_, err = tx.ExecContext(
 		ctx,
-		`UPDATE credit_reservations SET state='committed' WHERE host_id=$1 AND state='reserved'`,
+		`UPDATE infrastructure_reservations SET state='committed' WHERE host_id=$1 AND state='reserved'`,
 		op.HostID,
 	)
 	if err != nil {

@@ -14,7 +14,7 @@ func TestAWSJSONDryRunNeedsNoCredentialsOrDSN(t *testing.T) {
 	t.Setenv("CRANE_DATABASE_URL", "")
 	t.Setenv("PATH", "")
 	file := filepath.Join(t.TempDir(), "config.json")
-	if err := os.WriteFile(file, []byte(`{"version":3,"provider":"aws","provider_config":{"region":"us-west-2"}}`), 0600); err != nil {
+	if err := os.WriteFile(file, []byte(`{"version":3,"development_stage":"test","group_suffix":"general","provider":"aws","provider_config":{"region":"us-west-2"}}`), 0600); err != nil {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
@@ -48,10 +48,10 @@ func TestProviderValidationAndPreparationDryRun(t *testing.T) {
 		name, config, contains string
 		prepare                bool
 	}{
-		{"unknown", `{"version":3,"provider":"unknown","provider_config":{}}`, "unsupported bootstrap provider", false},
-		{"invalid provider config", `{"version":3,"provider":"aws","provider_config":{"region":"invalid"}}`, "invalid aws.region", false},
-		{"unknown setting", `{"version":3,"provider":"aws","provider_config":{"region":"us-west-2","credential":"forbidden"}}`, "unknown field", false},
-		{"prepare", `{"version":3,"provider":"aws","provider_config":{"region":"us-west-2"}}`, "", true},
+		{"unknown", `{"version":3,"development_stage":"test","group_suffix":"general","provider":"unknown","provider_config":{}}`, "unsupported bootstrap provider", false},
+		{"invalid provider config", `{"version":3,"development_stage":"test","group_suffix":"general","provider":"aws","provider_config":{"region":"invalid"}}`, "invalid aws.region", false},
+		{"unknown setting", `{"version":3,"development_stage":"test","group_suffix":"general","provider":"aws","provider_config":{"region":"us-west-2","credential":"forbidden"}}`, "unknown field", false},
+		{"prepare", `{"version":3,"development_stage":"test","group_suffix":"general","provider":"aws","provider_config":{"region":"us-west-2"}}`, "", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()

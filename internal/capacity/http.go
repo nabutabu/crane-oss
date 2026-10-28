@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 
@@ -38,6 +39,8 @@ func (a *API) Handler() http.Handler {
 	mux.Handle("GET /v1/hosts", a.admin(a.listHosts))
 	mux.Handle("POST /v1/zones", a.admin(a.createZone))
 	mux.Handle("POST /v1/clusters", a.admin(a.createCluster))
+	mux.Handle("POST /v1/cluster-zones", a.admin(a.createClusterZone))
+	mux.Handle("PATCH /v1/cluster-zones/{cluster_id}/{zone_id}", a.admin(a.updateClusterZone))
 	mux.Handle("POST /v1/node-pools", a.admin(a.createNodePool))
 	mux.Handle("POST /v1/node-groups", a.admin(a.createNodeGroup))
 	mux.Handle("POST /v1/first-zone", a.admin(a.seedFirstZone))
@@ -85,7 +88,7 @@ func (a *API) createZone(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := a.store.CreateZone(r.Context(), in); err != nil {
-		http.Error(w, err.Error(), status(err))
+		capacityError(w, err)
 		return
 	}
 	writeJSON(w, in)
@@ -97,7 +100,7 @@ func (a *API) createCluster(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := a.store.CreateCluster(r.Context(), in); err != nil {
-		http.Error(w, err.Error(), status(err))
+		capacityError(w, err)
 		return
 	}
 	writeJSON(w, in)
@@ -109,7 +112,7 @@ func (a *API) createNodePool(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := a.store.CreateNodePool(r.Context(), in); err != nil {
-		http.Error(w, err.Error(), status(err))
+		capacityError(w, err)
 		return
 	}
 	writeJSON(w, in)
@@ -120,8 +123,12 @@ func (a *API) createNodeGroup(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &in) {
 		return
 	}
+	if in.NormalizeID() != nil {
+		capacityError(w, ErrInvalid)
+		return
+	}
 	if err := a.store.CreateNodeGroup(r.Context(), in); err != nil {
-		http.Error(w, err.Error(), status(err))
+		capacityError(w, err)
 		return
 	}
 	writeJSON(w, in)
@@ -132,11 +139,48 @@ func (a *API) seedFirstZone(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &in) {
 		return
 	}
-	if err := a.store.SeedFirstZone(r.Context(), in.Zone, in.Cluster, in.Budget, in.Pool, in.Group); err != nil {
-		http.Error(w, err.Error(), status(err))
+	if err := a.store.SeedFirstZone(r.Context(), in); err != nil {
+		capacityError(w, err)
 		return
 	}
 	writeJSON(w, map[string]string{"status": "ready"})
+}
+
+func (a *API) createClusterZone(w http.ResponseWriter, r *http.Request) {
+	var in api.ClusterZoneInput
+	if !decodeJSON(w, r, &in) {
+		return
+	}
+	if err := normalizeMembership(&in); err != nil {
+		capacityError(w, err)
+		return
+	}
+	if err := a.store.CreateClusterZone(r.Context(), in); err != nil {
+		capacityError(w, err)
+		return
+	}
+	writeJSON(w, in)
+}
+
+func (a *API) updateClusterZone(w http.ResponseWriter, r *http.Request) {
+	var state struct {
+		LifecycleState string `json:"lifecycle_state"`
+		AccessState    string `json:"access_state"`
+	}
+	if !decodeJSON(w, r, &state) {
+		return
+	}
+	// Both values are required: a partial patch must never implicitly revoke or approve access.
+	if state.LifecycleState == "" || state.AccessState == "" {
+		capacityError(w, ErrInvalid)
+		return
+	}
+	in := api.ClusterZoneInput{ClusterID: r.PathValue("cluster_id"), ZoneID: r.PathValue("zone_id"), LifecycleState: state.LifecycleState, AccessState: state.AccessState}
+	if err := a.store.UpdateClusterZone(r.Context(), in); err != nil {
+		capacityError(w, err)
+		return
+	}
+	writeJSON(w, in)
 }
 
 type zoneBootstrapRequest struct {
@@ -151,7 +195,7 @@ func (a *API) createZoneBootstrap(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := a.store.CreateZoneBootstrap(r.Context(), in.ZoneID, in.Parameters)
 	if err != nil {
-		http.Error(w, err.Error(), status(err))
+		capacityError(w, err)
 		return
 	}
 	writeJSON(w, map[string]string{"operation_id": id})
@@ -236,7 +280,13 @@ func capacityError(w http.ResponseWriter, err error) {
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
 	defer r.Body.Close()
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodyBytes)).Decode(dst); err != nil {
+	d := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodyBytes))
+	d.DisallowUnknownFields()
+	if err := d.Decode(dst); err != nil {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return false
+	}
+	if d.Decode(&struct{}{}) != io.EOF {
 		http.Error(w, "invalid JSON", http.StatusBadRequest)
 		return false
 	}
@@ -246,17 +296,4 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
 func writeJSON(w http.ResponseWriter, value any) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(value)
-}
-
-func status(err error) int {
-	switch {
-	case errors.Is(err, ErrForbidden):
-		return http.StatusForbidden
-	case errors.Is(err, ErrConflict), errors.Is(err, ErrReplayMismatch):
-		return http.StatusConflict
-	case errors.Is(err, ErrLimit), errors.Is(err, ErrInactive), errors.Is(err, ErrTemplate):
-		return http.StatusUnprocessableEntity
-	default:
-		return http.StatusBadRequest
-	}
 }

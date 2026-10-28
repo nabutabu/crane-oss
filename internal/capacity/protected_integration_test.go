@@ -23,7 +23,7 @@ func TestProtectedBootstrapInventory(t *testing.T) {
 		t.Fatalf("unexpected bootstrap inventory: %+v %v", h, err)
 	}
 	var credits int
-	if err := db.QueryRow(`SELECT count(*) FROM credit_reservations WHERE host_id='bootstrap'`).Scan(&credits); err != nil || credits != 0 {
+	if err := db.QueryRow(`SELECT count(*) FROM infrastructure_reservations WHERE host_id='bootstrap'`).Scan(&credits); err != nil || credits != 0 {
 		t.Fatal("bootstrap charged worker credits", err)
 	}
 }

@@ -1,6 +1,8 @@
 {
   "version": 3,
   "name": "crane-platform",
+  "development_stage": "production",
+  "group_suffix": "general",
   "provider": "aws",
   "provider_config": {
     "region": "us-west-2",

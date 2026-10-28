@@ -10,13 +10,15 @@ import (
 )
 
 type bootstrapConfig struct {
-	Name      string          `json:"name"`
-	AWS       AWSConfig       `json:"aws"`
-	Network   NetworkConfig   `json:"network"`
-	SPIRE     SPIREConfig     `json:"spire"`
-	RDS       RDSConfig       `json:"rds"`
-	Platform  PlatformConfig  `json:"platform"`
-	FirstZone json.RawMessage `json:"first_zone"`
+	DevelopmentStage string          `json:"development_stage"`
+	GroupSuffix      string          `json:"group_suffix"`
+	Name             string          `json:"name"`
+	AWS              AWSConfig       `json:"aws"`
+	Network          NetworkConfig   `json:"network"`
+	SPIRE            SPIREConfig     `json:"spire"`
+	RDS              RDSConfig       `json:"rds"`
+	Platform         PlatformConfig  `json:"platform"`
+	FirstZone        json.RawMessage `json:"first_zone"`
 }
 
 type AWSConfig struct {

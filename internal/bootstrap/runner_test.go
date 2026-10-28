@@ -51,7 +51,7 @@ func (s *sessionStub) RunHostPhase(ctx context.Context, p HostPhase, r *Reporter
 }
 func (s *sessionStub) Result() Result { return Result{IdentityEndpoint: s.endpoint} }
 func runConfig() Config {
-	return Config{Version: 3, Provider: "unit", ProviderConfig: json.RawMessage("{}"), Platform: PlatformConfig{CraneAPIImage: "registry.example/control:1.2.3", DominatorImage: "registry.example/zone:1.2.3"}}.WithDefaults()
+	return Config{Version: 3, DevelopmentStage: "test", GroupSuffix: "general", Provider: "unit", ProviderConfig: json.RawMessage("{}"), Platform: PlatformConfig{CraneAPIImage: "registry.example/control:1.2.3", DominatorImage: "registry.example/zone:1.2.3"}}.WithDefaults()
 }
 func TestRunOrderAndFailureStopsHandoff(t *testing.T) {
 	sequence := []string{"resolve", "credentials", "infrastructure", "hosts", string(InstallIdentity), string(RegisterWorkloads), string(InstallPlatform), string(ValidateHandoff)}
