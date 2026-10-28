@@ -7,6 +7,8 @@ import (
 
 func TestConfigRejectsOldVersionsAndInvalidSharedInputs(t *testing.T) {
 	for _, edit := range []func(*Config){
+		func(c *Config) { c.DevelopmentStage = "" },
+		func(c *Config) { c.GroupSuffix = "" },
 		func(c *Config) { c.Version = 2 },
 		func(c *Config) { c.Provider = "" },
 		func(c *Config) { c.ProviderConfig = json.RawMessage(`null`) },
@@ -29,6 +31,10 @@ func TestTopologyRequiresConsistentProviderPlacement(t *testing.T) {
 	}
 	in.Zone.Provider, in.Zone.AccountID, in.Zone.Region, in.Zone.ProviderZoneID = "unit", "account", "region", "zone"
 	in.Group.ProviderZoneID = "zone"
+	in.Group.Naming.Region, in.Group.Naming.AZ = "region", "a"
+	if err := in.Group.NormalizeID(); err != nil {
+		t.Fatal(err)
+	}
 	in.Group.LaunchParameters = json.RawMessage(`{"image":"pinned"}`)
 	if err := ValidateTopology(in); err != nil {
 		t.Fatal(err)

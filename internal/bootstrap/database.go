@@ -19,9 +19,9 @@ func InitializeDatabase(ctx context.Context, db *sql.DB, in api.FirstZoneInput, 
 		store := capacity.NewStore(db)
 		var err error
 		if pending {
-			err = store.SeedFirstZonePending(ctx, in.Zone, in.Cluster, in.Budget, in.Pool, in.Group)
+			err = store.SeedFirstZonePending(ctx, in)
 		} else {
-			err = store.SeedFirstZone(ctx, in.Zone, in.Cluster, in.Budget, in.Pool, in.Group)
+			err = store.SeedFirstZone(ctx, in)
 		}
 		return fmt.Sprintf("zone %s, target_nodes=0", in.Zone.ID), err
 	})

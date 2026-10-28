@@ -11,13 +11,15 @@ import (
 )
 
 type Config struct {
-	Version        int             `json:"version"`
-	Name           string          `json:"name"`
-	Provider       string          `json:"provider"`
-	ProviderConfig json.RawMessage `json:"provider_config"`
-	SPIRE          SPIREConfig     `json:"spire"`
-	Platform       PlatformConfig  `json:"platform"`
-	FirstZone      json.RawMessage `json:"first_zone,omitempty"`
+	DevelopmentStage string          `json:"development_stage"`
+	GroupSuffix      string          `json:"group_suffix"`
+	Version          int             `json:"version"`
+	Name             string          `json:"name"`
+	Provider         string          `json:"provider"`
+	ProviderConfig   json.RawMessage `json:"provider_config"`
+	SPIRE            SPIREConfig     `json:"spire"`
+	Platform         PlatformConfig  `json:"platform"`
+	FirstZone        json.RawMessage `json:"first_zone,omitempty"`
 }
 
 type SPIREConfig struct {

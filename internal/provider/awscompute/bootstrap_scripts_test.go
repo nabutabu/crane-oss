@@ -10,8 +10,9 @@ import (
 
 func testConfig() bootstrapConfig {
 	return bootstrapConfig{
-		Name: "crane-platform",
-		AWS:  AWSConfig{Region: "us-west-2", AccountID: "123456789012"},
+		Name:             "crane-platform",
+		DevelopmentStage: "test", GroupSuffix: "general",
+		AWS: AWSConfig{Region: "us-west-2", AccountID: "123456789012"},
 		Network: NetworkConfig{
 			VPCCIDR:            "10.80.0.0/16",
 			PublicSubnetCIDRs:  []string{"10.80.0.0/24", "10.80.1.0/24"},

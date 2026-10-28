@@ -24,7 +24,7 @@ func removalFixture(t *testing.T) (*Store, api.NodeRemovalRequest) {
 		t.Fatal(err)
 	}
 	defer rows.Close()
-	req := api.NodeRemovalRequest{NodeGroupID: "group", RequestID: "delete-handler", ExpectedTargetRevision: 1}
+	req := api.NodeRemovalRequest{NodeGroupID: "aws-test-us-west-2-a-general", RequestID: "delete-handler", ExpectedTargetRevision: 1}
 	for rows.Next() {
 		var id, provider string
 		if err := rows.Scan(&id, &provider); err != nil {
@@ -50,12 +50,12 @@ func TestPostgresNamedRemovalAtomicReplay(t *testing.T) {
 	if err := s.CreateAutoscalerRemovals(ctx, "cluster", req); err != nil {
 		t.Fatalf("lost-response replay: %v", err)
 	}
-	target, err := s.Target(ctx, "cluster", "group")
+	target, err := s.Target(ctx, "cluster", "aws-test-us-west-2-a-general")
 	if err != nil || target.TargetNodes != 0 || target.TargetRevision != 2 || count(t, s.DB, "node_removal_operations") != 2 {
 		t.Fatalf("wrong removal result: %+v %v", target, err)
 	}
 	var unreleased int
-	if err := s.DB.QueryRow(`SELECT count(*) FROM credit_reservations WHERE state<>'released'`).Scan(&unreleased); err != nil || unreleased != 2 {
+	if err := s.DB.QueryRow(`SELECT count(*) FROM infrastructure_reservations WHERE state<>'released'`).Scan(&unreleased); err != nil || unreleased != 2 {
 		t.Fatalf("credits released before termination: %d %v", unreleased, err)
 	}
 	req.Nodes[0].NodeName = "changed"
@@ -77,7 +77,7 @@ func TestPostgresNamedRemovalRollback(t *testing.T) {
 			if err := s.CreateAutoscalerRemovals(context.Background(), "cluster", req); err == nil {
 				t.Fatal("invalid removal succeeded")
 			}
-			target, err := s.Target(context.Background(), "cluster", "group")
+			target, err := s.Target(context.Background(), "cluster", "aws-test-us-west-2-a-general")
 			if err != nil || target.TargetNodes != 2 || target.TargetRevision != 1 || count(t, s.DB, "node_removal_operations") != 0 || count(t, s.DB, "operations") != 2 {
 				t.Fatalf("partial batch commit: %+v %v", target, err)
 			}
@@ -122,7 +122,7 @@ func TestPostgresAdapterHTTPAdmissionAndReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	target, err := client.Target(ctx, "group")
+	target, err := client.Target(ctx, "aws-test-us-west-2-a-general")
 	if err != nil || target.TargetNodes != 2 || target.TargetRevision != 1 {
 		t.Fatalf("target read: %+v %v", target, err)
 	}
@@ -132,7 +132,7 @@ func TestPostgresAdapterHTTPAdmissionAndReplay(t *testing.T) {
 	if err := client.RemoveNodes(ctx, removal); err != nil {
 		t.Fatal(err)
 	}
-	target, err = client.Target(ctx, "group")
+	target, err = client.Target(ctx, "aws-test-us-west-2-a-general")
 	if err != nil || target.TargetNodes != 0 || target.TargetRevision != 2 {
 		t.Fatalf("removal replay: %+v %v", target, err)
 	}
@@ -143,7 +143,7 @@ func TestPostgresAdapterHTTPAdmissionAndReplay(t *testing.T) {
 	if _, err := client.SetTarget(ctx, req); err != nil {
 		t.Fatal(err)
 	}
-	target, err = client.Target(ctx, "group")
+	target, err = client.Target(ctx, "aws-test-us-west-2-a-general")
 	if err != nil || target.TargetNodes != 1 || target.TargetRevision != 3 {
 		t.Fatalf("capacity replay: %+v %v", target, err)
 	}

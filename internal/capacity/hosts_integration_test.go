@@ -27,7 +27,7 @@ INSERT INTO host(id,zone,state,provider,providerid,protected,secretarn) VALUES
  ('excluded-inconsistent','another-provider','READY','aws','inconsistent-id',false,NULL),
  ('excluded-unplaced',NULL,'READY','aws','unplaced-id',false,NULL);
 INSERT INTO host(id,zone,crane_zone,node_group_id,node_pool_id,state,provider,providerid)
- VALUES('b/worker','east','zone','group','pool','READY','aws','worker-id');`)
+ VALUES('b/worker','east','zone','aws-test-us-west-2-a-general','pool','READY','aws','worker-id');`)
 	for _, tc := range []struct {
 		provider, region string
 		want             []string

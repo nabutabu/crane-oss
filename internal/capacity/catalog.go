@@ -11,204 +11,209 @@ import (
 	"github.com/nabutabu/crane-oss/pkg/api"
 )
 
-// SeedFirstZone atomically creates the platform team's initial topology. It is
-// intentionally idempotent by durable IDs, making it safe to rerun after a
-// lost command response. Records are left ready, but no capacity operation is
-// created until a client explicitly changes a target.
-func (s *Store) SeedFirstZone(
-	ctx context.Context,
-	z api.ZoneInput,
-	c api.ClusterInput,
-	budget api.Resources,
-	p api.NodePoolInput,
-	g api.NodeGroupInput,
-) error {
-	return s.seedFirstZone(ctx, z, c, budget, p, g, true)
+type topologyWriter interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
 }
 
-// SeedFirstZonePending initializes topology before services start without
-// admitting capacity until the bootstrap's health checks have passed.
-func (s *Store) SeedFirstZonePending(ctx context.Context, z api.ZoneInput, c api.ClusterInput, budget api.Resources, p api.NodePoolInput, g api.NodeGroupInput) error {
-	return s.seedFirstZone(ctx, z, c, budget, p, g, false)
-}
-
-func (s *Store) seedFirstZone(ctx context.Context, z api.ZoneInput, c api.ClusterInput, budget api.Resources, p api.NodePoolInput, g api.NodeGroupInput, ready bool) error {
-	if z.ID == "" || c.ID == "" || p.ID == "" || g.ID == "" ||
-		c.ZoneID != z.ID || g.ClusterID != c.ID || g.ZoneID != z.ID || g.NodePoolID != p.ID ||
-		budget.VCPU < 0 || budget.MemoryMiB < 0 || budget.Nodes < 0 ||
-		p.Limits.VCPU < 0 || p.Limits.MemoryMiB < 0 || p.Limits.Nodes < 0 ||
-		g.MinNodes < 0 || g.MaxNodes < g.MinNodes ||
-		g.PerNode.VCPU <= 0 || g.PerNode.MemoryMiB <= 0 ||
-		!json.Valid(g.LaunchParameters) {
-		return errors.New("invalid first-zone topology")
+// immutableInsert accepts an exact retry, but never changes an existing identity.
+func immutableInsert(ctx context.Context, db topologyWriter, query string, args ...any) error {
+	r, err := db.ExecContext(ctx, query, args...)
+	if err != nil {
+		return topologyError(err)
 	}
+	n, err := r.RowsAffected()
+	if err == nil && n == 0 {
+		return ErrConflict
+	}
+	return err
+}
 
+func topologyError(err error) error {
+	var state interface{ SQLState() string }
+	if errors.As(err, &state) {
+		switch state.SQLState() {
+		case "23505":
+			return ErrConflict
+		case "23503", "23514", "23502":
+			return ErrInvalid
+		}
+	}
+	return err
+}
+
+func createZone(ctx context.Context, db topologyWriter, z api.ZoneInput, lifecycle string) error {
+	if z.ID == "" || z.Provider == "" || z.AccountID == "" || z.Region == "" || z.ProviderZoneID == "" {
+		return ErrInvalid
+	}
+	return immutableInsert(ctx, db, `INSERT INTO zones(id,provider,account_id,region,provider_zone_id,lifecycle_state)
+ VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(id) DO UPDATE SET id=EXCLUDED.id
+ WHERE (zones.provider,zones.account_id,zones.region,zones.provider_zone_id)=
+ (EXCLUDED.provider,EXCLUDED.account_id,EXCLUDED.region,EXCLUDED.provider_zone_id)`,
+		z.ID, z.Provider, z.AccountID, z.Region, z.ProviderZoneID, lifecycle)
+}
+
+func createCluster(ctx context.Context, db topologyWriter, c api.ClusterInput, lifecycle string, seed bool) error {
+	if c.ID == "" || c.KubeadmVersion == "" || c.KubeletVersion == "" || c.ContainerRuntime == "" || c.CNI != "cilium" {
+		return ErrInvalid
+	}
+	return immutableInsert(ctx, db, `INSERT INTO clusters(id,api_server_endpoint,ca_cert_hash,kubeadm_version,kubelet_version,container_runtime,cni,lifecycle_state)
+ VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(id) DO UPDATE SET id=EXCLUDED.id
+ WHERE (clusters.kubeadm_version,clusters.kubelet_version,clusters.container_runtime,clusters.cni)=
+ (EXCLUDED.kubeadm_version,EXCLUDED.kubelet_version,EXCLUDED.container_runtime,EXCLUDED.cni)
+ AND (clusters.api_server_endpoint=EXCLUDED.api_server_endpoint OR ($9 AND EXCLUDED.api_server_endpoint=''))
+ AND (clusters.ca_cert_hash=EXCLUDED.ca_cert_hash OR ($9 AND EXCLUDED.ca_cert_hash=''))`,
+		c.ID, c.APIServerEndpoint, c.CACertHash, c.KubeadmVersion, c.KubeletVersion, c.ContainerRuntime, c.CNI, lifecycle, seed)
+}
+
+func createPool(ctx context.Context, db topologyWriter, p api.NodePoolInput) error {
+	if p.ID == "" || p.Limits.VCPU < 0 || p.Limits.MemoryMiB < 0 || p.Limits.Nodes < 0 {
+		return ErrInvalid
+	}
+	return immutableInsert(ctx, db, `INSERT INTO node_pools(id,max_vcpu,max_memory_mib,max_nodes)
+ VALUES($1,$2,$3,$4) ON CONFLICT(id) DO UPDATE SET id=EXCLUDED.id
+ WHERE (node_pools.max_vcpu,node_pools.max_memory_mib,node_pools.max_nodes)=
+ (EXCLUDED.max_vcpu,EXCLUDED.max_memory_mib,EXCLUDED.max_nodes)`, p.ID, p.Limits.VCPU, p.Limits.MemoryMiB, p.Limits.Nodes)
+}
+
+func createGroup(ctx context.Context, db topologyWriter, g api.NodeGroupInput) error {
+	if g.NormalizeID() != nil || g.ClusterID == "" || g.ZoneID == "" || g.NodePoolID == "" ||
+		g.CapacityClass == "" || g.TemplateRevision == "" || g.MinNodes < 0 || g.MaxNodes < g.MinNodes ||
+		g.PerNode.VCPU <= 0 || g.PerNode.MemoryMiB <= 0 || !json.Valid(g.LaunchParameters) {
+		return ErrInvalid
+	}
+	return immutableInsert(ctx, db, `INSERT INTO node_groups(id,cluster_id,zone_id,node_pool_id,capacity_class,provider_zone_id,min_nodes,max_nodes,template_revision,vcpu,memory_mib,launch_parameters,naming_provider,development_stage,naming_region,naming_az,naming_group)
+ VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+ ON CONFLICT(id) DO UPDATE SET id=EXCLUDED.id
+ WHERE (node_groups.cluster_id,node_groups.zone_id,node_groups.node_pool_id,node_groups.capacity_class,node_groups.provider_zone_id,
+ node_groups.min_nodes,node_groups.max_nodes,node_groups.template_revision,node_groups.vcpu,node_groups.memory_mib,node_groups.launch_parameters,
+ node_groups.naming_provider,node_groups.development_stage,node_groups.naming_region,node_groups.naming_az,node_groups.naming_group)=
+ (EXCLUDED.cluster_id,EXCLUDED.zone_id,EXCLUDED.node_pool_id,EXCLUDED.capacity_class,EXCLUDED.provider_zone_id,
+ EXCLUDED.min_nodes,EXCLUDED.max_nodes,EXCLUDED.template_revision,EXCLUDED.vcpu,EXCLUDED.memory_mib,EXCLUDED.launch_parameters,
+ EXCLUDED.naming_provider,EXCLUDED.development_stage,EXCLUDED.naming_region,EXCLUDED.naming_az,EXCLUDED.naming_group)`,
+		g.ID, g.ClusterID, g.ZoneID, g.NodePoolID, g.CapacityClass, g.ProviderZoneID, g.MinNodes, g.MaxNodes, g.TemplateRevision,
+		g.PerNode.VCPU, g.PerNode.MemoryMiB, []byte(g.LaunchParameters), g.Naming.Provider, g.Naming.DevelopmentStage, g.Naming.Region, g.Naming.AZ, g.Naming.Group)
+}
+
+func normalizeMembership(m *api.ClusterZoneInput) error {
+	if m.LifecycleState == "" {
+		m.LifecycleState = "requested"
+	}
+	if m.AccessState == "" {
+		m.AccessState = "pending"
+	}
+	if m.ClusterID == "" || m.ZoneID == "" {
+		return ErrInvalid
+	}
+	switch m.LifecycleState {
+	case "requested", "initializing", "ready", "failed":
+	default:
+		return ErrInvalid
+	}
+	switch m.AccessState {
+	case "pending", "approved", "revoked":
+	default:
+		return ErrInvalid
+	}
+	return nil
+}
+
+func createMembership(ctx context.Context, db topologyWriter, m api.ClusterZoneInput, seed bool) error {
+	if err := normalizeMembership(&m); err != nil {
+		return err
+	}
+	query := `INSERT INTO cluster_zones(cluster_id,zone_id,lifecycle_state,access_state) VALUES($1,$2,$3,$4)
+ ON CONFLICT(cluster_id,zone_id) DO UPDATE SET cluster_id=EXCLUDED.cluster_id`
+	if !seed {
+		query += ` WHERE cluster_zones.lifecycle_state=EXCLUDED.lifecycle_state AND cluster_zones.access_state=EXCLUDED.access_state`
+	}
+	return immutableInsert(ctx, db, query, m.ClusterID, m.ZoneID, m.LifecycleState, m.AccessState)
+}
+
+// SeedFirstZone atomically seeds topology without resetting durable runtime state.
+func (s *Store) SeedFirstZone(ctx context.Context, in api.FirstZoneInput) error {
+	return s.seedFirstZone(ctx, in, true)
+}
+func (s *Store) SeedFirstZonePending(ctx context.Context, in api.FirstZoneInput) error {
+	return s.seedFirstZone(ctx, in, false)
+}
+
+func (s *Store) seedFirstZone(ctx context.Context, in api.FirstZoneInput, ready bool) error {
+	if in.Group.NormalizeID() != nil {
+		return ErrInvalid
+	}
+	if in.Membership.ClusterID != in.Cluster.ID || in.Membership.ZoneID != in.Zone.ID ||
+		in.Group.ClusterID != in.Cluster.ID || in.Group.ZoneID != in.Zone.ID || in.Group.NodePoolID != in.Pool.ID ||
+		in.Group.MinNodes != 0 {
+		return ErrInvalid
+	}
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	lifecycle := "ready"
-	if !ready {
-		lifecycle = "initializing"
-	}
-
-	_, err = tx.ExecContext(
-		ctx,
-		`INSERT INTO zones(id,provider,account_id,region,provider_zone_id,enabled,lifecycle_state)
-		 VALUES($1,$2,$3,$4,$5,true,$6)
-		 ON CONFLICT (id) DO UPDATE SET
-		   provider=EXCLUDED.provider,
-		   account_id=EXCLUDED.account_id,
-		   region=EXCLUDED.region,
-		   provider_zone_id=EXCLUDED.provider_zone_id,
-		   lifecycle_state=EXCLUDED.lifecycle_state`,
-		z.ID, z.Provider, z.AccountID, z.Region, z.ProviderZoneID, lifecycle,
-	)
-	if err != nil {
+	// One seed transaction per database; common ordering is group before pool.
+	if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(724163002)`); err != nil {
 		return err
 	}
-
-	_, err = tx.ExecContext(
-		ctx,
-		`INSERT INTO clusters(id,zone_id,api_server_endpoint,ca_cert_hash,kubeadm_version,kubelet_version,container_runtime,cni,lifecycle_state)
-		 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)
-		 ON CONFLICT (id) DO UPDATE SET
-		   zone_id=EXCLUDED.zone_id,
-		   api_server_endpoint=EXCLUDED.api_server_endpoint,
-		   ca_cert_hash=EXCLUDED.ca_cert_hash,
-		   kubeadm_version=EXCLUDED.kubeadm_version,
-		   kubelet_version=EXCLUDED.kubelet_version,
-		   container_runtime=EXCLUDED.container_runtime,
-		   cni=EXCLUDED.cni,
-		   lifecycle_state=EXCLUDED.lifecycle_state`,
-		c.ID, c.ZoneID, c.APIServerEndpoint, c.CACertHash,
-		c.KubeadmVersion, c.KubeletVersion, c.ContainerRuntime, c.CNI, lifecycle,
-	)
-	if err != nil {
+	if _, err = tx.ExecContext(ctx, `SELECT id FROM node_groups WHERE id=$1 FOR UPDATE`, in.Group.ID); err != nil {
 		return err
 	}
-
-	_, err = tx.ExecContext(
-		ctx,
-		`INSERT INTO team_budgets(team_id,vcpu,memory_mib,nodes)
-		 VALUES($1,$2,$3,$4)
-		 ON CONFLICT (team_id) DO UPDATE SET
-		   vcpu=EXCLUDED.vcpu,
-		   memory_mib=EXCLUDED.memory_mib,
-		   nodes=EXCLUDED.nodes`,
-		p.TeamID, budget.VCPU, budget.MemoryMiB, budget.Nodes,
-	)
-	if err != nil {
+	lifecycle := "initializing"
+	access := "pending"
+	if ready {
+		lifecycle = "ready"
+		access = "approved"
+	}
+	if err = createZone(ctx, tx, in.Zone, lifecycle); err != nil {
 		return err
 	}
-
-	_, err = tx.ExecContext(
-		ctx,
-		`INSERT INTO node_pools(id,team_id,enabled,max_vcpu,max_memory_mib,max_nodes)
-		 VALUES($1,$2,true,$3,$4,$5)
-		 ON CONFLICT (id) DO UPDATE SET
-		   team_id=EXCLUDED.team_id,
-		   max_vcpu=EXCLUDED.max_vcpu,
-		   max_memory_mib=EXCLUDED.max_memory_mib,
-		   max_nodes=EXCLUDED.max_nodes`,
-		p.ID, p.TeamID, p.Limits.VCPU, p.Limits.MemoryMiB, p.Limits.Nodes,
-	)
-	if err != nil {
+	if err = createCluster(ctx, tx, in.Cluster, lifecycle, true); err != nil {
 		return err
 	}
-
-	_, err = tx.ExecContext(
-		ctx,
-		`INSERT INTO node_groups(id,cluster_id,zone_id,node_pool_id,capacity_class,provider_zone_id,min_nodes,max_nodes,template_revision,vcpu,memory_mib,launch_parameters,lifecycle_state)
-		 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'active')
-		 ON CONFLICT (id) DO UPDATE SET
-		   cluster_id=EXCLUDED.cluster_id,
-		   zone_id=EXCLUDED.zone_id,
-		   node_pool_id=EXCLUDED.node_pool_id,
-		   capacity_class=EXCLUDED.capacity_class,
-		   provider_zone_id=EXCLUDED.provider_zone_id,
-		   min_nodes=EXCLUDED.min_nodes,
-		   max_nodes=EXCLUDED.max_nodes,
-		   template_revision=EXCLUDED.template_revision,
-		   vcpu=EXCLUDED.vcpu,
-		   memory_mib=EXCLUDED.memory_mib,
-		   launch_parameters=EXCLUDED.launch_parameters`,
-		g.ID, g.ClusterID, g.ZoneID, g.NodePoolID, g.CapacityClass, g.ProviderZoneID,
-		g.MinNodes, g.MaxNodes, g.TemplateRevision,
-		g.PerNode.VCPU, g.PerNode.MemoryMiB, []byte(g.LaunchParameters),
-	)
-	if err != nil {
+	m := in.Membership
+	m.LifecycleState = lifecycle
+	m.AccessState = access
+	if err = createMembership(ctx, tx, m, true); err != nil {
 		return err
 	}
-
+	if err = createPool(ctx, tx, in.Pool); err != nil {
+		return err
+	}
+	if err = createGroup(ctx, tx, in.Group); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 
 func (s *Store) CreateZone(ctx context.Context, z api.ZoneInput) error {
-	if z.ID == "" || z.Provider == "" || z.AccountID == "" || z.Region == "" || z.ProviderZoneID == "" {
-		return errors.New("invalid zone")
-	}
-	_, err := s.DB.ExecContext(
-		ctx,
-		`INSERT INTO zones(id,provider,account_id,region,provider_zone_id,lifecycle_state)
-		 VALUES($1,$2,$3,$4,$5,'ready')
-		 ON CONFLICT (id) DO NOTHING`,
-		z.ID, z.Provider, z.AccountID, z.Region, z.ProviderZoneID,
-	)
-	return err
+	return createZone(ctx, s.DB, z, "ready")
 }
-
 func (s *Store) CreateCluster(ctx context.Context, c api.ClusterInput) error {
-	if c.ID == "" || c.ZoneID == "" || c.KubeadmVersion == "" || c.KubeletVersion == "" || c.ContainerRuntime == "" || c.CNI != "cilium" {
-		return errors.New("invalid cluster")
-	}
-	_, err := s.DB.ExecContext(
-		ctx,
-		`INSERT INTO clusters(id,zone_id,api_server_endpoint,ca_cert_hash,kubeadm_version,kubelet_version,container_runtime,cni,lifecycle_state)
-		 VALUES($1,$2,$3,$4,$5,$6,$7,$8,'ready')
-		 ON CONFLICT (id) DO NOTHING`,
-		c.ID, c.ZoneID, c.APIServerEndpoint, c.CACertHash,
-		c.KubeadmVersion, c.KubeletVersion, c.ContainerRuntime, c.CNI,
-	)
-	return err
+	return createCluster(ctx, s.DB, c, "ready", false)
 }
-
 func (s *Store) CreateNodePool(ctx context.Context, p api.NodePoolInput) error {
-	if p.ID == "" || p.TeamID == "" || p.Limits.VCPU < 0 || p.Limits.MemoryMiB < 0 || p.Limits.Nodes < 0 {
-		return errors.New("invalid node pool")
-	}
-	_, err := s.DB.ExecContext(
-		ctx,
-		`INSERT INTO node_pools(id,team_id,max_vcpu,max_memory_mib,max_nodes)
-		 VALUES($1,$2,$3,$4,$5)
-		 ON CONFLICT (id) DO NOTHING`,
-		p.ID, p.TeamID, p.Limits.VCPU, p.Limits.MemoryMiB, p.Limits.Nodes,
-	)
-	return err
+	return createPool(ctx, s.DB, p)
 }
-
 func (s *Store) CreateNodeGroup(ctx context.Context, g api.NodeGroupInput) error {
-	if g.ID == "" || g.ClusterID == "" || g.ZoneID == "" || g.NodePoolID == "" || g.TemplateRevision == "" ||
-		g.MinNodes < 0 || g.MaxNodes < g.MinNodes ||
-		g.PerNode.VCPU <= 0 || g.PerNode.MemoryMiB <= 0 ||
-		!json.Valid(g.LaunchParameters) {
-		return errors.New("invalid node group")
+	return createGroup(ctx, s.DB, g)
+}
+func (s *Store) CreateClusterZone(ctx context.Context, m api.ClusterZoneInput) error {
+	return createMembership(ctx, s.DB, m, false)
+}
+func (s *Store) UpdateClusterZone(ctx context.Context, m api.ClusterZoneInput) error {
+	if err := normalizeMembership(&m); err != nil {
+		return err
 	}
-	_, err := s.DB.ExecContext(
-		ctx,
-		`INSERT INTO node_groups(id,cluster_id,zone_id,node_pool_id,capacity_class,provider_zone_id,min_nodes,max_nodes,template_revision,vcpu,memory_mib,launch_parameters)
-		 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
-		 ON CONFLICT (id) DO NOTHING`,
-		g.ID, g.ClusterID, g.ZoneID, g.NodePoolID, g.CapacityClass, g.ProviderZoneID,
-		g.MinNodes, g.MaxNodes, g.TemplateRevision,
-		g.PerNode.VCPU, g.PerNode.MemoryMiB, []byte(g.LaunchParameters),
-	)
+	r, err := s.DB.ExecContext(ctx, `UPDATE cluster_zones SET lifecycle_state=$3,access_state=$4 WHERE cluster_id=$1 AND zone_id=$2`, m.ClusterID, m.ZoneID, m.LifecycleState, m.AccessState)
+	if err != nil {
+		return topologyError(err)
+	}
+	n, err := r.RowsAffected()
+	if err == nil && n == 0 {
+		return sql.ErrNoRows
+	}
 	return err
 }
-
-// Host reads the extended durable catalog. Legacy hosts have empty placement;
-// only control-plane admission assigns group, pool, zone and operation identity.
 func (s *Store) Host(ctx context.Context, id string) (api.Host, error) {
 	var h api.Host
 	h.ID = id

@@ -4,28 +4,30 @@ CREATE TABLE IF NOT EXISTS zones (
  id text PRIMARY KEY, provider text NOT NULL, account_id text NOT NULL,
  region text NOT NULL, provider_zone_id text NOT NULL,
  enabled boolean NOT NULL DEFAULT true, lifecycle_state text NOT NULL DEFAULT 'requested',
- UNIQUE(provider, account_id, region, provider_zone_id), UNIQUE(id, provider_zone_id)
+ UNIQUE(provider, account_id, region, provider_zone_id), UNIQUE(id, provider_zone_id), UNIQUE(id,provider,region)
 );
 CREATE TABLE IF NOT EXISTS clusters (
- id text PRIMARY KEY, zone_id text NOT NULL UNIQUE REFERENCES zones(id),
+ id text PRIMARY KEY,
  api_server_endpoint text NOT NULL DEFAULT '', ca_cert_hash text NOT NULL DEFAULT '',
  kubeadm_version text NOT NULL, kubelet_version text NOT NULL,
  container_runtime text NOT NULL, cni text NOT NULL CHECK(cni = 'cilium'),
- join_configuration jsonb NOT NULL DEFAULT '{}', lifecycle_state text NOT NULL DEFAULT 'requested',
- UNIQUE(id, zone_id)
+ join_configuration jsonb NOT NULL DEFAULT '{}', lifecycle_state text NOT NULL DEFAULT 'requested'
 );
-CREATE TABLE IF NOT EXISTS team_budgets (
- team_id text PRIMARY KEY,
- vcpu bigint NOT NULL CHECK(vcpu >= 0), memory_mib bigint NOT NULL CHECK(memory_mib >= 0),
- nodes bigint NOT NULL CHECK(nodes >= 0)
+CREATE TABLE IF NOT EXISTS cluster_zones (
+ cluster_id text NOT NULL REFERENCES clusters(id), zone_id text NOT NULL REFERENCES zones(id),
+ lifecycle_state text NOT NULL DEFAULT 'requested' CHECK(lifecycle_state IN ('requested','initializing','ready','failed')),
+ access_state text NOT NULL DEFAULT 'pending' CHECK(access_state IN ('pending','approved','revoked')),
+ PRIMARY KEY(cluster_id,zone_id)
 );
 CREATE TABLE IF NOT EXISTS node_pools (
- id text PRIMARY KEY, team_id text NOT NULL REFERENCES team_budgets(team_id),
+ id text PRIMARY KEY,
  enabled boolean NOT NULL DEFAULT true,
  max_vcpu bigint NOT NULL CHECK(max_vcpu >= 0), max_memory_mib bigint NOT NULL CHECK(max_memory_mib >= 0),
  max_nodes bigint NOT NULL CHECK(max_nodes >= 0)
 );
 CREATE TABLE IF NOT EXISTS node_groups (
+ naming_provider text NOT NULL, development_stage text NOT NULL, naming_region text NOT NULL,
+ naming_az text NOT NULL, naming_group text NOT NULL,
  id text PRIMARY KEY, cluster_id text NOT NULL, zone_id text NOT NULL,
  node_pool_id text NOT NULL REFERENCES node_pools(id), capacity_class text NOT NULL,
  provider_zone_id text NOT NULL, target_nodes bigint NOT NULL DEFAULT 0,
@@ -34,9 +36,14 @@ CREATE TABLE IF NOT EXISTS node_groups (
  template_revision text NOT NULL, lifecycle_state text NOT NULL DEFAULT 'active',
  vcpu bigint NOT NULL CHECK(vcpu > 0), memory_mib bigint NOT NULL CHECK(memory_mib > 0),
  launch_parameters jsonb NOT NULL,
+ CHECK(naming_provider ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$' AND development_stage ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'
+ AND naming_region ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$' AND naming_az ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'
+ AND naming_group ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'),
+ CHECK(id = naming_provider || '-' || development_stage || '-' || naming_region || '-' || naming_az || '-' || naming_group),
  CHECK(max_nodes >= min_nodes), CHECK(target_nodes BETWEEN min_nodes AND max_nodes),
- FOREIGN KEY(cluster_id, zone_id) REFERENCES clusters(id, zone_id),
+ FOREIGN KEY(cluster_id, zone_id) REFERENCES cluster_zones(cluster_id, zone_id),
  FOREIGN KEY(zone_id, provider_zone_id) REFERENCES zones(id, provider_zone_id),
+ FOREIGN KEY(zone_id,naming_provider,naming_region) REFERENCES zones(id,provider,region),
  UNIQUE(id, node_pool_id, zone_id)
 );
 CREATE TABLE IF NOT EXISTS capacity_requests (
@@ -107,8 +114,8 @@ DO $$ BEGIN
   CREATE TRIGGER immutable_operation BEFORE UPDATE ON operations FOR EACH ROW EXECUTE FUNCTION crane_immutable_operation();
  END IF;
 END $$;
-CREATE TABLE IF NOT EXISTS credit_reservations (
- id text PRIMARY KEY, team_id text NOT NULL REFERENCES team_budgets(team_id),
+CREATE TABLE IF NOT EXISTS infrastructure_reservations (
+ id text PRIMARY KEY,
  group_id text NOT NULL REFERENCES node_groups(id), capacity_request_id text NOT NULL REFERENCES capacity_requests(id),
  host_id varchar NOT NULL UNIQUE REFERENCES host(id),
  vcpu bigint NOT NULL CHECK(vcpu > 0), memory_mib bigint NOT NULL CHECK(memory_mib > 0),
@@ -116,7 +123,7 @@ CREATE TABLE IF NOT EXISTS credit_reservations (
  state text NOT NULL CHECK(state IN ('reserved', 'committed', 'released')),
  created_at timestamptz NOT NULL DEFAULT clock_timestamp()
 );
-CREATE INDEX IF NOT EXISTS credit_reservations_budget ON credit_reservations(team_id, state);
+CREATE INDEX IF NOT EXISTS infrastructure_reservations_group ON infrastructure_reservations(group_id, state);
 CREATE TABLE IF NOT EXISTS zone_bootstrap_operations (
  operation_id text PRIMARY KEY REFERENCES operations(id), zone_id text NOT NULL REFERENCES zones(id),
  phase text NOT NULL DEFAULT 'Requested' CHECK(phase IN ('Requested', 'DatabaseProvisioning', 'DatabaseReady', 'SpireHostProvisioning', 'SpireInstalling', 'SpireValidating',
