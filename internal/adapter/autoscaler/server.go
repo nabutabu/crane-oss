@@ -6,6 +6,7 @@ import (
 	"maps"
 	"math"
 	"slices"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -37,9 +38,13 @@ type Config struct {
 // target and revision are read from Crane for every callback.
 type Server struct {
 	pb.UnimplementedCloudProviderServer
-	clusterID string
-	provider  *StaticProvider
-	client    CraneClient
+	clusterID  string
+	provider   *StaticProvider
+	client     CraneClient
+	mu         sync.RWMutex
+	discoverer interface {
+		Discover(context.Context) (api.AutoscalerDiscovery, error)
+	}
 }
 
 func NewServer(cfg Config, client CraneClient) (*Server, error) {
@@ -47,7 +52,26 @@ func NewServer(cfg Config, client CraneClient) (*Server, error) {
 		return nil, fmt.Errorf("cluster identity and Crane client are required")
 	}
 	groups := make([]StaticNodeGroup, 0)
-	var clusterZone, clusterRegion string
+	var discoverer interface {
+		Discover(context.Context) (api.AutoscalerDiscovery, error)
+	}
+	if len(cfg.Groups) == 0 {
+		var ok bool
+		discoverer, ok = client.(interface {
+			Discover(context.Context) (api.AutoscalerDiscovery, error)
+		})
+		if !ok {
+			return nil, fmt.Errorf("Crane discovery client is required")
+		}
+		d, err := discoverer.Discover(context.Background())
+		if err != nil {
+			return nil, err
+		}
+		cfg.Groups, err = discoveredGroups(d)
+		if err != nil {
+			return nil, err
+		}
+	}
 	ids, nodes := map[string]bool{}, map[string]bool{}
 	for _, g := range cfg.Groups {
 		if g.ClusterID != cfg.ClusterID {
@@ -60,10 +84,6 @@ func NewServer(cfg Config, client CraneClient) (*Server, error) {
 			return nil, fmt.Errorf("invalid static node group")
 		}
 		ids[g.ID] = true
-		if clusterZone != "" && (g.Zone != clusterZone || g.Region != clusterRegion) {
-			return nil, fmt.Errorf("a cluster's node groups must share one zone and region")
-		}
-		clusterZone, clusterRegion = g.Zone, g.Region
 		if g.Architecture == "" {
 			g.Architecture = "amd64"
 		}
@@ -84,7 +104,7 @@ func NewServer(cfg Config, client CraneClient) (*Server, error) {
 			}
 		}
 		for _, node := range g.Nodes {
-			if node.ProviderID == "" || node.HostID == "" || node.Name == "" || nodes[node.ProviderID] ||
+			if node.ProviderID == "" || node.HostID == "" || (discoverer == nil && node.Name == "") || nodes[node.ProviderID] ||
 				(node.State != "running" && node.State != "creating" && node.State != "deleting") {
 				return nil, fmt.Errorf("invalid or duplicate static node")
 			}
@@ -92,18 +112,68 @@ func NewServer(cfg Config, client CraneClient) (*Server, error) {
 		}
 		groups = append(groups, g)
 	}
-	if len(groups) == 0 {
+	if len(groups) == 0 && discoverer == nil {
 		return nil, fmt.Errorf("at least one node group must belong to the configured cluster")
 	}
-	return &Server{clusterID: cfg.ClusterID, provider: NewStaticProvider(groups), client: client}, nil
+	return &Server{clusterID: cfg.ClusterID, provider: NewStaticProvider(groups), client: client, discoverer: discoverer}, nil
 }
+
+func discoveredGroups(d api.AutoscalerDiscovery) ([]StaticNodeGroup, error) {
+	groups := make([]StaticNodeGroup, 0, len(d.Groups))
+	for _, g := range d.Groups {
+		if g.MinNodes < 0 || g.MaxNodes < g.MinNodes || g.MaxNodes > math.MaxInt32 || g.CPU <= 0 || g.MemoryMiB <= 0 || g.Scheduling.Zone == "" || g.Scheduling.Region == "" || g.Scheduling.InstanceType == "" {
+			return nil, status.Error(codes.Internal, "invalid Crane group metadata")
+		}
+		group := StaticNodeGroup{ID: g.ID, ClusterID: g.ClusterID, TemplateRevision: g.TemplateRevision, Zone: g.Scheduling.Zone, Region: g.Scheduling.Region, Pool: g.Pool, MinNodes: int(g.MinNodes), MaxNodes: int(g.MaxNodes), InstanceType: g.Scheduling.InstanceType, Architecture: g.Scheduling.Architecture, CPU: g.CPU, MemoryMB: g.MemoryMiB, Labels: g.Scheduling.Labels}
+		for _, t := range g.Scheduling.Taints {
+			group.Taints = append(group.Taints, Taint{Key: t.Key, Value: t.Value, Effect: t.Effect})
+		}
+		for _, n := range g.Nodes {
+			state := "creating"
+			switch n.State {
+			case "READY", "CONVERGING", "REGISTERING", "UNHEALTHY":
+				state = "running"
+			case "DRAINING", "TERMINATING":
+				state = "deleting"
+			}
+			group.Nodes = append(group.Nodes, Node{HostID: n.HostID, ProviderID: n.ProviderID, State: state})
+		}
+		groups = append(groups, group)
+	}
+	return groups, nil
+}
+
+func (s *Server) refresh(ctx context.Context) error {
+	if s.discoverer == nil {
+		return nil
+	}
+	d, err := s.discoverer.Discover(ctx)
+	if err != nil {
+		return err
+	}
+	groups, err := discoveredGroups(d)
+	if err != nil {
+		return err
+	}
+	for _, g := range groups {
+		if g.ClusterID != s.clusterID {
+			return status.Error(codes.Internal, "foreign Crane group")
+		}
+	}
+	s.mu.Lock()
+	s.provider = NewStaticProvider(groups)
+	s.mu.Unlock()
+	return nil
+}
+
+func (s *Server) snapshot() *StaticProvider { s.mu.RLock(); defer s.mu.RUnlock(); return s.provider }
 
 func groupProto(g StaticNodeGroup) *pb.NodeGroup {
 	return &pb.NodeGroup{Id: g.ID, MinSize: int32(g.MinNodes), MaxSize: int32(g.MaxNodes), Debug: "crane/" + g.ID}
 }
 
 func (s *Server) group(id string) (StaticNodeGroup, error) {
-	for _, g := range s.provider.Groups {
+	for _, g := range s.snapshot().Groups {
 		if g.ID == id {
 			return g, nil
 		}
@@ -111,19 +181,23 @@ func (s *Server) group(id string) (StaticNodeGroup, error) {
 	return StaticNodeGroup{}, status.Error(codes.NotFound, "unknown node group")
 }
 
-func (s *Server) NodeGroups(context.Context, *pb.NodeGroupsRequest) (*pb.NodeGroupsResponse, error) {
+func (s *Server) NodeGroups(ctx context.Context, _ *pb.NodeGroupsRequest) (*pb.NodeGroupsResponse, error) {
+	if err := s.refresh(ctx); err != nil {
+		return nil, err
+	}
 	out := &pb.NodeGroupsResponse{}
-	for _, g := range s.provider.Groups {
+	for _, g := range s.snapshot().Groups {
 		out.NodeGroups = append(out.NodeGroups, groupProto(g))
 	}
 	return out, nil
 }
 
 func (s *Server) NodeGroupForNode(ctx context.Context, req *pb.NodeGroupForNodeRequest) (*pb.NodeGroupForNodeResponse, error) {
+	_ = s.refresh(ctx) // Retain known ownership during a transient API outage.
 	if req.GetNode().GetProviderID() == "" {
 		return nil, status.Error(codes.InvalidArgument, "node provider identity is required")
 	}
-	g, err := s.provider.NodeGroupForNode(ctx, req.Node.ProviderID)
+	g, err := s.snapshot().NodeGroupForNode(ctx, req.Node.ProviderID)
 	if err != nil {
 		return nil, err
 	}
@@ -169,6 +243,9 @@ func (s *Server) NodeGroupDecreaseTargetSize(ctx context.Context, req *pb.NodeGr
 }
 
 func (s *Server) changeTarget(ctx context.Context, id string, delta int64) error {
+	if err := s.refresh(ctx); err != nil {
+		return err
+	}
 	g, err := s.group(id)
 	if err != nil {
 		return err
@@ -265,10 +342,13 @@ func (s *Server) NodeGroupNodes(_ context.Context, req *pb.NodeGroupNodesRequest
 }
 
 func (s *Server) NodeGroupTemplateNodeInfo(ctx context.Context, req *pb.NodeGroupTemplateNodeInfoRequest) (*pb.NodeGroupTemplateNodeInfoResponse, error) {
+	if err := s.refresh(ctx); err != nil {
+		return nil, err
+	}
 	if _, err := s.group(req.GetId()); err != nil {
 		return nil, err
 	}
-	tpl, err := s.provider.Template(ctx, req.Id)
+	tpl, err := s.snapshot().Template(ctx, req.Id)
 	if err != nil {
 		return nil, status.Error(codes.NotFound, "unknown node group")
 	}
@@ -287,8 +367,11 @@ func (s *Server) NodeGroupTemplateNodeInfo(ctx context.Context, req *pb.NodeGrou
 	return &pb.NodeGroupTemplateNodeInfoResponse{NodeBytes: data}, nil
 }
 
-func (*Server) Refresh(context.Context, *pb.RefreshRequest) (*pb.RefreshResponse, error) {
-	return &pb.RefreshResponse{}, nil // Static inventory; targets are always read through.
+func (s *Server) Refresh(ctx context.Context, _ *pb.RefreshRequest) (*pb.RefreshResponse, error) {
+	if err := s.refresh(ctx); err != nil {
+		return nil, err
+	}
+	return &pb.RefreshResponse{}, nil
 }
 
 func (*Server) Cleanup(context.Context, *pb.CleanupRequest) (*pb.CleanupResponse, error) {

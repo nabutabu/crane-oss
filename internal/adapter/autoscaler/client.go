@@ -45,6 +45,20 @@ func (c *HTTPClient) Target(ctx context.Context, group string) (api.CapacityResu
 	return result, err
 }
 
+func (c *HTTPClient) Discover(ctx context.Context) (api.AutoscalerDiscovery, error) {
+	var out api.AutoscalerDiscovery
+	err := c.do(ctx, http.MethodGet, "/v1/autoscaler/discovery", nil, &out)
+	if err != nil {
+		return out, err
+	}
+	for _, g := range out.Groups {
+		if g.ClusterID != c.clusterID || g.ID == "" || g.TemplateRevision == "" {
+			return api.AutoscalerDiscovery{}, status.Error(codes.Internal, "invalid Crane discovery response")
+		}
+	}
+	return out, nil
+}
+
 func (c *HTTPClient) SetTarget(ctx context.Context, req api.CapacityRequest) (api.CapacityResult, error) {
 	var result api.CapacityResult
 	input := struct {
