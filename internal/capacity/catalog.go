@@ -347,7 +347,7 @@ func (s *Store) CreateRemoval(ctx context.Context, clusterID string, expectedRev
 // The final Ready transition requires a validated handoff supplied by the trusted
 // layer-zero executor. A host cannot call this boundary to declare readiness.
 func (s *Store) BootstrapPhase(ctx context.Context, op api.Operation, next api.ZoneBootstrapPhase, validated bool) error {
-	if op.Kind != "create_zone" {
+	if op.Kind != "create_zone" && op.Kind != "create_cluster" && op.Kind != "attach_zone" {
 		return errors.New("not a bootstrap operation")
 	}
 
@@ -370,19 +370,8 @@ func (s *Store) BootstrapPhase(ctx context.Context, op api.Operation, next api.Z
 		return err
 	}
 
-	sequence := map[api.ZoneBootstrapPhase]api.ZoneBootstrapPhase{
-		api.ZoneRequested:                api.ZoneDatabaseProvisioning,
-		api.ZoneDatabaseProvisioning:     api.ZoneDatabaseReady,
-		api.ZoneDatabaseReady:            api.ZoneSpireHostProvisioning,
-		api.ZoneSpireHostProvisioning:    api.ZoneSpireInstalling,
-		api.ZoneSpireInstalling:          api.ZoneSpireValidating,
-		api.ZoneSpireValidating:          api.ZoneControlPlaneInitializing,
-		api.ZoneControlPlaneInitializing: api.ZoneNetworkInstalling,
-		api.ZoneNetworkInstalling:        api.ZoneDominatorInstalling,
-		api.ZoneDominatorInstalling:      api.ZoneValidating,
-		api.ZoneValidating:               api.ZoneReady,
-	}
-	if next != api.ZoneFailed && sequence[phase] != next {
+	expected, ok := bootstrapNext(op.Kind, phase)
+	if next != api.ZoneFailed && (!ok || expected != next) {
 		return errors.New("invalid bootstrap phase transition")
 	}
 	if next == api.ZoneReady && !validated {
