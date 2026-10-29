@@ -30,6 +30,12 @@ func topology(cfg bootstrapConfig, infra Infrastructure) (api.FirstZoneInput, er
 		return in, fmt.Errorf("group naming conflicts with AWS placement")
 	}
 	in.Group.Naming.Region, in.Group.Naming.AZ = cfg.AWS.Region, az
+	if in.Group.Scheduling.InstanceType == "" {
+		in.Group.Scheduling = api.SchedulingTemplate{
+			InstanceType: cfg.Platform.InstanceType, Architecture: "amd64",
+			Region: cfg.AWS.Region, Zone: in.Zone.ProviderZoneID,
+		}
+	}
 	if err := in.Group.NormalizeID(); err != nil {
 		return in, err
 	}

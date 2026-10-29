@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS node_groups (
  template_revision text NOT NULL, lifecycle_state text NOT NULL DEFAULT 'active',
  vcpu bigint NOT NULL CHECK(vcpu > 0), memory_mib bigint NOT NULL CHECK(memory_mib > 0),
  launch_parameters jsonb NOT NULL,
+ scheduling jsonb NOT NULL DEFAULT '{}',
  CHECK(naming_provider ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$' AND development_stage ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'
  AND naming_region ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$' AND naming_az ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'
  AND naming_group ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'),
@@ -46,6 +47,8 @@ CREATE TABLE IF NOT EXISTS node_groups (
  FOREIGN KEY(zone_id,naming_provider,naming_region) REFERENCES zones(id,provider,region),
  UNIQUE(id, node_pool_id, zone_id)
 );
+-- Explicit crane-bootstrap schema initialization also upgrades older groups.
+ALTER TABLE node_groups ADD COLUMN IF NOT EXISTS scheduling jsonb NOT NULL DEFAULT '{}';
 CREATE TABLE IF NOT EXISTS capacity_requests (
  id text PRIMARY KEY, group_id text NOT NULL REFERENCES node_groups(id), request_id text NOT NULL,
  cluster_id text NOT NULL REFERENCES clusters(id), expected_revision bigint NOT NULL,

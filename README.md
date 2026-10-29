@@ -88,6 +88,8 @@ The crane-api service will start on port 43060 and begin monitoring hosts in the
 - `PATCH /v1/cluster-zones/{cluster_id}/{zone_id}` - admin-only operator-validated membership policy; requires both `lifecycle_state` (`requested`, `initializing`, `ready`, `failed`) and `access_state` (`pending`, `approved`, `revoked`)
 - `POST /v1/first-zone` - atomically seeds the first shared topology and membership; new groups start at target/revision 0 and retries preserve runtime state
 - `POST /v1/capacity` - capacity admission; the adapter token is bound to `CRANE_ADAPTER_CLUSTER_ID`, and `X-Crane-Cluster-ID` must match
+- `GET /v1/autoscaler/discovery` - adapter-authenticated groups, scheduling templates, and catalog inventory for that bound cluster
+- `PATCH /v1/node-groups/{id}/template` - admin-authenticated, revisioned scheduling and launch-template update
 - `GET /v1/node-groups/{id}/target` - authenticated target/revision read for adapter recovery
 - `POST /v1/node-removals` - authenticated atomic admission of explicit named-node removals; credits remain held until termination
 - `POST /v1/bootstrap` - creates a durable layer-zero bootstrap operation

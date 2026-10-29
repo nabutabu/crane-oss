@@ -64,18 +64,61 @@ type NodeGroupNaming struct {
 }
 
 type NodeGroupInput struct {
-	Naming           NodeGroupNaming `json:"naming"`
-	ID               string          `json:"id"`
-	ClusterID        string          `json:"cluster_id"`
-	NodePoolID       string          `json:"node_pool_id"`
-	ZoneID           string          `json:"zone_id"`
-	CapacityClass    string          `json:"capacity_class"`
-	ProviderZoneID   string          `json:"provider_zone_id"`
-	MinNodes         int64           `json:"min_nodes"`
-	MaxNodes         int64           `json:"max_nodes"`
-	TemplateRevision string          `json:"template_revision"`
-	PerNode          Resources       `json:"per_node"`
-	LaunchParameters json.RawMessage `json:"launch_parameters"`
+	Naming           NodeGroupNaming    `json:"naming"`
+	ID               string             `json:"id"`
+	ClusterID        string             `json:"cluster_id"`
+	NodePoolID       string             `json:"node_pool_id"`
+	ZoneID           string             `json:"zone_id"`
+	CapacityClass    string             `json:"capacity_class"`
+	ProviderZoneID   string             `json:"provider_zone_id"`
+	MinNodes         int64              `json:"min_nodes"`
+	MaxNodes         int64              `json:"max_nodes"`
+	TemplateRevision string             `json:"template_revision"`
+	PerNode          Resources          `json:"per_node"`
+	LaunchParameters json.RawMessage    `json:"launch_parameters"`
+	Scheduling       SchedulingTemplate `json:"scheduling"`
+}
+
+// SchedulingTemplate is operator supplied Kubernetes scheduling metadata.
+// It is independent of provider launch parameters and naming AZ values.
+type SchedulingTemplate struct {
+	InstanceType string            `json:"instance_type"`
+	Architecture string            `json:"architecture"`
+	Region       string            `json:"region"`
+	Zone         string            `json:"zone"`
+	Labels       map[string]string `json:"labels,omitempty"`
+	Taints       []SchedulingTaint `json:"taints,omitempty"`
+}
+
+type SchedulingTaint struct {
+	Key    string `json:"key"`
+	Value  string `json:"value"`
+	Effect string `json:"effect"`
+}
+
+type AutoscalerNode struct {
+	HostID     string `json:"host_id"`
+	ProviderID string `json:"provider_id"`
+	State      string `json:"state"`
+}
+
+type AutoscalerGroup struct {
+	ID               string             `json:"id"`
+	ClusterID        string             `json:"cluster_id"`
+	ZoneID           string             `json:"zone_id"`
+	Pool             string             `json:"pool"`
+	TemplateRevision string             `json:"template_revision"`
+	MinNodes         int64              `json:"min_nodes"`
+	MaxNodes         int64              `json:"max_nodes"`
+	CPU              int64              `json:"cpu"`
+	MemoryMiB        int64              `json:"memory_mib"`
+	LaunchReady      bool               `json:"launch_ready"`
+	Scheduling       SchedulingTemplate `json:"scheduling"`
+	Nodes            []AutoscalerNode   `json:"nodes"`
+}
+
+type AutoscalerDiscovery struct {
+	Groups []AutoscalerGroup `json:"groups"`
 }
 
 // FirstZoneInput is the complete layer-zero topology seeded by both the

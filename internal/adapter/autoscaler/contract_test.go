@@ -312,13 +312,18 @@ func TestRejectsInvalidStaticConfigAndDelta(t *testing.T) {
 		func(c *Config) { c.ClusterID = "" },
 		func(c *Config) { c.Groups[0].Labels = map[string]string{"topology.kubernetes.io/zone": "wrong"} },
 		func(c *Config) { c.Groups[0].Nodes = append(c.Groups[0].Nodes, c.Groups[0].Nodes[0]) },
-		func(c *Config) { c.Groups[1].ClusterID = c.ClusterID; c.Groups[1].Zone = "us-west-2b" },
 	} {
 		cfg := testConfig()
 		mutate(&cfg)
 		if _, err := NewServer(cfg, backend); err == nil {
 			t.Fatal("invalid static config accepted")
 		}
+	}
+	multi := testConfig()
+	multi.Groups[1].ClusterID = multi.ClusterID
+	multi.Groups[1].Zone = "us-west-2b"
+	if _, err := NewServer(multi, backend); err != nil {
+		t.Fatalf("multi-zone cluster rejected: %v", err)
 	}
 	client, _ := grpcClient(t, backend)
 	if _, err := client.NodeGroupIncreaseSize(context.Background(), &pb.NodeGroupIncreaseSizeRequest{Id: "group", Delta: -1}); status.Code(err) != codes.InvalidArgument {
