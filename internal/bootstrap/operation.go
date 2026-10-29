@@ -11,7 +11,7 @@ import (
 // durable cluster or zone operation. Each method must rediscover its inputs so
 // a new process can resume the operation after an interrupted remote success.
 type OperationSession interface {
-	EnsureInfrastructure(context.Context, api.Operation) error
+	EnsureInfrastructure(context.Context, api.Operation) (api.BootstrapStepResult,error)
 	InitializeControlPlane(context.Context, api.Operation) (api.BootstrapStepResult, error)
 	EnsureNetwork(context.Context, api.Operation) error
 	EnsureDominator(context.Context, api.Operation) error
@@ -28,7 +28,7 @@ func (e OperationExecutor) Step(ctx context.Context, op api.Operation, phase api
 	}
 	switch phase {
 	case api.ZoneInfrastructureProvisioning:
-		return api.BootstrapStepResult{}, e.Session.EnsureInfrastructure(ctx, op)
+		return e.Session.EnsureInfrastructure(ctx, op)
 	case api.ZoneControlPlaneInitializing:
 		if op.Kind != "create_cluster" {
 			return api.BootstrapStepResult{}, fmt.Errorf("control plane initialization requires create_cluster")

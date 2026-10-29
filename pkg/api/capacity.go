@@ -221,6 +221,9 @@ type BootstrapRequest struct {
 type BootstrapStepResult struct {
 	APIServerEndpoint string `json:"api_server_endpoint,omitempty"`
 	CACertHash        string `json:"ca_cert_hash,omitempty"`
+	ProviderHostID string `json:"provider_host_id,omitempty"`
+	HostPrivateIP string `json:"host_private_ip,omitempty"`
+	ImageID string `json:"image_id,omitempty"`
 }
 
 type NodeRemovalOperation struct {

@@ -9,9 +9,9 @@ import (
 
 type operationSessionFake struct{ calls []string }
 
-func (f *operationSessionFake) EnsureInfrastructure(context.Context, api.Operation) error {
+func (f *operationSessionFake) EnsureInfrastructure(context.Context, api.Operation) (api.BootstrapStepResult, error) {
 	f.calls = append(f.calls, "infrastructure")
-	return nil
+	return api.BootstrapStepResult{ProviderHostID: "host", HostPrivateIP: "10.80.0.10", ImageID: "image"}, nil
 }
 func (f *operationSessionFake) InitializeControlPlane(context.Context, api.Operation) (api.BootstrapStepResult, error) {
 	f.calls = append(f.calls, "control-plane")

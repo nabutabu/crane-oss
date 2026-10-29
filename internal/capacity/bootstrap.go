@@ -85,6 +85,8 @@ func (c *BootstrapController) RunOnce(ctx context.Context, zoneID, owner string)
 		if err := c.Store.SetClusterDiscovery(ctx, op, result); err != nil {
 			return err
 		}
+	} else if n == api.ZoneInfrastructureProvisioning {
+		if err := c.Store.RecordBootstrapHost(ctx,op,result); err != nil { return err }
 	} else if result.APIServerEndpoint != "" || result.CACertHash != "" {
 		return fmt.Errorf("unexpected cluster discovery from %s", n)
 	}
