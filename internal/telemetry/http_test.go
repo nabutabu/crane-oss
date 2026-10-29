@@ -49,7 +49,7 @@ func TestHTTPObservation(t *testing.T) {
 	inner.HandleFunc("GET /v1/panic", func(w http.ResponseWriter, r *http.Request) { panic("private-panic-value") })
 	mux := http.NewServeMux()
 	mux.Handle("/v1/", inner)
-	mux.Handle("/admin/", capacity.NewAPI(nil, "admin", "adapter", "cluster").Handler())
+	mux.Handle("/admin/", capacity.NewAPI(nil, "admin", map[string]string{"cluster": "adapter"}).Handler())
 	observed := p.HTTPHandler(mux, logger.Logger)
 	for _, tc := range []struct {
 		method, path, route string
@@ -91,7 +91,7 @@ func TestHTTPObservation(t *testing.T) {
 	}
 	// Authentication failures on the actual API routes are also observed.
 	auth := http.NewServeMux()
-	auth.Handle("/v1/", capacity.NewAPI(nil, "admin", "adapter", "cluster").Handler())
+	auth.Handle("/v1/", capacity.NewAPI(nil, "admin", map[string]string{"cluster": "adapter"}).Handler())
 	r := httptest.NewRecorder()
 	p.HTTPHandler(auth, logger.Logger).ServeHTTP(r, httptest.NewRequest("POST", "/v1/zones", nil))
 	if r.Code != http.StatusUnauthorized {

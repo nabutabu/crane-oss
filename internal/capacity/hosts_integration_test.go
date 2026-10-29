@@ -40,7 +40,7 @@ INSERT INTO host(id,zone,crane_zone,node_group_id,node_pool_id,state,provider,pr
 		r := httptest.NewRequest(http.MethodGet, "/v1/hosts?provider="+tc.provider+"&region="+tc.region, nil)
 		r.Header.Set("Authorization", "Bearer admin")
 		w := httptest.NewRecorder()
-		NewAPI(NewStore(db), "admin", "", "").Handler().ServeHTTP(w, r)
+		NewAPI(NewStore(db), "admin", nil).Handler().ServeHTTP(w, r)
 		var result api.HostList
 		if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &result) != nil {
 			t.Fatal(w.Code, w.Body.String())

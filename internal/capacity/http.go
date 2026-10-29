@@ -34,20 +34,10 @@ type API struct {
 	adapterPrincipals map[string]string
 }
 
-// NewAPI builds the platform API with the legacy single-cluster credential.
-// Unconfigured or incomplete adapter credentials fail closed.
-func NewAPI(store *Store, adminToken, adapterToken, adapterClusterID string) *API {
-	principals := map[string]string{}
-	if adapterToken != "" && adapterClusterID != "" {
-		principals[adapterClusterID] = adapterToken
-	}
-	return NewAPIWithAdapterPrincipals(store, adminToken, principals)
-}
-
-// NewAPIWithAdapterPrincipals binds each configured bearer credential to one
+// NewAPI binds each configured bearer credential to one
 // cluster. Cluster IDs in requests select the already authenticated principal;
 // they never grant access by themselves.
-func NewAPIWithAdapterPrincipals(store *Store, adminToken string, principals map[string]string) *API {
+func NewAPI(store *Store, adminToken string, principals map[string]string) *API {
 	configured := make(map[string]string, len(principals))
 	for clusterID, token := range principals {
 		configured[clusterID] = token

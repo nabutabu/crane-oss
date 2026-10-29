@@ -230,7 +230,7 @@ func TestTopologyHTTPAuthenticationValidationAndSafeErrors(t *testing.T) {
 		}
 		w := httptest.NewRecorder()
 		r := httptest.NewRequest(method, path, strings.NewReader(`{}`))
-		NewAPI(nil, "admin", "", "").Handler().ServeHTTP(w, r)
+		NewAPI(nil, "admin", nil).Handler().ServeHTTP(w, r)
 		if w.Code != 401 {
 			t.Fatalf("unguarded membership route %d", w.Code)
 		}
@@ -239,7 +239,7 @@ func TestTopologyHTTPAuthenticationValidationAndSafeErrors(t *testing.T) {
 		w := httptest.NewRecorder()
 		r := httptest.NewRequest("POST", "/v1/node-pools", strings.NewReader(body))
 		r.Header.Set("Authorization", "Bearer admin")
-		NewAPI(nil, "admin", "", "").Handler().ServeHTTP(w, r)
+		NewAPI(nil, "admin", nil).Handler().ServeHTTP(w, r)
 		if w.Code != 400 {
 			t.Fatal(w.Code)
 		}
@@ -258,7 +258,7 @@ func TestTopologyHTTPAuthenticationValidationAndSafeErrors(t *testing.T) {
 		w := httptest.NewRecorder()
 		r := httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body))
 		r.Header.Set("Authorization", "Bearer admin")
-		NewAPI(s, "admin", "", "").Handler().ServeHTTP(w, r)
+		NewAPI(s, "admin", nil).Handler().ServeHTTP(w, r)
 		if w.Code != tc.want {
 			t.Fatalf("%s: %d %s", tc.path, w.Code, w.Body.String())
 		}

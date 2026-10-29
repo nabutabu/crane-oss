@@ -231,14 +231,7 @@ func run() (runErr error) {
 	if err != nil {
 		return err
 	}
-	legacyToken, legacyCluster := intconfig.GetEnv("CRANE_ADAPTER_TOKEN", ""), intconfig.GetEnv("CRANE_ADAPTER_CLUSTER_ID", "")
-	if legacyToken != "" || legacyCluster != "" {
-		if len(principals) != 0 || legacyToken == "" || legacyCluster == "" {
-			return fmt.Errorf("configure either CRANE_ADAPTER_PRINCIPALS or both legacy adapter variables")
-		}
-		principals[legacyCluster] = legacyToken
-	}
-	capacityAPI := capacity.NewAPIWithAdapterPrincipals(capacity.NewStore(db), intconfig.GetEnv("CRANE_ADMIN_TOKEN", ""), principals)
+	capacityAPI := capacity.NewAPI(capacity.NewStore(db), intconfig.GetEnv("CRANE_ADMIN_TOKEN", ""), principals)
 	mux.Handle("/v1/", capacityAPI.Handler())
 
 	server := &http.Server{Addr: ":43060", Handler: telemetryProvider.HTTPHandler(mux, logger.Logger), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: api.OperationTimeout + time.Minute}

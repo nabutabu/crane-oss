@@ -18,7 +18,7 @@ func TestAdapterPreservesServerSpan(t *testing.T) {
 	id, _ := trace.TraceIDFromHex("11111111111111111111111111111111")
 	spanID, _ := trace.SpanIDFromHex("2222222222222222")
 	sc := trace.NewSpanContext(trace.SpanContextConfig{TraceID: id, SpanID: spanID})
-	api := NewAPI(nil, "admin", "adapter", "cluster")
+	api := NewAPI(nil, "admin", map[string]string{"cluster": "adapter"})
 	for _, active := range []bool{false, true} {
 		request := httptest.NewRequest("POST", "/v1/capacity", nil)
 		request.Header.Set("Authorization", "Bearer adapter")

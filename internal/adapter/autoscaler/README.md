@@ -20,7 +20,9 @@ go build -o /tmp/crane-autoscaler-adapter ./cmd/crane-autoscaler-adapter
   -crane-url http://127.0.0.1:43060
 ```
 
-Set `CRANE_ADAPTER_TOKEN` and `CRANE_ADAPTER_CLUSTER_ID` in both processes.
+Set `CRANE_ADAPTER_PRINCIPALS` in Crane API. Set `CRANE_ADAPTER_TOKEN` and
+`CRANE_ADAPTER_CLUSTER_ID` in each adapter process; their values must match
+that cluster's entry in the API principal registry.
 Provision the groups and scheduling templates through topology administration
 first. Groups without scheduling metadata cannot be used as autoscaler templates.
 An unset or mismatched cluster binding denies adapter requests. This deployment

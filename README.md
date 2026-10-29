@@ -157,9 +157,9 @@ The Activity Manager uses the following decision logic:
 | AWS_SECRET_ACCESS_KEY | - | AWS secret key |
 | AWS_REGION | us-west-2 | AWS region |
 | CRANE_ADMIN_TOKEN | - | Required bearer token for topology/bootstrap mutations |
-| CRANE_ADAPTER_PRINCIPALS | - | JSON object mapping each cluster ID to its adapter bearer credential |
-| CRANE_ADAPTER_TOKEN | - | Legacy single-cluster bearer token; requires `CRANE_ADAPTER_CLUSTER_ID` |
-| CRANE_ADAPTER_CLUSTER_ID | - | Cluster bound to the legacy single adapter token; use both legacy variables or `CRANE_ADAPTER_PRINCIPALS` |
+| CRANE_ADAPTER_PRINCIPALS | - | Crane API: JSON object mapping each cluster ID to its adapter bearer credential |
+| CRANE_ADAPTER_TOKEN | - | Adapter process: its cluster-specific bearer credential |
+| CRANE_ADAPTER_CLUSTER_ID | - | Adapter process: the cluster it serves; must match its entry in `CRANE_ADAPTER_PRINCIPALS` |
 
 The [Cluster Autoscaler external gRPC prototype](internal/adapter/autoscaler/README.md)
 provides a runnable adapter and the pinned CA v1.35.0 compatibility tests.
