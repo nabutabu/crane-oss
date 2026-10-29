@@ -3,6 +3,7 @@ package capacity
 import (
 	"context"
 	"encoding/json"
+	"sync"
 	"testing"
 	"time"
 
@@ -31,6 +32,26 @@ func TestPostgresAttachZoneAdmissionAndActivation(t *testing.T) {
 	replayed, err := s.CreateBootstrap(ctx, req)
 	if err != nil || replayed != id {
 		t.Fatalf("replay: %s %v", replayed, err)
+	}
+	var wg sync.WaitGroup
+	results := make(chan error, 4)
+	for range 4 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			again, replayErr := s.CreateBootstrap(ctx, req)
+			if replayErr == nil && again != id {
+				replayErr = ErrReplayMismatch
+			}
+			results <- replayErr
+		}()
+	}
+	wg.Wait()
+	close(results)
+	for replayErr := range results {
+		if replayErr != nil {
+			t.Fatal(replayErr)
+		}
 	}
 	op, err := s.Claim(ctx, zone.ID, "attach_zone", "operator", time.Minute)
 	if err != nil {

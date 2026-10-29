@@ -33,6 +33,11 @@ func (s *Store) CreateBootstrap(ctx context.Context, in api.BootstrapRequest) (s
 		return "", err
 	}
 	defer tx.Rollback()
+	// Serialize requests for the same cluster so retries and competing
+	// attachments cannot race the topology seed or active-operation check.
+	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 724163041))`, in.ClusterID); err != nil {
+		return "", err
+	}
 	var id, kind, clusterID, zoneID string
 	var previous []byte
 	err = tx.QueryRowContext(ctx, `SELECT o.id,o.kind,b.cluster_id,o.zone_id,o.parameters FROM zone_bootstrap_operations b JOIN operations o ON o.id=b.operation_id WHERE b.request_id=$1`, in.RequestID).Scan(&id, &kind, &clusterID, &zoneID, &previous)
@@ -47,6 +52,17 @@ func (s *Store) CreateBootstrap(ctx context.Context, in api.BootstrapRequest) (s
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return "", err
+	}
+	var active bool
+	err = tx.QueryRowContext(ctx, `SELECT EXISTS(
+	 SELECT 1 FROM zone_bootstrap_operations b JOIN operations o ON o.id=b.operation_id
+	 WHERE b.cluster_id=$1 AND b.phase NOT IN ('Ready','Failed')
+	   AND (o.kind='create_cluster' OR (o.kind='attach_zone' AND o.zone_id=$2)))`, in.ClusterID, in.ZoneID).Scan(&active)
+	if err != nil {
+		return "", err
+	}
+	if active {
+		return "", ErrConflict
 	}
 	if in.Kind == "create_cluster" {
 		var intent struct {
