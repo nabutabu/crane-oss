@@ -209,6 +209,16 @@ type ZoneBootstrapOperation struct {
 	Phase ZoneBootstrapPhase
 }
 
+// BootstrapRequest is immutable operator intent. Parameters must contain only
+// public configuration and opaque references, never join tokens or secrets.
+type BootstrapRequest struct {
+	Kind       string          `json:"kind"`
+	RequestID  string          `json:"request_id"`
+	ClusterID  string          `json:"cluster_id"`
+	ZoneID     string          `json:"zone_id"`
+	Parameters json.RawMessage `json:"parameters"`
+}
+
 type NodeRemovalOperation struct {
 	Operation
 	NodeName, ProviderID, Reason           string
