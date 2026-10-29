@@ -80,6 +80,13 @@ func TestPostgresBootstrapWorkerAdvancesAndRestarts(t *testing.T) {
 	if fake.target.ClusterID != "cluster" || fake.target.APIServerEndpoint != "https://10.80.0.10:6443" {
 		t.Fatalf("untrusted cluster target: %s %s", fake.target.ClusterID, fake.target.APIServerEndpoint)
 	}
+	var endpoint, identity string
+	if err := db.QueryRowContext(ctx, `SELECT endpoint,identity FROM zone_dominators WHERE zone_id=$1`, zone.ID).Scan(&endpoint, &identity); err != nil {
+		t.Fatal(err)
+	}
+	if endpoint != "https://10.80.1.20:44000" || identity != "spiffe://crane.internal/dominator/worker-zone" {
+		t.Fatalf("unexpected Dominator route %s %s", endpoint, identity)
+	}
 	if _, err := s.NextBootstrapZone(ctx); err == nil {
 		t.Fatal("completed operation remains runnable")
 	}
