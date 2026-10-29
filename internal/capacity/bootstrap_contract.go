@@ -22,7 +22,7 @@ type BootstrapStatus struct {
 }
 
 // CreateBootstrap stores an operator's immutable, secret-free intent. The
-// topology must already exist as pending records before work is submitted.
+// topology is seeded as pending before the operation becomes visible.
 func (s *Store) CreateBootstrap(ctx context.Context, in api.BootstrapRequest) (string, error) {
 	if (in.Kind != "create_cluster" && in.Kind != "attach_zone") || in.RequestID == "" ||
 		in.ClusterID == "" || in.ZoneID == "" || !safeBootstrapParameters(in.Parameters) {
@@ -48,8 +48,32 @@ func (s *Store) CreateBootstrap(ctx context.Context, in api.BootstrapRequest) (s
 	if !errors.Is(err, sql.ErrNoRows) {
 		return "", err
 	}
+	if in.Kind == "create_cluster" {
+		var intent struct {
+			FirstZone api.FirstZoneInput `json:"first_zone"`
+		}
+		if json.Unmarshal(in.Parameters, &intent) != nil || intent.FirstZone.Cluster.ID != in.ClusterID || intent.FirstZone.Zone.ID != in.ZoneID {
+			return "", ErrInvalid
+		}
+		if err := seedFirstZoneTx(ctx, tx, intent.FirstZone, false); err != nil {
+			return "", err
+		}
+	} else {
+		var intent struct {
+			Zone       api.ZoneInput        `json:"zone"`
+			Membership api.ClusterZoneInput `json:"membership"`
+			Pool       api.NodePoolInput    `json:"pool"`
+			Group      api.NodeGroupInput   `json:"group"`
+		}
+		if json.Unmarshal(in.Parameters, &intent) != nil || intent.Zone.ID != in.ZoneID || intent.Membership.ClusterID != in.ClusterID || intent.Membership.ZoneID != in.ZoneID || intent.Group.ClusterID != in.ClusterID || intent.Group.ZoneID != in.ZoneID || intent.Group.NodePoolID != intent.Pool.ID {
+			return "", ErrInvalid
+		}
+		if err := seedAttachment(ctx, tx, intent.Zone, intent.Membership, intent.Pool, intent.Group); err != nil {
+			return "", err
+		}
+	}
 	var valid bool
-	err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM clusters c JOIN zones z ON z.id=$2 WHERE c.id=$1 AND c.lifecycle_state='requested' AND z.lifecycle_state='requested')`, in.ClusterID, in.ZoneID).Scan(&valid)
+	err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM clusters c JOIN zones z ON z.id=$2 WHERE c.id=$1 AND c.lifecycle_state='initializing' AND z.lifecycle_state='initializing')`, in.ClusterID, in.ZoneID).Scan(&valid)
 	if err != nil {
 		return "", err
 	}
@@ -78,6 +102,30 @@ func (s *Store) CreateBootstrap(ctx context.Context, in api.BootstrapRequest) (s
 		return "", err
 	}
 	return id, nil
+}
+
+func seedAttachment(ctx context.Context, tx *sql.Tx, zone api.ZoneInput, membership api.ClusterZoneInput, pool api.NodePoolInput, group api.NodeGroupInput) error {
+	var ready bool
+	if err := tx.QueryRowContext(ctx, `SELECT lifecycle_state='ready' FROM clusters WHERE id=$1`, membership.ClusterID).Scan(&ready); err != nil {
+		return err
+	}
+	if !ready {
+		return ErrInvalid
+	}
+	if err := createZone(ctx, tx, zone, "initializing"); err != nil {
+		return err
+	}
+	membership.LifecycleState, membership.AccessState = "initializing", "pending"
+	if err := createMembership(ctx, tx, membership, true); err != nil {
+		return err
+	}
+	if err := createPool(ctx, tx, pool); err != nil {
+		return err
+	}
+	if err := createGroup(ctx, tx, group); err != nil {
+		return err
+	}
+	return nil
 }
 
 func safeBootstrapParameters(raw json.RawMessage) bool {
