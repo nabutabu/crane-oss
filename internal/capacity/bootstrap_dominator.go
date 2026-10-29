@@ -17,7 +17,11 @@ func (s *Store) SetDominatorRoute(ctx context.Context, op api.Operation, result 
 		return ErrInvalid
 	}
 	host := u.Hostname()
-	if ip := net.ParseIP(host); ip == nil || !ip.IsPrivate() {
+	if ip := net.ParseIP(host); ip != nil {
+		if !ip.IsPrivate() {
+			return ErrInvalid
+		}
+	} else if !strings.HasSuffix(host, ".svc.cluster.local") || !strings.HasPrefix(host, "dominator-") {
 		return ErrInvalid
 	}
 	identity, err := url.Parse(result.DominatorIdentity)

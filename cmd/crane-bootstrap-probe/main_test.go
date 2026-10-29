@@ -73,12 +73,12 @@ func TestProbeSubdRolesAndFailures(t *testing.T) {
 }
 
 func TestDominatorProbeAllowsOnlyPrivateEndpoint(t *testing.T) {
-	for _, raw := range []string{"https://127.0.0.1:44000", "https://10.80.1.20:44000"} {
+	for _, raw := range []string{"https://127.0.0.1:44000", "https://10.80.1.20:44000", "https://dominator-zone-b.crane-system.svc.cluster.local:44000"} {
 		if _, err := validateDominatorURL(raw); err != nil {
 			t.Fatalf("%s: %v", raw, err)
 		}
 	}
-	for _, raw := range []string{"http://10.80.1.20:44000", "https://example.com:44000", "https://8.8.8.8:44000", "https://10.80.1.20:44000/other", "https://10.80.1.20:44001"} {
+	for _, raw := range []string{"http://10.80.1.20:44000", "https://example.com:44000", "https://public.crane-system.svc.cluster.local:44000", "https://8.8.8.8:44000", "https://10.80.1.20:44000/other", "https://10.80.1.20:44001"} {
 		if _, err := validateDominatorURL(raw); err == nil {
 			t.Fatalf("accepted %s", raw)
 		}

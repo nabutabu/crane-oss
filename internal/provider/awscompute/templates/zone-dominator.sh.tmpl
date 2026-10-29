@@ -47,7 +47,6 @@ spec:
       serviceAccountName: dominator-[[ .ZoneID ]]
       automountServiceAccountToken: false
       nodeName: "$NODE_NAME"
-      hostNetwork: true
       containers:
       - name: dominator
         image: [[ .Config.Platform.DominatorImage ]]
@@ -63,5 +62,14 @@ spec:
         ports: [{containerPort: 44000, name: mtls}]
         volumeMounts: [{name: spire, mountPath: /run/spire/sockets}]
       volumes: [{name: spire, hostPath: {path: /run/spire/sockets}}]
+YAML
+kubectl -n crane-system apply -f - <<YAML
+apiVersion: v1
+kind: Service
+metadata:
+  name: dominator-[[ .ZoneID ]]
+spec:
+  selector: {app: dominator-[[ .ZoneID ]]}
+  ports: [{name: mtls, port: 44000, targetPort: mtls}]
 YAML
 kubectl -n crane-system rollout status deployment/dominator-[[ .ZoneID ]] --timeout=600s

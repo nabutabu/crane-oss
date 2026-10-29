@@ -70,7 +70,8 @@ func TestZoneDominatorScriptUsesZoneIdentityAndRuntimeSecret(t *testing.T) {
 		"k8s:sa:dominator-zone-b",
 		"arn:aws:secretsmanager:us-west-2:123456789012:secret:runtime",
 		"DB_HOST",
-		"hostNetwork: true",
+		"name: dominator-zone-b",
+		"port: 44000",
 	} {
 		if !strings.Contains(script, required) {
 			t.Fatalf("missing %s", required)

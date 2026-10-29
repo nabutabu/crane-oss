@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/nabutabu/crane-oss/pkg/api"
@@ -99,7 +100,11 @@ func validateDominatorURL(raw string) (string, error) {
 		return "", fmt.Errorf("Dominator URL must be a private HTTPS address on port 44000")
 	}
 	ip := net.ParseIP(u.Hostname())
-	if ip == nil || (!ip.IsPrivate() && !ip.IsLoopback()) {
+	if ip == nil {
+		if !strings.HasSuffix(u.Hostname(), ".svc.cluster.local") || !strings.HasPrefix(u.Hostname(), "dominator-") {
+			return "", fmt.Errorf("Dominator URL must use a private IP address or in-cluster service")
+		}
+	} else if !ip.IsPrivate() && !ip.IsLoopback() {
 		return "", fmt.Errorf("Dominator URL must use a private IP address")
 	}
 	return u.String(), nil

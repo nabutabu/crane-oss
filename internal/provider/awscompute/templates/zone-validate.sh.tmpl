@@ -5,4 +5,4 @@ export KUBECONFIG=/etc/kubernetes/admin.conf
 kubectl -n crane-system rollout status deployment/dominator-[[ .ZoneID ]] --timeout=600s
 kubectl get --raw=/readyz >/dev/null
 SPIFFE_ENDPOINT_SOCKET=unix:///run/spire/sockets/agent.sock SPIFFE_TRUST_DOMAIN="[[ .TrustDomain ]]" \
-  /opt/crane/bin/crane-bootstrap-probe -zone-id "[[ .ZoneID ]]" -dominator-url "https://[[ .Host.PrivateIP ]]:44000"
+  /opt/crane/bin/crane-bootstrap-probe -zone-id "[[ .ZoneID ]]" -dominator-url "https://dominator-[[ .ZoneID ]].crane-system.svc.cluster.local:44000"

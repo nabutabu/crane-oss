@@ -77,7 +77,7 @@ fi
 	if err = runScript(ctx, s.client, bootstrap.NewReporter(io.Discard, false), control.ID, "dominator-"+zone.ID, script); err != nil {
 		return api.BootstrapStepResult{}, err
 	}
-	return api.BootstrapStepResult{DominatorEndpoint: "https://" + control.PrivateIP + ":44000", DominatorIdentity: "spiffe://" + s.cfg.SPIRE.TrustDomain + "/dominator/" + zone.ID}, nil
+	return api.BootstrapStepResult{DominatorEndpoint: "https://dominator-" + zone.ID + ".crane-system.svc.cluster.local:44000", DominatorIdentity: "spiffe://" + s.cfg.SPIRE.TrustDomain + "/dominator/" + zone.ID}, nil
 }
 
 func (s *operationSession) ensureSubd(ctx context.Context, spire, agent host, zoneID string, infra Infrastructure) error {

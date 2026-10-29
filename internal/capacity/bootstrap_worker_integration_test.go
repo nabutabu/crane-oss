@@ -22,7 +22,7 @@ func (f *bootstrapWorkerFake) Step(_ context.Context, op api.Operation, phase ap
 	case api.ZoneInfrastructureProvisioning:
 		return api.BootstrapStepResult{ProviderHostID: "i-0123456789abcdef0", HostPrivateIP: "10.80.1.20", ImageID: "ami-pinned"}, nil
 	case api.ZoneDominatorInstalling:
-		return api.BootstrapStepResult{DominatorEndpoint: "https://10.80.1.20:44000", DominatorIdentity: "spiffe://crane.internal/dominator/worker-zone"}, nil
+		return api.BootstrapStepResult{DominatorEndpoint: "https://dominator-worker-zone.crane-system.svc.cluster.local:44000", DominatorIdentity: "spiffe://crane.internal/dominator/worker-zone"}, nil
 	default:
 		return api.BootstrapStepResult{}, nil
 	}
@@ -84,7 +84,7 @@ func TestPostgresBootstrapWorkerAdvancesAndRestarts(t *testing.T) {
 	if err := db.QueryRowContext(ctx, `SELECT endpoint,identity FROM zone_dominators WHERE zone_id=$1`, zone.ID).Scan(&endpoint, &identity); err != nil {
 		t.Fatal(err)
 	}
-	if endpoint != "https://10.80.1.20:44000" || identity != "spiffe://crane.internal/dominator/worker-zone" {
+	if endpoint != "https://dominator-worker-zone.crane-system.svc.cluster.local:44000" || identity != "spiffe://crane.internal/dominator/worker-zone" {
 		t.Fatalf("unexpected Dominator route %s %s", endpoint, identity)
 	}
 	if _, err := s.NextBootstrapZone(ctx); err == nil {
