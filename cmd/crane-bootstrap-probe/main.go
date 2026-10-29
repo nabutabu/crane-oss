@@ -9,7 +9,9 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"time"
 
@@ -30,8 +32,13 @@ func run() error {
 	endpoint := flag.String("subd-url", "", "private Subd endpoint; empty checks Dominator")
 	identity := flag.String("subd-id", "", "expected Subd SPIFFE identity")
 	zoneID := flag.String("zone-id", "", "zone owning the Dominator")
+	dominatorURL := flag.String("dominator-url", "https://127.0.0.1:44000", "private Dominator endpoint")
 	write := flag.Bool("write", false, "verify writer authorization without applying expected state")
 	flag.Parse()
+	privateDominatorURL, err := validateDominatorURL(*dominatorURL)
+	if err != nil {
+		return err
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	source, err := workloadapi.NewX509Source(ctx)
@@ -69,7 +76,7 @@ func run() error {
 	var conf *tls.Config = tlsconfig.MTLSClientConfig(source, source, tlsconfig.AuthorizeID(expected))
 	client := &http.Client{Transport: &http.Transport{TLSClientConfig: conf}, Timeout: 10 * time.Second}
 	for _, path := range []string{"/v1/health", "/v1/db/health"} {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://127.0.0.1:44000"+path, nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, privateDominatorURL+path, nil)
 		if err != nil {
 			return err
 		}
@@ -84,6 +91,18 @@ func run() error {
 	}
 	fmt.Println("SPIRE workload attestation and Dominator mTLS/database health validated")
 	return nil
+}
+
+func validateDominatorURL(raw string) (string, error) {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "https" || u.Port() != "44000" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
+		return "", fmt.Errorf("Dominator URL must be a private HTTPS address on port 44000")
+	}
+	ip := net.ParseIP(u.Hostname())
+	if ip == nil || (!ip.IsPrivate() && !ip.IsLoopback()) {
+		return "", fmt.Errorf("Dominator URL must use a private IP address")
+	}
+	return u.String(), nil
 }
 
 func probeSubd(ctx context.Context, client *http.Client, endpoint, identity string, write bool) error {
