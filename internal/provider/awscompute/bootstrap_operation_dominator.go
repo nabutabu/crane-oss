@@ -90,4 +90,3 @@ func (s *operationSession) Validate(ctx context.Context, op api.Operation) (bool
 	err = runScript(ctx, s.client, bootstrap.NewReporter(io.Discard, false), control.ID, "validate-"+zone.ID, probe)
 	return err == nil, err
 }
-
