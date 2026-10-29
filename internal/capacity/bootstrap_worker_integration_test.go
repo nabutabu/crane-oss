@@ -3,6 +3,7 @@ package capacity
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -16,6 +17,23 @@ func (f *bootstrapWorkerFake) Step(_ context.Context, _ api.Operation, phase api
 	return nil
 }
 func (f *bootstrapWorkerFake) Validated(context.Context, api.Operation) (bool, error) {
+	return true, nil
+}
+
+type failingBootstrapExecutor struct {
+	calls  int
+	tokens []string
+}
+
+func (f *failingBootstrapExecutor) Step(_ context.Context, op api.Operation, _ api.ZoneBootstrapPhase) error {
+	f.calls++
+	f.tokens = append(f.tokens, op.ProviderToken)
+	if f.calls == 1 {
+		return errors.New("transient provider failure")
+	}
+	return nil
+}
+func (f *failingBootstrapExecutor) Validated(context.Context, api.Operation) (bool, error) {
 	return true, nil
 }
 
@@ -47,5 +65,41 @@ func TestPostgresBootstrapWorkerAdvancesAndRestarts(t *testing.T) {
 	}
 	if _, err := s.NextBootstrapZone(ctx); err == nil {
 		t.Fatal("completed operation remains runnable")
+	}
+}
+
+func TestPostgresBootstrapWorkerRetriesFailedStep(t *testing.T) {
+	db := database(t)
+	ctx := context.Background()
+	_, err := db.ExecContext(ctx, `INSERT INTO operations(id,kind,zone_id,provider_token,parameters) VALUES('retry-op','attach_zone','zone','stable-token','{}');
+ INSERT INTO zone_bootstrap_operations(operation_id,zone_id,cluster_id,request_id) VALUES('retry-op','zone','cluster','retry-request')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := &failingBootstrapExecutor{}
+	controller := BootstrapController{Store: NewStore(db), Executor: fake, Lease: 25 * time.Millisecond}
+	if err := controller.RunOnce(ctx, "zone", "first-worker"); err == nil {
+		t.Fatal("expected transient failure")
+	}
+	var phase string
+	if err := db.QueryRowContext(ctx, `SELECT phase FROM zone_bootstrap_operations WHERE operation_id='retry-op'`).Scan(&phase); err != nil {
+		t.Fatal(err)
+	}
+	if phase != "Requested" {
+		t.Fatalf("failure advanced phase to %s", phase)
+	}
+	time.Sleep(40 * time.Millisecond)
+	if err := controller.RunOnce(ctx, "zone", "second-worker"); err != nil {
+		t.Fatal(err)
+	}
+	if fake.calls != 2 || fake.tokens[0] != fake.tokens[1] {
+		t.Fatalf("retry calls=%d tokens=%v", fake.calls, fake.tokens)
+	}
+	var fence int64
+	if err := db.QueryRowContext(ctx, `SELECT fence FROM operations WHERE id='retry-op'`).Scan(&fence); err != nil {
+		t.Fatal(err)
+	}
+	if fence != 2 {
+		t.Fatalf("retry fence=%d", fence)
 	}
 }
