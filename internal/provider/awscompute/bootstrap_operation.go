@@ -98,6 +98,14 @@ func (s *operationSession) EnsureInfrastructure(ctx context.Context, op api.Oper
 	if err != nil {
 		return api.BootstrapStepResult{}, err
 	}
+	infra, err = ensureSecrets(ctx, s.client, s.cfg, infra)
+	if err != nil {
+		return api.BootstrapStepResult{}, err
+	}
+	infra, err = ensureRDS(ctx, s.client, s.cfg, infra)
+	if err != nil {
+		return api.BootstrapStepResult{}, err
+	}
 	var profile struct {
 		InstanceProfile struct {
 			Tags  []tag
@@ -200,9 +208,6 @@ func (s *operationSession) InitializeControlPlane(ctx context.Context, op api.Op
 		return api.BootstrapStepResult{}, fmt.Errorf("control plane did not return public discovery")
 	}
 	return result, nil
-}
-func (s *operationSession) EnsureDominator(context.Context, api.Operation) error {
-	return fmt.Errorf("AWS Dominator operation is not configured")
 }
 func (s *operationSession) Validate(context.Context, api.Operation) (bool, error) {
 	return false, fmt.Errorf("AWS zone validation is not configured")

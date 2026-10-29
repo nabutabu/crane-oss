@@ -11,10 +11,10 @@ import (
 // durable cluster or zone operation. Each method must rediscover its inputs so
 // a new process can resume the operation after an interrupted remote success.
 type OperationSession interface {
-	EnsureInfrastructure(context.Context, api.Operation) (api.BootstrapStepResult,error)
+	EnsureInfrastructure(context.Context, api.Operation) (api.BootstrapStepResult, error)
 	InitializeControlPlane(context.Context, api.Operation) (api.BootstrapStepResult, error)
 	EnsureNetwork(context.Context, api.Operation) error
-	EnsureDominator(context.Context, api.Operation) error
+	EnsureDominator(context.Context, api.Operation) (api.BootstrapStepResult, error)
 	Validate(context.Context, api.Operation) (bool, error)
 }
 
@@ -37,7 +37,7 @@ func (e OperationExecutor) Step(ctx context.Context, op api.Operation, phase api
 	case api.ZoneNetworkInstalling:
 		return api.BootstrapStepResult{}, e.Session.EnsureNetwork(ctx, op)
 	case api.ZoneDominatorInstalling:
-		return api.BootstrapStepResult{}, e.Session.EnsureDominator(ctx, op)
+		return e.Session.EnsureDominator(ctx, op)
 	case api.ZoneValidating:
 		return api.BootstrapStepResult{}, nil
 	default:

@@ -53,6 +53,31 @@ func TestAdditionalClusterControlPlaneScript(t *testing.T) {
 	}
 }
 
+func TestZoneDominatorScriptUsesZoneIdentityAndRuntimeSecret(t *testing.T) {
+	script, err := renderTemplate("zone-dominator.sh.tmpl", scriptData{
+		Config:      bootstrapConfig{RDS: RDSConfig{Port: 5432}, Platform: PlatformConfig{DominatorImage: "ghcr.io/nabutabu/dominator:1.2.3"}},
+		Infra:       Infrastructure{RuntimeSecretARN: "arn:aws:secretsmanager:us-west-2:123456789012:secret:runtime", DBEndpoint: "db.internal"},
+		Region:      "us-west-2",
+		TrustDomain: "crane.internal",
+		ZoneID:      "zone-b",
+		Host:        bootstrapAgentHost{PrivateIP: "10.80.1.20"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{
+		"dominator-zone-b",
+		"k8s:sa:dominator-zone-b",
+		"arn:aws:secretsmanager:us-west-2:123456789012:secret:runtime",
+		"DB_HOST",
+		"hostNetwork: true",
+	} {
+		if !strings.Contains(script, required) {
+			t.Fatalf("missing %s", required)
+		}
+	}
+}
+
 func TestInitializeControlPlaneReturnsPublicDiscovery(t *testing.T) {
 	s := &operationSession{cfg: bootstrapConfig{Name: "deployment", AWS: AWSConfig{Region: "us-west-2", AccountID: "account"}, Platform: PlatformConfig{AMIID: "ami-pinned", InstanceType: "t3.medium", KubernetesVersion: "v1.35.0", PodCIDR: "10.244.0.0/16"}}}
 	s.client = &fakeAWS{call: func(service, operation string, input any) (any, error) {
