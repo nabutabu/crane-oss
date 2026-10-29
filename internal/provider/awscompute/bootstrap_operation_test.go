@@ -124,7 +124,7 @@ func TestOperationDoesNotCreateAnotherDeploymentVPC(t *testing.T) {
 	s.client = client
 	zone := api.ZoneInput{ID: "zone-b", Provider: "aws", AccountID: "account", Region: "us-west-2", ProviderZoneID: "us-west-2b"}
 	parameters, _ := json.Marshal(map[string]any{"zone": zone, "membership": api.ClusterZoneInput{ClusterID: "cluster", ZoneID: zone.ID}})
-	if _,err := s.EnsureInfrastructure(context.Background(), api.Operation{Kind: "attach_zone", ZoneID: zone.ID, Parameters: parameters}); err == nil {
+	if _, err := s.EnsureInfrastructure(context.Background(), api.Operation{Kind: "attach_zone", ZoneID: zone.ID, Parameters: parameters}); err == nil {
 		t.Fatal("missing deployment VPC accepted")
 	}
 	if len(client.calls) != 2 {
