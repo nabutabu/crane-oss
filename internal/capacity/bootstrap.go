@@ -75,7 +75,10 @@ func (c *BootstrapController) RunOnce(ctx context.Context, zoneID, owner string)
 	}); err != nil {
 		return err
 	}
-	return c.Store.BootstrapPhase(ctx, op, n, false)
+	if err := c.Store.BootstrapPhase(ctx, op, n, false); err != nil {
+		return err
+	}
+	return c.Store.ReleaseBootstrapLease(ctx, op)
 }
 
 // withLease keeps long remote steps fenced. A lost lease cancels the step;
