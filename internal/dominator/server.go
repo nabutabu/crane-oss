@@ -54,6 +54,10 @@ func (s *Server) StartContext(ctx context.Context, source *workloadapi.X509Sourc
 	if zone == "" {
 		return errors.New("CRANE_ZONE_ID is required")
 	}
+	expectedOwnID, err := api.DominatorID(domain, zone)
+	if err != nil {
+		return err
+	}
 	apiID, err := spiffeid.FromString("spiffe://" + domain + "/crane-api")
 	if err != nil {
 		return errors.New("invalid Crane API identity")
@@ -61,6 +65,9 @@ func (s *Server) StartContext(ctx context.Context, source *workloadapi.X509Sourc
 	own, err := source.GetX509SVID()
 	if err != nil {
 		return errors.New("Dominator workload identity unavailable")
+	}
+	if own.ID != expectedOwnID {
+		return errors.New("Dominator workload identity does not match CRANE_ZONE_ID")
 	}
 	controller := hostoperations.Controller{Store: hostoperations.Store{DB: s.db}, Caller: hostrpc.Client{Source: source}, ZoneID: zone, TrustDomain: domain, OwnIdentity: own.ID.String()}
 	mux.Handle("PUT "+hostoperations.InternalPath, controller.Handler(apiID.String()))

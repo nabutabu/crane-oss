@@ -5,7 +5,7 @@ Status: Accepted
 ## Decision
 
 Keep AWS-IID node attestation for the host SPIRE agent. Bind the existing
-`/crane-api` and `/dominator` identities to `k8s:ns:crane-system` and the respective
+`/crane-api` and zone-scoped `/dominator/<zone-id>` identities to `k8s:ns:crane-system` and the respective
 `k8s:sa:crane-api` or `k8s:sa:dominator` selector. Both selectors are required under
 the exact platform host's AWS-IID parent. Unix UIDs remain process hardening,
 without authorizing either Kubernetes workload identity. Registration retries

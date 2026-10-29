@@ -49,14 +49,14 @@ step "validating SPIFFE workload attestation and Dominator mTLS"
 setpriv --reuid=10003 --regid=10003 --clear-groups env \
   SPIFFE_ENDPOINT_SOCKET=unix:///run/spire/sockets/agent.sock \
   SPIFFE_TRUST_DOMAIN="$TRUST_DOMAIN" \
-  "$CRANE_DIR/bin/crane-bootstrap-probe"
+  "$CRANE_DIR/bin/crane-bootstrap-probe" -zone-id '[[ .ZoneID ]]'
 
 # ---- Both Subd listeners: exact host identities, update and read roles -----
 [[ range .Hosts ]]
 setpriv --reuid=10002 --regid=10002 --clear-groups env \
   SPIFFE_ENDPOINT_SOCKET=unix:///run/spire/sockets/agent.sock SPIFFE_TRUST_DOMAIN="$TRUST_DOMAIN" \
   "$CRANE_DIR/bin/crane-bootstrap-probe" -subd-url 'https://[[ .PrivateIP ]]:44001' \
-  -subd-id 'spiffe://[[ $.TrustDomain ]]/subd/[[ .ID ]]' -write
+  -subd-id 'spiffe://[[ $.TrustDomain ]]/subd/[[ .ID ]]' -zone-id '[[ $.ZoneID ]]' -write
 setpriv --reuid=10003 --regid=10003 --clear-groups env \
   SPIFFE_ENDPOINT_SOCKET=unix:///run/spire/sockets/agent.sock SPIFFE_TRUST_DOMAIN="$TRUST_DOMAIN" \
   "$CRANE_DIR/bin/crane-bootstrap-probe" -subd-url 'https://[[ .PrivateIP ]]:44001' \

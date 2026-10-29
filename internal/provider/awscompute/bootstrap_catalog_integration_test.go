@@ -73,7 +73,7 @@ func TestBootstrapCatalogSeedRerunAndConflict(t *testing.T) {
 		t.Fatal("seed did not converge", count, err)
 	}
 	var endpoint, identity string
-	if err := db.QueryRow(`SELECT endpoint,identity FROM zone_dominators WHERE zone_id='zone'`).Scan(&endpoint, &identity); err != nil || endpoint != "https://"+testAgentHosts()[1].PrivateIP+":44000" || identity != "spiffe://crane.internal/dominator" {
+	if err := db.QueryRow(`SELECT endpoint,identity FROM zone_dominators WHERE zone_id='zone'`).Scan(&endpoint, &identity); err != nil || endpoint != "https://"+testAgentHosts()[1].PrivateIP+":44000" || identity != "spiffe://crane.internal/dominator/crane-platform-zone" {
 		t.Fatal("invalid seeded Dominator route", err)
 	}
 	if _, err := db.Exec(`UPDATE host SET providerid='conflicting' WHERE role='spire'`); err != nil {

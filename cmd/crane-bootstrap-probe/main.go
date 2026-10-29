@@ -29,6 +29,7 @@ func main() {
 func run() error {
 	endpoint := flag.String("subd-url", "", "private Subd endpoint; empty checks Dominator")
 	identity := flag.String("subd-id", "", "expected Subd SPIFFE identity")
+	zoneID := flag.String("zone-id", "", "zone owning the Dominator")
 	write := flag.Bool("write", false, "verify writer authorization without applying expected state")
 	flag.Parse()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -42,7 +43,7 @@ func run() error {
 	if domain == "" {
 		return fmt.Errorf("SPIFFE_TRUST_DOMAIN is required")
 	}
-	expected, err := spiffeid.FromString("spiffe://" + domain + "/dominator")
+	expected, err := api.DominatorID(domain, *zoneID)
 	if err != nil {
 		return err
 	}
@@ -52,7 +53,7 @@ func run() error {
 	}
 	ownID := "spiffe://" + domain + "/subd"
 	if *endpoint != "" && *write {
-		ownID = "spiffe://" + domain + "/dominator"
+		ownID = expected.String()
 	}
 	if own.ID.String() != ownID {
 		return fmt.Errorf("unexpected probe SPIFFE identity")

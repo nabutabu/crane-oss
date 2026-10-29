@@ -20,7 +20,7 @@ Use exact SPIFFE identities in both directions. Host SVIDs have the form
 `spiffe://<domain>/subd/<opaque-provider-host-id>`. AWS bootstrap binds each
 host to its AWS-IID parent and `systemd:id:subd.service`. Keep the existing
 platform-only probe identity `/subd` distinct; it can read but cannot update.
-The `/dominator` identity can read and write. No token or request HostID is
+The zone-scoped `/dominator/<zone-id>` identity can read and write. No token or request HostID is
 authoritative. Shared agent code interprets no AWS-specific identity format.
 
 Updates are serialized and persisted before application. Increasing revisions

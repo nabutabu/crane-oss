@@ -23,7 +23,7 @@ import (
 	"github.com/nabutabu/crane-oss/pkg/api"
 )
 
-const ownID = "spiffe://test.internal/dominator"
+const ownID = "spiffe://test.internal/dominator/zone"
 const apiID = "spiffe://test.internal/crane-api"
 const hostID = "deployment/bootstrap/platform"
 
@@ -61,7 +61,7 @@ func operationDatabase(t *testing.T) *sql.DB {
 	}
 	_, err = db.Exec(`INSERT INTO zones(id,provider,account_id,region,provider_zone_id) VALUES('zone','provider','account','region','az');
 INSERT INTO host(id,zone,state,providerid,subd_endpoint,protected) VALUES('deployment/bootstrap/platform','zone','READY','provider-host','https://127.0.0.1:44001',true);
-INSERT INTO zone_dominators(zone_id,endpoint,identity) VALUES('zone','https://127.0.0.1:44000','spiffe://test.internal/dominator')`)
+INSERT INTO zone_dominators(zone_id,endpoint,identity) VALUES('zone','https://127.0.0.1:44000','spiffe://test.internal/dominator/zone')`)
 	if err != nil {
 		t.Fatal(err)
 	}

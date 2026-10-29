@@ -164,7 +164,7 @@ func TestRenderIdentityScript(t *testing.T) {
 		t.Errorf("identity script missing deterministic parent ID %q", parent)
 	}
 	want := []string{
-		`spiffe://crane.internal/dominator`,
+		`spiffe://crane.internal/dominator/crane-platform-zone`,
 		`spiffe://crane.internal/subd`,
 		`k8s:ns:crane-system k8s:sa:dominator`,
 		`k8s:ns:crane-system k8s:sa:crane-api`,

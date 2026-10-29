@@ -11,7 +11,7 @@ Deployment writes root-owned mode-0600 `/usr/local/bin/appsettings.json`:
 {
   "ListenAddress": "10.80.0.11:44001",
   "TrustDomain": "crane.internal",
-  "WriterIdentity": "spiffe://crane.internal/dominator",
+  "WriterIdentity": "spiffe://crane.internal/dominator/zone-a",
   "ReaderIdentities": ["spiffe://crane.internal/subd"]
 }
 ```
