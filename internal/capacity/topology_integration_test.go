@@ -93,7 +93,7 @@ func TestPostgresRetainedAllocationAndIndependentPools(t *testing.T) {
 	if _, err := s.SetTarget(ctx, request("up", 0, 1)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Claim(ctx, "zone", "provision", "worker", time.Minute); err != nil {
+	if _, err := s.ClaimDominator(ctx, "zone", "provision", "spiffe://test.internal/dominator/zone", time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.SetTarget(ctx, request("down", 1, 0)); err != nil {
