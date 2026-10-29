@@ -188,13 +188,7 @@ type Operation struct {
 type ZoneBootstrapPhase string
 
 const (
-	ZoneRequested             ZoneBootstrapPhase = "Requested"
-	ZoneDatabaseProvisioning  ZoneBootstrapPhase = "DatabaseProvisioning"
-	ZoneDatabaseReady         ZoneBootstrapPhase = "DatabaseReady"
-	ZoneSpireHostProvisioning ZoneBootstrapPhase = "SpireHostProvisioning"
-	ZoneSpireInstalling       ZoneBootstrapPhase = "SpireInstalling"
-	ZoneSpireValidating       ZoneBootstrapPhase = "SpireValidating"
-	// Kept as an alias for callers compiled against the original phase name.
+	ZoneRequested                  ZoneBootstrapPhase = "Requested"
 	ZoneInfrastructureProvisioning ZoneBootstrapPhase = "InfrastructureProvisioning"
 	ZoneControlPlaneInitializing   ZoneBootstrapPhase = "ControlPlaneInitializing"
 	ZoneNetworkInstalling          ZoneBootstrapPhase = "NetworkInstalling"

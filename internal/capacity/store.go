@@ -5,7 +5,6 @@ package capacity
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"math"
@@ -358,7 +357,7 @@ func (s *Store) Target(ctx context.Context, clusterID, groupID string) (api.Capa
 // Claim is reserved for provider-neutral zone bootstrap, before a zone
 // Dominator exists. Cluster work must use ClaimDominator.
 func (s *Store) Claim(ctx context.Context, zoneID, kind, owner string, duration time.Duration) (api.Operation, error) {
-	if kind != "create_zone" && kind != "create_cluster" && kind != "attach_zone" {
+	if kind != "create_cluster" && kind != "attach_zone" {
 		return api.Operation{}, ErrForbidden
 	}
 	return s.claim(ctx, zoneID, kind, owner, duration, false)
@@ -423,7 +422,7 @@ func (s *Store) Renew(ctx context.Context, op api.Operation, duration time.Durat
 		 SET lease_until=clock_timestamp()+($4 * interval '1 millisecond'),updated_at=clock_timestamp()
 		 WHERE id=$1 AND lease_owner=$2 AND fence=$3
 		   AND lease_until>clock_timestamp() AND state IN ('leased','launching')
-		   AND (kind IN ('create_zone','create_cluster','attach_zone') OR EXISTS (
+		   AND (kind IN ('create_cluster','attach_zone') OR EXISTS (
 		     SELECT 1 FROM node_groups g
 		     JOIN cluster_zones m ON m.cluster_id=g.cluster_id AND m.zone_id=g.zone_id
 		     JOIN zone_dominators d ON d.zone_id=g.zone_id
@@ -518,42 +517,4 @@ func (s *Store) RecordLaunch(ctx context.Context, op api.Operation, providerID s
 		return err
 	}
 	return tx.Commit()
-}
-
-// CreateZoneBootstrap persists layer-zero work; it does not execute bootstrap.
-func (s *Store) CreateZoneBootstrap(ctx context.Context, zoneID string, parameters json.RawMessage) (string, error) {
-	if !json.Valid(parameters) {
-		return "", errors.New("invalid bootstrap parameters")
-	}
-
-	tx, err := s.DB.BeginTx(ctx, nil)
-	if err != nil {
-		return "", err
-	}
-	defer tx.Rollback()
-
-	id := uuid.NewString()
-	_, err = tx.ExecContext(
-		ctx,
-		`INSERT INTO operations(id,kind,zone_id,provider_token,parameters)
-		 VALUES($1,'create_zone',$2,$3,$4)`,
-		id, zoneID, uuid.NewString(), []byte(parameters),
-	)
-	if err != nil {
-		return "", err
-	}
-
-	_, err = tx.ExecContext(
-		ctx,
-		`INSERT INTO zone_bootstrap_operations(operation_id,zone_id) VALUES($1,$2)`,
-		id, zoneID,
-	)
-	if err != nil {
-		return "", err
-	}
-
-	if err = tx.Commit(); err != nil {
-		return "", err
-	}
-	return id, nil
 }

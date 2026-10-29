@@ -394,36 +394,11 @@ func TestPostgresAdmissionPolicy(t *testing.T) {
 	}
 }
 
-func TestPostgresBootstrapAndRemovalOwnership(t *testing.T) {
+func TestPostgresRemovalOwnership(t *testing.T) {
 	db := database(t)
 	s := NewStore(db)
 	ctx := context.Background()
-	id, err := s.CreateZoneBootstrap(ctx, "zone", []byte(`{"image":"pinned"}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err = s.CreateZoneBootstrap(ctx, "zone", []byte(`{}`)); err == nil {
-		t.Fatal("duplicate active bootstrap")
-	}
-	if count(t, db, "operations") != 1 {
-		t.Fatal("orphan bootstrap operation")
-	}
-	op, err := s.Claim(ctx, "zone", "create_zone", "bootstrap", time.Minute)
-	if err != nil || op.ID != id {
-		t.Fatalf("claim bootstrap: %v", err)
-	}
-	for _, phase := range []api.ZoneBootstrapPhase{api.ZoneDatabaseProvisioning, api.ZoneDatabaseReady, api.ZoneSpireHostProvisioning, api.ZoneSpireInstalling, api.ZoneSpireValidating, api.ZoneControlPlaneInitializing, api.ZoneNetworkInstalling, api.ZoneDominatorInstalling, api.ZoneValidating} {
-		if err = s.BootstrapPhase(ctx, op, phase, false); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err = s.BootstrapPhase(ctx, op, api.ZoneReady, false); err == nil {
-		t.Fatal("unvalidated bootstrap handoff")
-	}
-	if err = s.BootstrapPhase(ctx, op, api.ZoneReady, true); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = s.SetTarget(ctx, request("up", 0, 1)); err != nil {
+	if _, err := s.SetTarget(ctx, request("up", 0, 1)); err != nil {
 		t.Fatal(err)
 	}
 	provision, err := s.ClaimDominator(ctx, "zone", "provision", "spiffe://test.internal/dominator/zone", time.Minute)
@@ -443,7 +418,7 @@ func TestPostgresBootstrapAndRemovalOwnership(t *testing.T) {
 	if _, err = s.CreateRemoval(ctx, "cluster", 1, removal); err == nil {
 		t.Fatal("duplicate removal ownership")
 	}
-	if count(t, db, "node_removal_operations") != 1 || count(t, db, "operations") != 3 {
+	if count(t, db, "node_removal_operations") != 1 || count(t, db, "operations") != 2 {
 		t.Fatal("partial duplicate removal")
 	}
 }

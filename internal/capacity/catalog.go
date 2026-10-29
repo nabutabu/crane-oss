@@ -355,7 +355,7 @@ func (s *Store) CreateRemoval(ctx context.Context, clusterID string, expectedRev
 // The final Ready transition requires a validated handoff supplied by the trusted
 // layer-zero executor. A host cannot call this boundary to declare readiness.
 func (s *Store) BootstrapPhase(ctx context.Context, op api.Operation, next api.ZoneBootstrapPhase, validated bool) error {
-	if op.Kind != "create_zone" && op.Kind != "create_cluster" && op.Kind != "attach_zone" {
+	if op.Kind != "create_cluster" && op.Kind != "attach_zone" {
 		return errors.New("not a bootstrap operation")
 	}
 
