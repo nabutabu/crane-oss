@@ -209,6 +209,3 @@ func (s *operationSession) InitializeControlPlane(ctx context.Context, op api.Op
 	}
 	return result, nil
 }
-func (s *operationSession) Validate(context.Context, api.Operation) (bool, error) {
-	return false, fmt.Errorf("AWS zone validation is not configured")
-}
