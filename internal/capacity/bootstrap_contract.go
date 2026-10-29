@@ -89,20 +89,29 @@ func safeBootstrapParameters(raw json.RawMessage) bool {
 	if !ok {
 		return false
 	}
-	var walk func(map[string]any) bool
-	walk = func(m map[string]any) bool {
-		for key, v := range m {
-			name := strings.ToLower(key)
-			if strings.HasSuffix(name, "_arn") || strings.HasSuffix(name, "_ref") || strings.HasSuffix(name, "_reference") {
-				continue
-			}
-			for _, forbidden := range []string{"password", "secret", "token", "credential", "private_key"} {
-				if strings.Contains(name, forbidden) {
+	var walk func(any) bool
+	walk = func(value any) bool {
+		switch m := value.(type) {
+		case []any:
+			for _, item := range m {
+				if !walk(item) {
 					return false
 				}
 			}
-			if child, ok := v.(map[string]any); ok && !walk(child) {
-				return false
+		case map[string]any:
+			for key, v := range m {
+				name := strings.ToLower(key)
+				if strings.HasSuffix(name, "_arn") || strings.HasSuffix(name, "_ref") || strings.HasSuffix(name, "_reference") {
+					continue
+				}
+				for _, forbidden := range []string{"password", "secret", "token", "credential", "private_key"} {
+					if strings.Contains(name, forbidden) {
+						return false
+					}
+				}
+				if !walk(v) {
+					return false
+				}
 			}
 		}
 		return true

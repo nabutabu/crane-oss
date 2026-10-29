@@ -15,6 +15,7 @@ func TestSafeBootstrapParameters(t *testing.T) {
 	}{
 		{`{"image":"sha256:abc","secret_ref":"ssm:/deployment/key"}`, true},
 		{`{"auth":{"join_token":"private"}}`, false},
+		{`{"profiles":[{"password":"private"}]}`, false},
 		{`{"password":"private"}`, false},
 		{`[]`, false},
 		{`{`, false},
