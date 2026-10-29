@@ -198,9 +198,6 @@ func (s *operationSession) InitializeControlPlane(ctx context.Context, op api.Op
 	}
 	return result, nil
 }
-func (s *operationSession) EnsureNetwork(context.Context, api.Operation) error {
-	return fmt.Errorf("AWS zone network operation is not configured")
-}
 func (s *operationSession) EnsureDominator(context.Context, api.Operation) error {
 	return fmt.Errorf("AWS Dominator operation is not configured")
 }

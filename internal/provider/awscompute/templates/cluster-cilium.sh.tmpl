@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+set -euo pipefail
+export PATH="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+export KUBECONFIG=/etc/kubernetes/admin.conf
+test -r "$KUBECONFIG"
+command -v helm >/dev/null
+command -v kubectl >/dev/null
+helm repo add cilium https://helm.cilium.io/ --force-update >/dev/null
+helm repo update >/dev/null
+helm upgrade --install cilium cilium/cilium \
+  --namespace kube-system \
+  --version "[[ .CiliumVersion ]]" \
+  --set ipam.mode=kubernetes \
+  --set operator.replicas=1 \
+  --wait --timeout 10m
+kubectl -n kube-system rollout status daemonset/cilium --timeout=600s
+kubectl -n kube-system rollout status deployment/cilium-operator --timeout=600s
+kubectl wait --for=condition=Ready node --all --timeout=600s

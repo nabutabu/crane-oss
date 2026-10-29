@@ -35,20 +35,21 @@ type scriptData struct {
 	Config bootstrapConfig
 	Infra  Infrastructure
 
-	TrustDomain                 string
-	Region                      string
-	AccountID                   string
-	BundleParameter             string
-	FirstZoneBase64             string
-	BHDBase64                   string
-	CollectorManifestGzipBase64 string
-	SpireImage                  string
-	KubernetesVersion           string
-	CiliumVersion               string
-	PodCIDR                     string
-	SpireAddress                string
-	PlatformInstanceID          string
-	ZoneID                      string
+	TrustDomain                         string
+	Region                              string
+	AccountID                           string
+	BundleParameter                     string
+	FirstZoneBase64                     string
+	BHDBase64                           string
+	CollectorManifestGzipBase64         string
+	SpireImage                          string
+	KubernetesVersion                   string
+	CiliumVersion                       string
+	PodCIDR                             string
+	SpireAddress                        string
+	PlatformInstanceID                  string
+	ZoneID                              string
+	JoinEndpoint, JoinToken, JoinCAHash string
 }
 
 type bootstrapAgentHost struct {
