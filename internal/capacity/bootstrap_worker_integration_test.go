@@ -10,10 +10,14 @@ import (
 	"github.com/nabutabu/crane-oss/pkg/api"
 )
 
-type bootstrapWorkerFake struct{ phases []api.ZoneBootstrapPhase }
+type bootstrapWorkerFake struct {
+	phases []api.ZoneBootstrapPhase
+	target api.Operation
+}
 
-func (f *bootstrapWorkerFake) Step(_ context.Context, _ api.Operation, phase api.ZoneBootstrapPhase) (api.BootstrapStepResult, error) {
+func (f *bootstrapWorkerFake) Step(_ context.Context, op api.Operation, phase api.ZoneBootstrapPhase) (api.BootstrapStepResult, error) {
 	f.phases = append(f.phases, phase)
+	f.target = op
 	return api.BootstrapStepResult{}, nil
 }
 func (f *bootstrapWorkerFake) Validated(context.Context, api.Operation) (bool, error) {
@@ -41,6 +45,9 @@ func TestPostgresBootstrapWorkerAdvancesAndRestarts(t *testing.T) {
 	db := database(t)
 	s := NewStore(db)
 	ctx := context.Background()
+	if _, err := db.ExecContext(ctx, `UPDATE clusters SET api_server_endpoint='https://10.80.0.10:6443',ca_cert_hash='sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' WHERE id='cluster'`); err != nil {
+		t.Fatal(err)
+	}
 	zone := api.ZoneInput{ID: "worker-zone", Provider: "aws", AccountID: "account", Region: "us-west-2", ProviderZoneID: "us-west-2b"}
 	group := testGroup(zone, "worker")
 	if err := group.NormalizeID(); err != nil {
@@ -63,6 +70,9 @@ func TestPostgresBootstrapWorkerAdvancesAndRestarts(t *testing.T) {
 	if len(fake.phases) != 4 || fake.phases[0] != api.ZoneInfrastructureProvisioning || fake.phases[3] != api.ZoneValidating {
 		t.Fatalf("phases %v", fake.phases)
 	}
+	if fake.target.ClusterID != "cluster" || fake.target.APIServerEndpoint != "https://10.80.0.10:6443" {
+		t.Fatalf("untrusted cluster target: %s %s", fake.target.ClusterID, fake.target.APIServerEndpoint)
+	}
 	if _, err := s.NextBootstrapZone(ctx); err == nil {
 		t.Fatal("completed operation remains runnable")
 	}
@@ -71,6 +81,9 @@ func TestPostgresBootstrapWorkerAdvancesAndRestarts(t *testing.T) {
 func TestPostgresBootstrapWorkerRetriesFailedStep(t *testing.T) {
 	db := database(t)
 	ctx := context.Background()
+	if _, err := db.ExecContext(ctx, `UPDATE clusters SET api_server_endpoint='https://10.80.0.10:6443',ca_cert_hash='sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' WHERE id='cluster'`); err != nil {
+		t.Fatal(err)
+	}
 	_, err := db.ExecContext(ctx, `INSERT INTO operations(id,kind,zone_id,provider_token,parameters) VALUES('retry-op','attach_zone','zone','stable-token','{}');
  INSERT INTO zone_bootstrap_operations(operation_id,zone_id,cluster_id,request_id) VALUES('retry-op','zone','cluster','retry-request')`)
 	if err != nil {

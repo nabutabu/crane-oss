@@ -175,14 +175,17 @@ type InfrastructureReservation struct {
 
 type Operation struct {
 	ID, Kind, ZoneID, NodeGroupID, HostID, CapacityRequestID string
-	TargetRevision                                           int64
-	State, ProviderToken                                     string
-	Parameters                                               json.RawMessage
-	LeaseOwner                                               string
-	LeaseUntil                                               time.Time
-	Fence                                                    int64
-	LastError                                                string
-	CreatedAt, UpdatedAt                                     time.Time
+	// Populated from the trusted catalog for bootstrap execution, never from
+	// the operation's immutable request parameters.
+	ClusterID, APIServerEndpoint, CACertHash string
+	TargetRevision                           int64
+	State, ProviderToken                     string
+	Parameters                               json.RawMessage
+	LeaseOwner                               string
+	LeaseUntil                               time.Time
+	Fence                                    int64
+	LastError                                string
+	CreatedAt, UpdatedAt                     time.Time
 }
 
 type ZoneBootstrapPhase string
