@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"regexp"
+	"strings"
 
 	"github.com/nabutabu/crane-oss/internal/bootstrap"
 	"github.com/nabutabu/crane-oss/pkg/api"
@@ -130,8 +132,71 @@ func (s *operationSession) EnsureInfrastructure(ctx context.Context, op api.Oper
 	return err
 }
 
-func (s *operationSession) InitializeControlPlane(context.Context, api.Operation) (api.BootstrapStepResult, error) {
-	return api.BootstrapStepResult{}, fmt.Errorf("AWS control-plane operation is not configured")
+func (s *operationSession) operationHost(ctx context.Context, role string) (host, error) {
+	var out struct {
+		Reservations []struct {
+			Instances []struct {
+				InstanceID       string `json:"InstanceId"`
+				PrivateIPAddress string
+				ImageID          string `json:"ImageId"`
+				InstanceType     string
+				State            struct{ Name string }
+			}
+		}
+	}
+	err := s.client.Call(ctx, "ec2", "describe-instances", map[string]any{"Filters": []any{filter("tag:CraneBootstrap", s.cfg.Name), filter("tag:BootstrapRole", role), filter("instance-state-name", "running")}}, &out)
+	if err != nil {
+		return host{}, err
+	}
+	var found []host
+	for _, reservation := range out.Reservations {
+		for _, instance := range reservation.Instances {
+			if instance.ImageID != s.cfg.Platform.AMIID || instance.InstanceType != s.cfg.Platform.InstanceType || !privateIP(instance.PrivateIPAddress) {
+				return host{}, fmt.Errorf("operation host does not match pinned image, type or private address")
+			}
+			found = append(found, host{ID: instance.InstanceID, PrivateIP: instance.PrivateIPAddress})
+		}
+	}
+	if len(found) != 1 {
+		return host{}, fmt.Errorf("expected one running operation host for role %s", role)
+	}
+	return found[0], nil
+}
+
+func (s *operationSession) InitializeControlPlane(ctx context.Context, op api.Operation) (api.BootstrapStepResult, error) {
+	if op.Kind != "create_cluster" {
+		return api.BootstrapStepResult{}, fmt.Errorf("control-plane initialization requires create_cluster")
+	}
+	_, clusterID, err := s.target(op)
+	if err != nil {
+		return api.BootstrapStepResult{}, err
+	}
+	h, err := s.operationHost(ctx, "cluster-"+clusterID)
+	if err != nil {
+		return api.BootstrapStepResult{}, err
+	}
+	script, err := renderTemplate("cluster-control-plane.sh.tmpl", scriptData{KubernetesVersion: s.cfg.Platform.KubernetesVersion, PodCIDR: s.cfg.Platform.PodCIDR, Host: bootstrapAgentHost{PrivateIP: h.PrivateIP}})
+	if err != nil {
+		return api.BootstrapStepResult{}, err
+	}
+	var result api.BootstrapStepResult
+	err = runScriptObserved(ctx, s.client, bootstrap.NewReporter(io.Discard, false), h.ID, "cluster-control-plane", script, func(output string) {
+		for line := range strings.SplitSeq(output, "\n") {
+			if value, ok := strings.CutPrefix(line, "crane-cluster-api-endpoint:"); ok {
+				result.APIServerEndpoint = strings.TrimSpace(value)
+			}
+			if value, ok := strings.CutPrefix(line, "crane-cluster-ca-hash:"); ok {
+				result.CACertHash = strings.TrimSpace(value)
+			}
+		}
+	})
+	if err != nil {
+		return api.BootstrapStepResult{}, err
+	}
+	if result.APIServerEndpoint == "" || result.CACertHash == "" {
+		return api.BootstrapStepResult{}, fmt.Errorf("control plane did not return public discovery")
+	}
+	return result, nil
 }
 func (s *operationSession) EnsureNetwork(context.Context, api.Operation) error {
 	return fmt.Errorf("AWS zone network operation is not configured")
