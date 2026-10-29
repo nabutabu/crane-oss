@@ -18,6 +18,10 @@ unrelated metadata is preserved. Requests are limited to 2 MiB, with at most
 The host identifies which cluster's local credentials Subd uses. It does not
 make the Kubernetes Secret host-local. Missing credentials fail the operation;
 callers cannot supply a kubeconfig or redirect a request to another endpoint.
+The platform Subd uses a cluster-CA client identity limited to `get`, `create`,
+and `update` Secrets plus `get` and `update` Deployments. The shared renewal
+timer rotates that identity before expiry and verifies both required access and
+denial of Pod creation before publishing a replacement.
 
 Crane resolves catalog placement and the zone's registered Dominator endpoint.
 Dynamically admitted hosts additionally require a ready, approved cluster-zone
