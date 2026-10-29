@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/nabutabu/crane-oss/internal/bootstrap"
 	"github.com/nabutabu/crane-oss/pkg/api"
@@ -74,10 +75,20 @@ fi
 	if err != nil {
 		return api.BootstrapStepResult{}, err
 	}
-	if err = runScript(ctx, s.client, bootstrap.NewReporter(io.Discard, false), control.ID, "dominator-"+zone.ID, script); err != nil {
+	endpoint := ""
+	if err = runScriptObserved(ctx, s.client, bootstrap.NewReporter(io.Discard, false), control.ID, "dominator-"+zone.ID, script, func(output string) {
+		for line := range strings.SplitSeq(output, "\n") {
+			if value, ok := strings.CutPrefix(line, "crane-dominator-endpoint:"); ok {
+				endpoint = strings.TrimSpace(value)
+			}
+		}
+	}); err != nil {
 		return api.BootstrapStepResult{}, err
 	}
-	return api.BootstrapStepResult{DominatorEndpoint: "https://dominator-" + zone.ID + ".crane-system.svc.cluster.local:44000", DominatorIdentity: "spiffe://" + s.cfg.SPIRE.TrustDomain + "/dominator/" + zone.ID}, nil
+	if endpoint == "" {
+		return api.BootstrapStepResult{}, fmt.Errorf("zone Dominator did not return a private Service endpoint")
+	}
+	return api.BootstrapStepResult{DominatorEndpoint: endpoint, DominatorIdentity: "spiffe://" + s.cfg.SPIRE.TrustDomain + "/dominator/" + zone.ID}, nil
 }
 
 func (s *operationSession) ensureSubd(ctx context.Context, spire, agent host, zoneID string, infra Infrastructure) error {

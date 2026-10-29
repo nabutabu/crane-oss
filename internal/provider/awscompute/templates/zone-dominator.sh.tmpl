@@ -73,3 +73,4 @@ spec:
   ports: [{name: mtls, port: 44000, targetPort: mtls}]
 YAML
 kubectl -n crane-system rollout status deployment/dominator-[[ .ZoneID ]] --timeout=600s
+printf 'crane-dominator-endpoint:https://%s:44000\n' "$(kubectl -n crane-system get service dominator-[[ .ZoneID ]] -o jsonpath='{.spec.clusterIP}')"

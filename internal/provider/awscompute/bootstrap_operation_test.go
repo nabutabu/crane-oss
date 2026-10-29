@@ -72,6 +72,7 @@ func TestZoneDominatorScriptUsesZoneIdentityAndRuntimeSecret(t *testing.T) {
 		"DB_HOST",
 		"name: dominator-zone-b",
 		"port: 44000",
+		"crane-dominator-endpoint:",
 	} {
 		if !strings.Contains(script, required) {
 			t.Fatalf("missing %s", required)
