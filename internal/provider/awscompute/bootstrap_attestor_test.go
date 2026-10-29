@@ -76,6 +76,24 @@ func TestSPIREKubernetesAttestorCredentials(t *testing.T) {
 	write("etc/spire/agent.conf", base, 0600)
 	write("bin/systemctl", []byte("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$CALLS\"\nif [ -e \"$FAIL_SYSTEMD\" ]; then exit 1; fi\n"), 0700)
 	write("bin/sleep", []byte("#!/bin/sh\nexit 0\n"), 0700)
+	// The real kubelet TLS fixture remains in this test. Kubernetes API calls
+	// for the separate Subd credential use a narrow command stand-in.
+	write("bin/kubectl", []byte(`#!/bin/sh
+case "$*" in
+  *"config view --raw -o jsonpath="*) printf 'https://node.test:6443' ;;
+  *"config set-cluster "*|*"config set-credentials "*|*"config set-context "*|*"config use-context "*)
+    for arg in "$@"; do
+      case "$arg" in --kubeconfig=*) kubeconfig="${arg#--kubeconfig=}" ;; esac
+    done
+    [ -n "$kubeconfig" ] || exit 1
+    printf '%s\n' 'apiVersion: v1' > "$kubeconfig"
+    ;;
+  *"auth can-i get secrets --all-namespaces"*|*"auth can-i update deployments.apps --all-namespaces"*) printf 'yes\n' ;;
+  *"auth can-i create pods --all-namespaces"*) printf 'no\n' ;;
+  *) exit 1 ;;
+esac
+`), 0700)
+	write("etc/kubernetes/admin.conf", []byte("test-only Kubernetes admin configuration"), 0600)
 	pair, err := tls.X509KeyPair(serving, servingKey)
 	if err != nil {
 		t.Fatal(err)
@@ -127,6 +145,10 @@ func TestSPIREKubernetesAttestorCredentials(t *testing.T) {
 	}
 	run(true, true)
 	current := filepath.Join(root, "var/lib/crane/spire-k8s/current")
+	subdCurrent := filepath.Join(root, "var/lib/crane/subd-k8s/current")
+	if _, err := os.Stat(filepath.Join(subdCurrent, "kubeconfig")); err != nil {
+		t.Fatalf("Subd credential was not published: %v", err)
+	}
 	first, err := os.ReadFile(filepath.Join(current, "client.crt"))
 	if err != nil {
 		t.Fatal(err)

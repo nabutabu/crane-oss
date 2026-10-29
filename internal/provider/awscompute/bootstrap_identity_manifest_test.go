@@ -66,22 +66,40 @@ func TestPlatformWorkloadIdentityManifests(t *testing.T) {
 					t.Fatal(err)
 				}
 				roles++
-				want := []rbacv1.PolicyRule{{APIGroups: []string{""}, Resources: []string{"nodes/pods"}, ResourceNames: []string{"$NODE_NAME"}, Verbs: []string{"get"}}}
+				var want []rbacv1.PolicyRule
+				switch role.Name {
+				case "crane-spire-attestor":
+					want = []rbacv1.PolicyRule{{APIGroups: []string{""}, Resources: []string{"nodes/pods"}, ResourceNames: []string{"$NODE_NAME"}, Verbs: []string{"get"}}}
+				case "crane-subd-kubernetes-operations":
+					want = []rbacv1.PolicyRule{
+						{APIGroups: []string{""}, Resources: []string{"secrets"}, Verbs: []string{"get", "create", "update"}},
+						{APIGroups: []string{"apps"}, Resources: []string{"deployments"}, Verbs: []string{"get", "update"}},
+					}
+				default:
+					t.Fatalf("unexpected ClusterRole %s", role.Name)
+				}
 				if !reflect.DeepEqual(role.Rules, want) {
-					t.Fatalf("excessive attestor permissions: %+v", role.Rules)
+					t.Fatalf("incorrect %s permissions: %+v", role.Name, role.Rules)
 				}
 			case "ClusterRoleBinding":
 				var b rbacv1.ClusterRoleBinding
 				if err := json.Unmarshal(raw, &b); err != nil {
 					t.Fatal(err)
 				}
-				if b.RoleRef.Name != "crane-spire-attestor" || len(b.Subjects) != 1 || b.Subjects[0].Kind != "User" || b.Subjects[0].Name != "crane-spire-attestor:$NODE_NAME" {
-					t.Fatal("incorrect attestor RBAC subject")
+				if len(b.Subjects) != 1 || b.Subjects[0].Kind != "User" || b.RoleRef.Name != b.Name {
+					t.Fatal("incorrect workload RBAC subject")
+				}
+				wantSubject := map[string]string{
+					"crane-spire-attestor":             "crane-spire-attestor:$NODE_NAME",
+					"crane-subd-kubernetes-operations": "crane-subd:$NODE_NAME",
+				}[b.Name]
+				if wantSubject == "" || b.Subjects[0].Name != wantSubject {
+					t.Fatal("incorrect workload RBAC subject")
 				}
 			}
 		}
 	}
-	if deployments != 2 || accounts != 2 || roles != 1 {
+	if deployments != 2 || accounts != 2 || roles != 2 {
 		t.Fatalf("deployments=%d accounts=%d roles=%d", deployments, accounts, roles)
 	}
 	activation := strings.Index(script, `/usr/local/bin/crane-configure-spire-k8s "$NODE_NAME"`)
