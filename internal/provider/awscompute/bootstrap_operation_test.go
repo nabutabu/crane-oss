@@ -77,6 +77,9 @@ func TestZoneDominatorScriptUsesZoneIdentityAndRuntimeSecret(t *testing.T) {
 			t.Fatalf("missing %s", required)
 		}
 	}
+	if strings.Contains(script, "hostNetwork: true") {
+		t.Fatal("zone Dominator must use its private Service rather than the host port")
+	}
 }
 
 func TestInitializeControlPlaneReturnsPublicDiscovery(t *testing.T) {
