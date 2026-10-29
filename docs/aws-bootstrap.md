@@ -192,11 +192,12 @@ Dominator gets a separate SPIFFE identity and database-backed `zone_dominators`
 route. The shared deployment VPC, RDS instance, Crane API, and SPIRE authority
 are reused; no second layer-zero deployment is created.
 
-The final validation gate rolls out the zone-specific Dominator, checks its
-readiness, and performs a private SPIFFE-mTLS probe before transitioning the
-operation and cluster-zone membership to `Ready`. The bootstrap controller
-records only trusted Kubernetes discovery, protected-host identity, and the
-private Dominator route. These operations are for new deployments initialized
+The final validation gate confirms the joined node is Ready, its Cilium agent
+is healthy, the zone Dominator Service resolves privately, rolls out the
+zone-specific Dominator, and performs a private SPIFFE-mTLS probe before
+transitioning the operation and cluster-zone membership to `Ready`. The
+bootstrap controller records only trusted Kubernetes discovery, protected-host
+identity, and the private Dominator route. These operations are for new deployments initialized
 with the current schema; this feature does not migrate or adopt an existing
 deployment.
 
