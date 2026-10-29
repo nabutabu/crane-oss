@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+export AWS_REGION="[[ .Region ]]"
 export PATH="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 export KUBECONFIG=/etc/kubernetes/admin.conf
 NODE_NAME="$(kubectl get nodes -o json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(n["metadata"]["name"] for n in d["items"] if any(a["type"]=="InternalIP" and a["address"]=="[[ .Host.PrivateIP ]]" for a in n["status"].get("addresses",[]))))')"
