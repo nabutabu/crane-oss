@@ -18,7 +18,14 @@ type bootstrapWorkerFake struct {
 func (f *bootstrapWorkerFake) Step(_ context.Context, op api.Operation, phase api.ZoneBootstrapPhase) (api.BootstrapStepResult, error) {
 	f.phases = append(f.phases, phase)
 	f.target = op
-	return api.BootstrapStepResult{}, nil
+	switch phase {
+	case api.ZoneInfrastructureProvisioning:
+		return api.BootstrapStepResult{ProviderHostID: "i-0123456789abcdef0", HostPrivateIP: "10.80.1.20", ImageID: "ami-pinned"}, nil
+	case api.ZoneDominatorInstalling:
+		return api.BootstrapStepResult{DominatorEndpoint: "https://10.80.1.20:44000", DominatorIdentity: "spiffe://crane.internal/dominator/worker-zone"}, nil
+	default:
+		return api.BootstrapStepResult{}, nil
+	}
 }
 func (f *bootstrapWorkerFake) Validated(context.Context, api.Operation) (bool, error) {
 	return true, nil
@@ -35,7 +42,7 @@ func (f *failingBootstrapExecutor) Step(_ context.Context, op api.Operation, _ a
 	if f.calls == 1 {
 		return api.BootstrapStepResult{}, errors.New("transient provider failure")
 	}
-	return api.BootstrapStepResult{}, nil
+	return api.BootstrapStepResult{ProviderHostID: "i-0123456789abcdef0", HostPrivateIP: "10.80.1.20", ImageID: "ami-pinned"}, nil
 }
 func (f *failingBootstrapExecutor) Validated(context.Context, api.Operation) (bool, error) {
 	return true, nil

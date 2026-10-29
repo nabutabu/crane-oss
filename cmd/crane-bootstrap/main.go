@@ -44,10 +44,14 @@ func run(parent context.Context, args []string, out io.Writer) error {
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	if *timeout <= 0 {
+	if *timeout <= 0 && !*worker {
 		return fmt.Errorf("operation-timeout must be positive")
 	}
-	ctx, cancel := context.WithTimeout(parent, *timeout)
+	ctx := parent
+	var cancel context.CancelFunc = func() {}
+	if !*worker {
+		ctx, cancel = context.WithTimeout(parent, *timeout)
+	}
 	defer cancel()
 	var cfg bootstrap.Config
 	if *configPath != "" {
