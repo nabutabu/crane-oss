@@ -48,6 +48,7 @@ type scriptData struct {
 	PodCIDR                     string
 	SpireAddress                string
 	PlatformInstanceID          string
+	ZoneID                      string
 }
 
 type bootstrapAgentHost struct {
@@ -76,6 +77,10 @@ func baseScriptData(cfg bootstrapConfig, infra Infrastructure) (scriptData, erro
 	if image == "" {
 		image = spireServerImageRepo + ":" + cfg.SPIRE.Version
 	}
+	first, err := topology(cfg, infra)
+	if err != nil {
+		return scriptData{}, fmt.Errorf("derive first-zone identity: %w", err)
+	}
 	return scriptData{
 		Config:            cfg,
 		Infra:             infra,
@@ -87,6 +92,7 @@ func baseScriptData(cfg bootstrapConfig, infra Infrastructure) (scriptData, erro
 		KubernetesVersion: cfg.Platform.KubernetesVersion,
 		CiliumVersion:     cfg.Platform.CiliumVersion,
 		PodCIDR:           cfg.Platform.PodCIDR,
+		ZoneID:            first.Zone.ID,
 	}, nil
 }
 

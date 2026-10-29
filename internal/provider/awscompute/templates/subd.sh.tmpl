@@ -18,7 +18,7 @@ test "$ready" = 1
 config="$(mktemp /usr/local/bin/.subd-config-XXXXXX)"
 trap 'rm -f "$config"' EXIT
 cat > "$config" <<'JSON'
-{"ListenAddress":"[[ .Host.PrivateIP ]]:44001","TrustDomain":"[[ .TrustDomain ]]","WriterIdentity":"spiffe://[[ .TrustDomain ]]/dominator","ReaderIdentities":["spiffe://[[ .TrustDomain ]]/subd"],"Kubeconfig":"[[ if eq .Host.Role "platform" ]]/etc/kubernetes/admin.conf[[ end ]]"}
+{"ListenAddress":"[[ .Host.PrivateIP ]]:44001","TrustDomain":"[[ .TrustDomain ]]","WriterIdentity":"spiffe://[[ .TrustDomain ]]/dominator/[[ .ZoneID ]]","ReaderIdentities":["spiffe://[[ .TrustDomain ]]/subd"],"Kubeconfig":"[[ if eq .Host.Role "platform" ]]/etc/kubernetes/admin.conf[[ end ]]"}
 JSON
 chmod 600 "$config"
 chown root:root "$config"

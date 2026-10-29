@@ -50,7 +50,7 @@ func run() error {
 		server := &http.Server{ReadHeaderTimeout: 3 * time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })}
 		return server.Serve(tls.NewListener(listener, cfg))
 	}
-	client := &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{TLSClientConfig: tlsconfig.MTLSClientConfig(source, source, tlsconfig.AuthorizeID(spiffeid.RequireFromString("spiffe://issue32.test/dominator")))}}
+	client := &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{TLSClientConfig: tlsconfig.MTLSClientConfig(source, source, tlsconfig.AuthorizeID(spiffeid.RequireFromString("spiffe://issue32.test/dominator/zone-a")))}}
 	response, err := client.Get("https://127.0.0.1:44444/")
 	if err != nil {
 		return err

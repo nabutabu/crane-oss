@@ -56,6 +56,7 @@ func database(t *testing.T) *sql.DB {
 INSERT INTO zones(id,provider,account_id,region,provider_zone_id,lifecycle_state) VALUES('zone','aws','account','us-west-2','us-west-2a','ready');
 INSERT INTO clusters(id,kubeadm_version,kubelet_version,container_runtime,cni,lifecycle_state) VALUES('cluster','1.35.0','1.35.0','containerd','cilium','ready');
 INSERT INTO cluster_zones(cluster_id,zone_id,lifecycle_state,access_state) VALUES('cluster','zone','ready','approved');
+INSERT INTO zone_dominators(zone_id,endpoint,identity) VALUES('zone','https://dominator:44000','spiffe://test.internal/dominator/zone');
 INSERT INTO node_pools(id,max_vcpu,max_memory_mib,max_nodes) VALUES('pool',32,65536,8);
 INSERT INTO node_groups(naming_provider,development_stage,naming_region,naming_az,naming_group,id,cluster_id,zone_id,node_pool_id,capacity_class,provider_zone_id,min_nodes,max_nodes,template_revision,vcpu,memory_mib,launch_parameters) VALUES('aws','test','us-west-2','a','general','aws-test-us-west-2-a-general','cluster','zone','pool','general','us-west-2a',0,8,'template-1',4,8192,'{"image_id":"ami-pinned","instance_type":"m7i.xlarge"}');`)
 	if err != nil {
@@ -224,7 +225,7 @@ func TestPostgresCancellationAndFencing(t *testing.T) {
 	if _, err := s.SetTarget(ctx, request("up", 0, 2)); err != nil {
 		t.Fatal(err)
 	}
-	op, err := s.Claim(ctx, "zone", "provision", "old", time.Minute)
+	op, err := s.ClaimDominator(ctx, "zone", "provision", "spiffe://test.internal/dominator/zone", time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -249,7 +250,7 @@ func TestPostgresCancellationAndFencing(t *testing.T) {
 	if err = s.Renew(ctx, op, time.Minute); !errors.Is(err, ErrFenced) {
 		t.Fatalf("expired renew: %v", err)
 	}
-	newOp, err := s.Claim(ctx, "zone", "provision", "new", time.Minute)
+	newOp, err := s.ClaimDominator(ctx, "zone", "provision", "spiffe://test.internal/dominator/zone", time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -335,7 +336,7 @@ func TestPostgresOperationIntentIsImmutable(t *testing.T) {
 		t.Fatal("launch parameters changed")
 	}
 	mustExec(t, db, `UPDATE node_groups SET template_revision='template-2',launch_parameters='{"image_id":"other"}'`)
-	op, err := s.Claim(ctx, "zone", "provision", "controller", time.Minute)
+	op, err := s.ClaimDominator(ctx, "zone", "provision", "spiffe://test.internal/dominator/zone", time.Minute)
 	if err != nil || !strings.Contains(string(op.Parameters), "ami-pinned") {
 		t.Fatalf("old intent inherited new template: %#v %v", op, err)
 	}
@@ -425,7 +426,7 @@ func TestPostgresBootstrapAndRemovalOwnership(t *testing.T) {
 	if _, err = s.SetTarget(ctx, request("up", 0, 1)); err != nil {
 		t.Fatal(err)
 	}
-	provision, err := s.Claim(ctx, "zone", "provision", "worker", time.Minute)
+	provision, err := s.ClaimDominator(ctx, "zone", "provision", "spiffe://test.internal/dominator/zone", time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}

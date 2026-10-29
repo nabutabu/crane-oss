@@ -355,11 +355,29 @@ func (s *Store) Target(ctx context.Context, clusterID, groupID string) (api.Capa
 	return r, err
 }
 
-// Claim recovers expired work with a monotonically increasing fence. Provider
-// tokens and parameters never change on recovery, including lost responses.
+// Claim is reserved for provider-neutral zone bootstrap, before a zone
+// Dominator exists. Cluster work must use ClaimDominator.
 func (s *Store) Claim(ctx context.Context, zoneID, kind, owner string, duration time.Duration) (api.Operation, error) {
+	if kind != "create_zone" {
+		return api.Operation{}, ErrForbidden
+	}
+	return s.claim(ctx, zoneID, kind, owner, duration, false)
+}
+
+// ClaimDominator recovers zone execution only for the exact registered
+// Dominator and an approved, ready cluster-zone membership.
+func (s *Store) ClaimDominator(ctx context.Context, zoneID, kind, identity string, duration time.Duration) (api.Operation, error) {
+	if kind != "provision" && kind != "remove_node" {
+		return api.Operation{}, ErrForbidden
+	}
+	return s.claim(ctx, zoneID, kind, identity, duration, true)
+}
+
+// claim recovers expired work with a monotonically increasing fence. Provider
+// tokens and parameters never change on recovery, including lost responses.
+func (s *Store) claim(ctx context.Context, zoneID, kind, owner string, duration time.Duration, authorize bool) (api.Operation, error) {
 	var op api.Operation
-	if owner == "" || duration < time.Millisecond || duration > 24*time.Hour {
+	if zoneID == "" || owner == "" || duration < time.Millisecond || duration > 24*time.Hour {
 		return op, errors.New("invalid operation lease")
 	}
 	err := s.DB.QueryRowContext(
@@ -372,14 +390,21 @@ func (s *Store) Claim(ctx context.Context, zoneID, kind, owner string, duration 
 		     updated_at=clock_timestamp()
 		 WHERE id=(
 		   SELECT id FROM operations
-		   WHERE zone_id=$1 AND kind=$2
+		   WHERE operations.zone_id=$1 AND operations.kind=$2
 		     AND (state='pending' OR (state IN ('leased','launching') AND lease_until<=clock_timestamp()))
+		     AND (NOT $5 OR EXISTS (
+		       SELECT 1 FROM zone_dominators d
+		       JOIN node_groups g ON g.id=operations.group_id AND g.zone_id=operations.zone_id
+		       JOIN cluster_zones m ON m.cluster_id=g.cluster_id AND m.zone_id=g.zone_id
+		       WHERE d.zone_id=operations.zone_id AND d.identity=$3
+		         AND m.lifecycle_state='ready' AND m.access_state='approved'
+		     ))
 		   ORDER BY created_at,id
 		   FOR UPDATE SKIP LOCKED
 		   LIMIT 1
 		 )
 		 RETURNING id,kind,zone_id,COALESCE(group_id,''),COALESCE(host_id,''),COALESCE(capacity_request_id,''),target_revision,state,provider_token,parameters,lease_owner,lease_until,fence,last_error,created_at,updated_at`,
-		zoneID, kind, owner, duration.Milliseconds(),
+		zoneID, kind, owner, duration.Milliseconds(), authorize,
 	).Scan(
 		&op.ID, &op.Kind, &op.ZoneID, &op.NodeGroupID, &op.HostID, &op.CapacityRequestID,
 		&op.TargetRevision, &op.State, &op.ProviderToken, &op.Parameters,
@@ -397,7 +422,15 @@ func (s *Store) Renew(ctx context.Context, op api.Operation, duration time.Durat
 		`UPDATE operations
 		 SET lease_until=clock_timestamp()+($4 * interval '1 millisecond'),updated_at=clock_timestamp()
 		 WHERE id=$1 AND lease_owner=$2 AND fence=$3
-		   AND lease_until>clock_timestamp() AND state IN ('leased','launching')`,
+		   AND lease_until>clock_timestamp() AND state IN ('leased','launching')
+		   AND (kind='create_zone' OR EXISTS (
+		     SELECT 1 FROM node_groups g
+		     JOIN cluster_zones m ON m.cluster_id=g.cluster_id AND m.zone_id=g.zone_id
+		     JOIN zone_dominators d ON d.zone_id=g.zone_id
+		     WHERE g.id=operations.group_id AND g.zone_id=operations.zone_id
+		       AND d.identity=operations.lease_owner
+		       AND m.lifecycle_state='ready' AND m.access_state='approved'
+		   ))`,
 		op.ID, op.LeaseOwner, op.Fence, duration.Milliseconds(),
 	)
 	return fencedResult(r, err)
@@ -411,7 +444,15 @@ func (s *Store) BeginLaunch(ctx context.Context, op api.Operation) error {
 		`UPDATE operations
 		 SET state='launching',updated_at=clock_timestamp()
 		 WHERE id=$1 AND lease_owner=$2 AND fence=$3
-		   AND lease_until>clock_timestamp() AND state IN ('leased','launching')`,
+		   AND lease_until>clock_timestamp() AND state IN ('leased','launching')
+		   AND EXISTS (
+		     SELECT 1 FROM node_groups g
+		     JOIN cluster_zones m ON m.cluster_id=g.cluster_id AND m.zone_id=g.zone_id
+		     JOIN zone_dominators d ON d.zone_id=g.zone_id
+		     WHERE g.id=operations.group_id AND g.zone_id=operations.zone_id
+		       AND d.identity=operations.lease_owner
+		       AND m.lifecycle_state='ready' AND m.access_state='approved'
+		   )`,
 		op.ID, op.LeaseOwner, op.Fence,
 	)
 	return fencedResult(r, err)

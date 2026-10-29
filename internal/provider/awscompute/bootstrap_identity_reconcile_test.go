@@ -87,8 +87,11 @@ else: raise SystemExit(2)
 		t.Fatalf("got %d registrations", len(entries))
 	}
 	for _, e := range entries {
-		if strings.HasSuffix(e.ID, "/crane-api") || strings.HasSuffix(e.ID, "/dominator") {
-			service := e.ID[strings.LastIndex(e.ID, "/")+1:]
+		if strings.HasSuffix(e.ID, "/crane-api") || strings.Contains(e.ID, "/dominator/") {
+			service := "crane-api"
+			if strings.Contains(e.ID, "/dominator/") {
+				service = "dominator"
+			}
 			if strings.Join(e.Selectors, ",") != "k8s:ns:crane-system,k8s:sa:"+service {
 				t.Fatalf("incorrect service selectors: %v", e.Selectors)
 			}

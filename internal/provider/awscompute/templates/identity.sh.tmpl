@@ -83,7 +83,7 @@ ensure_entry() {
 
 # Kubernetes workloads retain their exact platform-host parent boundary.
 step "reconciling Kubernetes service and probe workload identities"
-ensure_entry "spiffe://[[ .TrustDomain ]]/dominator" "$PARENT_ID" \
+ensure_entry "spiffe://[[ .TrustDomain ]]/dominator/[[ .ZoneID ]]" "$PARENT_ID" \
   k8s:ns:crane-system k8s:sa:dominator
 ensure_entry "spiffe://[[ .TrustDomain ]]/crane-api" "$PARENT_ID" \
   k8s:ns:crane-system k8s:sa:crane-api

@@ -7,7 +7,7 @@ they do not change the SPIFFE IDs used for authorization.
 | Workload | SPIFFE path | Workload selectors | Trusted parent |
 | --- | --- | --- | --- |
 | Crane API | `/crane-api` | `k8s:ns:crane-system`, `k8s:sa:crane-api` | Exact platform host AWS-IID agent |
-| Dominator | `/dominator` | `k8s:ns:crane-system`, `k8s:sa:dominator` | Exact platform host AWS-IID agent |
+| Dominator | `/dominator/<zone-id>` | `k8s:ns:crane-system`, `k8s:sa:dominator` | Exact protected platform host AWS-IID agent for that zone |
 | Subd | `/subd/<opaque-provider-host-id>` | `systemd:id:subd.service` | Exact corresponding host AWS-IID agent |
 | Read-only bootstrap probe | `/subd` | `unix:uid:10003` | Exact platform host AWS-IID agent |
 

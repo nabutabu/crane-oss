@@ -102,7 +102,7 @@ func (h *fakeHost) Apply(context.Context, api.ExpectedHostState) error {
 }
 
 func testConfig() Config {
-	return Config{ListenAddress: "127.0.0.1:44001", TrustDomain: "test.internal", WriterIdentity: "spiffe://test.internal/dominator", ReaderIdentities: []string{"spiffe://test.internal/probe"}}
+	return Config{ListenAddress: "127.0.0.1:44001", TrustDomain: "test.internal", WriterIdentity: "spiffe://test.internal/dominator/zone", ReaderIdentities: []string{"spiffe://test.internal/probe"}}
 }
 func testServer(t *testing.T, h Host) *Server {
 	t.Helper()
