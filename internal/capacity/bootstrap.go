@@ -47,6 +47,9 @@ func (c *BootstrapController) RunOnce(ctx context.Context, zoneID, owner string)
 	if err != nil {
 		return err
 	}
+	if err := c.Store.LoadBootstrapTarget(ctx, &op); err != nil {
+		return err
+	}
 	phase, err := c.currentPhase(ctx, op.ID)
 	if err != nil {
 		return err
