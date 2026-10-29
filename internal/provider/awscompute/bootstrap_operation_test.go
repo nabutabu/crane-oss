@@ -67,7 +67,7 @@ func TestZoneDominatorScriptUsesZoneIdentityAndRuntimeSecret(t *testing.T) {
 	}
 	for _, required := range []string{
 		"dominator-zone-b",
-		"k8s:sa:dominator-zone-b",
+		"serviceAccountName: dominator-zone-b",
 		"arn:aws:secretsmanager:us-west-2:123456789012:secret:runtime",
 		"DB_HOST",
 		"name: dominator-zone-b",
