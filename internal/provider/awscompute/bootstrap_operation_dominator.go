@@ -60,6 +60,16 @@ fi
 	if err != nil {
 		return api.BootstrapStepResult{}, err
 	}
+	agent := control
+	if op.Kind == "attach_zone" {
+		agent, err = s.operationHost(ctx, "zone-"+zone.ID)
+		if err != nil {
+			return api.BootstrapStepResult{}, err
+		}
+	}
+	if err = s.ensureSubd(ctx, spire, agent, zone.ID, infra); err != nil {
+		return api.BootstrapStepResult{}, err
+	}
 	script, err := renderTemplate("zone-dominator.sh.tmpl", scriptData{Config: s.cfg, Infra: infra, Region: s.cfg.AWS.Region, TrustDomain: s.cfg.SPIRE.TrustDomain, ZoneID: zone.ID, Host: bootstrapAgentHost{PrivateIP: control.PrivateIP}})
 	if err != nil {
 		return api.BootstrapStepResult{}, err
@@ -68,6 +78,34 @@ fi
 		return api.BootstrapStepResult{}, err
 	}
 	return api.BootstrapStepResult{DominatorEndpoint: "https://" + control.PrivateIP + ":44000", DominatorIdentity: "spiffe://" + s.cfg.SPIRE.TrustDomain + "/dominator/" + zone.ID}, nil
+}
+
+func (s *operationSession) ensureSubd(ctx context.Context, spire, agent host, zoneID string, infra Infrastructure) error {
+	identity := "spiffe://" + s.cfg.SPIRE.TrustDomain + "/subd/" + agent.ID
+	parent := "spiffe://" + s.cfg.SPIRE.TrustDomain + "/spire/agent/aws_iid/" + s.cfg.AWS.AccountID + "/" + s.cfg.AWS.Region + "/" + agent.ID
+	script := fmt.Sprintf(`#!/usr/bin/env bash
+set -euo pipefail
+CONTAINER=crane-spire-server
+SOCKET=/tmp/spire-server/private/api.sock
+ID=%q
+PARENT=%q
+all="$(docker exec "$CONTAINER" /opt/spire/bin/spire-server entry show -socketPath "$SOCKET" -spiffeID "$ID" || true)"
+count="$(printf '%%s\n' "$all" | awk '/Entry ID/{n++} END{print n+0}')"
+if [ "$count" -gt 1 ]; then exit 1; fi
+if [ "$count" = 1 ]; then
+  docker exec "$CONTAINER" /opt/spire/bin/spire-server entry show -socketPath "$SOCKET" -spiffeID "$ID" -parentID "$PARENT" -selector systemd:id:subd.service -matchSelectorsOn exact | grep -q 'Entry ID'
+else
+  docker exec "$CONTAINER" /opt/spire/bin/spire-server entry create -socketPath "$SOCKET" -parentID "$PARENT" -spiffeID "$ID" -selector systemd:id:subd.service
+fi
+`, identity, parent)
+	if err := runScript(ctx, s.client, bootstrap.NewReporter(io.Discard, false), spire.ID, "subd-identity-"+zoneID, script); err != nil {
+		return err
+	}
+	subd, err := renderTemplate("subd.sh.tmpl", scriptData{Config: s.cfg, Infra: infra, TrustDomain: s.cfg.SPIRE.TrustDomain, ZoneID: zoneID, SpireAddress: infra.SpireAddress, Host: bootstrapAgentHost{ID: agent.ID, PrivateIP: agent.PrivateIP, Role: "zone"}})
+	if err != nil {
+		return err
+	}
+	return runScript(ctx, s.client, bootstrap.NewReporter(io.Discard, false), agent.ID, "subd-"+zoneID, subd)
 }
 
 func (s *operationSession) Validate(ctx context.Context, op api.Operation) (bool, error) {
