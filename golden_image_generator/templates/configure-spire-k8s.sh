@@ -10,6 +10,8 @@ readonly NODE_FILE=/etc/spire/k8s-node
 readonly KUBELET_CERT=/var/lib/kubelet/pki/kubelet.crt
 readonly CLUSTER_CA=/etc/kubernetes/pki/ca.crt
 readonly CLUSTER_KEY=/etc/kubernetes/pki/ca.key
+readonly ADMIN_KUBECONFIG=/etc/kubernetes/admin.conf
+readonly SUBD_STATE=/var/lib/crane/subd-k8s
 
 fail() { echo 'SPIRE Kubernetes attestor configuration failed; check local kubelet, RBAC and certificate readiness, then retry.' >&2; exit 1; }
 trap fail ERR
@@ -49,7 +51,7 @@ PY
 fi
 
 stage="$(mktemp -d "$STATE/generation.XXXXXXXX")"
-trap 'if [ -n "${stage:-}" ]; then rm -rf "$stage"; fi' EXIT
+trap 'if [ -n "${stage:-}" ]; then rm -rf "$stage"; fi; if [ -n "${subd_stage:-}" ]; then rm -rf "$subd_stage"; fi' EXIT
 
 # Reuse valid credentials; rotate before expiry without exposing the signing key
 # or giving the SPIRE agent an administrator kubeconfig.
@@ -132,4 +134,54 @@ if [ "$#" -eq 1 ]; then
   mv "$NODE_FILE.next" "$NODE_FILE"
   systemctl restart spire-agent.service
   systemctl enable --now crane-spire-k8s-renew.timer >/dev/null
+fi
+
+# Issue a separate cluster-bound client identity for Subd's bounded Secret and
+# Deployment operations. It shares the renewal timer but never receives the
+# administrator kubeconfig or CA signing key.
+install -d -m 0700 "$SUBD_STATE"
+subd_stage="$(mktemp -d "$SUBD_STATE/generation.XXXXXXXX")"
+if openssl x509 -checkend 2592000 -noout -in "$SUBD_STATE/current/client.crt" >/dev/null 2>&1 \
+  && openssl verify -CAfile "$CLUSTER_CA" "$SUBD_STATE/current/client.crt" >/dev/null 2>&1; then
+  cp "$SUBD_STATE/current/client.crt" "$SUBD_STATE/current/client.key" "$subd_stage/"
+else
+  openssl req -new -newkey rsa:2048 -nodes -keyout "$subd_stage/client.key" \
+    -out "$subd_stage/client.csr" -subj "/CN=crane-subd:$node" >/dev/null 2>&1
+  printf '%s\n' 'extendedKeyUsage=clientAuth' 'keyUsage=digitalSignature,keyEncipherment' > "$subd_stage/extensions"
+  openssl x509 -req -in "$subd_stage/client.csr" -CA "$CLUSTER_CA" -CAkey "$CLUSTER_KEY" \
+    -set_serial "0x$(openssl rand -hex 16)" -days 365 -extfile "$subd_stage/extensions" \
+    -out "$subd_stage/client.crt" >/dev/null 2>&1
+  rm "$subd_stage/client.csr" "$subd_stage/extensions"
+fi
+cp "$CLUSTER_CA" "$subd_stage/ca.crt"
+server="$(kubectl --kubeconfig "$ADMIN_KUBECONFIG" config view --raw -o jsonpath='{.clusters[0].cluster.server}')"
+case "$server" in https://*) ;; *) fail ;; esac
+kubectl config set-cluster crane --server="$server" \
+  --certificate-authority="$SUBD_STATE/current/ca.crt" --kubeconfig="$subd_stage/kubeconfig" >/dev/null
+kubectl config set-credentials crane-subd \
+  --client-certificate="$SUBD_STATE/current/client.crt" \
+  --client-key="$SUBD_STATE/current/client.key" --kubeconfig="$subd_stage/kubeconfig" >/dev/null
+kubectl config set-context crane --cluster=crane --user=crane-subd \
+  --kubeconfig="$subd_stage/kubeconfig" >/dev/null
+kubectl config use-context crane --kubeconfig="$subd_stage/kubeconfig" >/dev/null
+chmod 0600 "$subd_stage/"*
+
+subd_kubectl=(kubectl --server="$server" --certificate-authority="$subd_stage/ca.crt" \
+  --client-certificate="$subd_stage/client.crt" --client-key="$subd_stage/client.key")
+[ "$("${subd_kubectl[@]}" auth can-i get secrets --all-namespaces)" = yes ]
+[ "$("${subd_kubectl[@]}" auth can-i update deployments.apps --all-namespaces)" = yes ]
+[ "$("${subd_kubectl[@]}" auth can-i create pods --all-namespaces)" = no ]
+
+if [ -d "$SUBD_STATE/current" ] && cmp -s "$subd_stage/client.crt" "$SUBD_STATE/current/client.crt" \
+  && cmp -s "$subd_stage/client.key" "$SUBD_STATE/current/client.key" \
+  && cmp -s "$subd_stage/ca.crt" "$SUBD_STATE/current/ca.crt" \
+  && cmp -s "$subd_stage/kubeconfig" "$SUBD_STATE/current/kubeconfig"; then
+  rm -rf "$subd_stage"
+  subd_stage=''
+else
+  pending="$SUBD_STATE/current.next"
+  if [ -L "$pending" ]; then rm "$pending"; fi
+  ln -s "$(basename "$subd_stage")" "$pending"
+  mv -Tf "$pending" "$SUBD_STATE/current"
+  subd_stage=''
 fi

@@ -201,6 +201,31 @@ subjects:
   - kind: User
     apiGroup: rbac.authorization.k8s.io
     name: "crane-spire-attestor:$NODE_NAME"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: crane-subd-kubernetes-operations
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "create", "update"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: crane-subd-kubernetes-operations
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: crane-subd-kubernetes-operations
+subjects:
+  - kind: User
+    apiGroup: rbac.authorization.k8s.io
+    name: "crane-subd:$NODE_NAME"
 YAML
 /usr/local/bin/crane-configure-spire-k8s "$NODE_NAME"
 
