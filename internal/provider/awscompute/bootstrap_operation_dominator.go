@@ -121,7 +121,14 @@ func (s *operationSession) Validate(ctx context.Context, op api.Operation) (bool
 	if err != nil {
 		return false, err
 	}
-	probe, err := renderTemplate("zone-validate.sh.tmpl", scriptData{Config: s.cfg, TrustDomain: s.cfg.SPIRE.TrustDomain, ZoneID: zone.ID, Host: bootstrapAgentHost{PrivateIP: control.PrivateIP}})
+	node := control
+	if op.Kind == "attach_zone" {
+		node, err = s.operationHost(ctx, "zone-"+zone.ID)
+		if err != nil {
+			return false, err
+		}
+	}
+	probe, err := renderTemplate("zone-validate.sh.tmpl", scriptData{Config: s.cfg, TrustDomain: s.cfg.SPIRE.TrustDomain, ZoneID: zone.ID, NodePrivateIP: node.PrivateIP, Host: bootstrapAgentHost{PrivateIP: control.PrivateIP}})
 	if err != nil {
 		return false, err
 	}

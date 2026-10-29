@@ -2,6 +2,10 @@
 set -euo pipefail
 export PATH="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 export KUBECONFIG=/etc/kubernetes/admin.conf
+NODE_NAME="$(kubectl get nodes -o json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(n["metadata"]["name"] for n in d["items"] if any(a["type"]=="InternalIP" and a["address"]=="[[ .NodePrivateIP ]]" for a in n["status"].get("addresses",[]))))')"
+kubectl wait --for=condition=Ready "node/$NODE_NAME" --timeout=600s
+test "$(kubectl -n kube-system get pods -l k8s-app=cilium --field-selector "spec.nodeName=$NODE_NAME" -o jsonpath='{.items[0].status.containerStatuses[0].ready}')" = true
+getent hosts "dominator-[[ .ZoneID ]].crane-system.svc.cluster.local" >/dev/null
 kubectl -n crane-system rollout status deployment/dominator-[[ .ZoneID ]] --timeout=600s
 kubectl get --raw=/readyz >/dev/null
 SPIFFE_ENDPOINT_SOCKET=unix:///run/spire/sockets/agent.sock SPIFFE_TRUST_DOMAIN="[[ .TrustDomain ]]" \
