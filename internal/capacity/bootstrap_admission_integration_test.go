@@ -114,4 +114,22 @@ func TestPostgresCreateIndependentClusterAdmission(t *testing.T) {
 	if state != "ready" {
 		t.Fatalf("existing cluster state %s", state)
 	}
+	op, err := s.Claim(ctx, zone.ID, "create_cluster", "worker", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.BootstrapPhase(ctx, op, api.ZoneInfrastructureProvisioning, false); err != nil {
+		t.Fatal(err)
+	}
+	result := api.BootstrapStepResult{APIServerEndpoint: "https://10.80.1.10:6443", CACertHash: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+	if err := s.SetClusterDiscovery(ctx, op, result); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetClusterDiscovery(ctx, op, result); err != nil {
+		t.Fatalf("idempotent discovery: %v", err)
+	}
+	result.APIServerEndpoint = "https://10.80.1.11:6443"
+	if err := s.SetClusterDiscovery(ctx, op, result); err == nil {
+		t.Fatal("changed API endpoint accepted")
+	}
 }

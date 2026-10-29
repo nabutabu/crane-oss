@@ -213,6 +213,13 @@ type BootstrapRequest struct {
 	Parameters json.RawMessage `json:"parameters"`
 }
 
+// BootstrapStepResult contains public cluster discovery returned by a
+// provider step. It must never carry join credentials or private key material.
+type BootstrapStepResult struct {
+	APIServerEndpoint string `json:"api_server_endpoint,omitempty"`
+	CACertHash        string `json:"ca_cert_hash,omitempty"`
+}
+
 type NodeRemovalOperation struct {
 	Operation
 	NodeName, ProviderID, Reason           string
