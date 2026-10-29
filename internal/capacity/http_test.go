@@ -17,13 +17,17 @@ func TestAdapterClusterBinding(t *testing.T) {
 		want                  int
 	}{
 		{"", "cluster", "cluster", 401}, {"wrong", "cluster", "cluster", 401},
-		{"test-only", "other", "cluster", 403}, {"test-only", "cluster", "", 403},
+		{"test-only", "other", "cluster", 403}, {"test-only", "cluster", "", 401},
 	} {
 		r := httptest.NewRequest("GET", "/v1/node-groups/aws-test-us-west-2-a-general/target", nil)
 		r.Header.Set("Authorization", "Bearer "+tc.token)
 		r.Header.Set("X-Crane-Cluster-ID", tc.cluster)
 		w := httptest.NewRecorder()
-		NewAPI(nil, "", "test-only", tc.bound).Handler().ServeHTTP(w, r)
+		principals := map[string]string{}
+		if tc.bound != "" {
+			principals[tc.bound] = "test-only"
+		}
+		NewAPI(nil, "", principals).Handler().ServeHTTP(w, r)
 		if w.Code != tc.want {
 			t.Fatalf("identity gate: got %d want %d", w.Code, tc.want)
 		}
@@ -49,7 +53,7 @@ func TestTargetHTTPReadAndSafeErrors(t *testing.T) {
 		r.Header.Set("Authorization", "Bearer test-only")
 		r.Header.Set("X-Crane-Cluster-ID", "cluster")
 		w := httptest.NewRecorder()
-		NewAPI(NewStore(db), "", "test-only", "cluster").Handler().ServeHTTP(w, r)
+		NewAPI(NewStore(db), "", map[string]string{"cluster": "test-only"}).Handler().ServeHTTP(w, r)
 		if w.Code != tc.want || strings.Contains(w.Body.String(), "secret") {
 			t.Fatalf("unsafe response: %d %s", w.Code, w.Body)
 		}

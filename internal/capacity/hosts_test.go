@@ -34,7 +34,7 @@ func TestHostListingAuthenticationAndFilters(t *testing.T) {
 		r := httptest.NewRequest(http.MethodGet, "/v1/hosts"+tc.query, nil)
 		r.Header.Set("Authorization", "Bearer "+tc.token)
 		w := httptest.NewRecorder()
-		NewAPI(nil, tc.configured, "adapter", "cluster").Handler().ServeHTTP(w, r)
+		NewAPI(nil, tc.configured, map[string]string{"cluster": "adapter"}).Handler().ServeHTTP(w, r)
 		if w.Code != tc.want {
 			t.Fatalf("%s: got %d want %d", tc.query, w.Code, tc.want)
 		}
@@ -70,7 +70,7 @@ func TestHostListingHTTPAndSafeErrors(t *testing.T) {
 			r := httptest.NewRequest(http.MethodGet, "/v1/hosts?provider=aws&region=us-west-2", nil)
 			r.Header.Set("Authorization", "Bearer admin")
 			w := httptest.NewRecorder()
-			NewAPI(NewStore(db), "admin", "", "").Handler().ServeHTTP(w, r)
+			NewAPI(NewStore(db), "admin", nil).Handler().ServeHTTP(w, r)
 			if strings.Contains(w.Body.String(), "synthetic-private") {
 				t.Fatal("database details exposed")
 			}

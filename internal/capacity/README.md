@@ -68,8 +68,8 @@ transport are Phase 2 work. Launch JSON and bootstrap JSON must not contain
 plaintext join tokens or cloud credentials.
 
 The Phase 0 adapter HTTP boundary adds a cluster-scoped target read and atomic
-named-node removal admission. Configure `CRANE_ADAPTER_TOKEN` together with
-`CRANE_ADAPTER_CLUSTER_ID`; headers cannot choose a different cluster. Removal
+named-node removal admission. Configure a cluster-to-credential entry in
+`CRANE_ADAPTER_PRINCIPALS`; headers cannot choose a different cluster. Removal
 batches store the handler request in immutable operation parameters under the
 group lock, so a lost-response replay cannot lower the target twice. Every node
 must match catalog group/provider identity, and all operations roll back together.

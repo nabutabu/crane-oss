@@ -115,7 +115,7 @@ func TestPostgresNamedRemovalConcurrentCAS(t *testing.T) {
 
 func TestPostgresAdapterHTTPAdmissionAndReplay(t *testing.T) {
 	s, removal := removalFixture(t)
-	server := httptest.NewServer(NewAPI(s, "", "test-only", "cluster").Handler())
+	server := httptest.NewServer(NewAPI(s, "", map[string]string{"cluster": "test-only"}).Handler())
 	defer server.Close()
 	client, err := autoscaler.NewHTTPClient(server.URL, "test-only", "cluster")
 	if err != nil {

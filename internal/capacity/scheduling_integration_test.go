@@ -44,7 +44,7 @@ func TestPostgresTemplateUpdateRefreshAndReplay(t *testing.T) {
 }
 
 func TestTemplateUpdateRequiresAdmin(t *testing.T) {
-	apiHandler := NewAPI(nil, "admin", "adapter", "cluster").Handler()
+	apiHandler := NewAPI(nil, "admin", map[string]string{"cluster": "adapter"}).Handler()
 	for _, token := range []string{"", "Bearer adapter"} {
 		r := httptest.NewRequest(http.MethodPatch, "/v1/node-groups/group/template", strings.NewReader(`{}`))
 		r.Header.Set("Authorization", token)

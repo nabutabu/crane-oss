@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-type Target struct{ HostID, ZoneID, ProviderID, Endpoint, DominatorEndpoint, DominatorIdentity string }
+type Target struct{ HostID, ZoneID, ClusterID, ProviderID, Endpoint, DominatorEndpoint, DominatorIdentity string }
 type Store struct{ DB *sql.DB }
 type queryer interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
@@ -17,8 +17,14 @@ type queryer interface {
 
 func loadTarget(ctx context.Context, q queryer, host string) (Target, error) {
 	t := Target{HostID: host}
-	var state string
-	err := q.QueryRowContext(ctx, `SELECT COALESCE(crane_zone,zone,''),COALESCE(providerid,''),subd_endpoint,state FROM host WHERE id=$1`, host).Scan(&t.ZoneID, &t.ProviderID, &t.Endpoint, &state)
+	var state, membershipLifecycle, membershipAccess string
+	err := q.QueryRowContext(ctx, `SELECT COALESCE(h.crane_zone,h.zone,''),COALESCE(g.cluster_id,''),
+		COALESCE(h.providerid,''),h.subd_endpoint,h.state,
+		COALESCE(m.lifecycle_state,''),COALESCE(m.access_state,'')
+		FROM host h
+		LEFT JOIN node_groups g ON g.id=h.node_group_id AND g.zone_id=h.crane_zone
+		LEFT JOIN cluster_zones m ON m.cluster_id=g.cluster_id AND m.zone_id=g.zone_id
+		WHERE h.id=$1`, host).Scan(&t.ZoneID, &t.ClusterID, &t.ProviderID, &t.Endpoint, &state, &membershipLifecycle, &membershipAccess)
 	if errors.Is(err, sql.ErrNoRows) {
 		return t, fail(http.StatusNotFound, "host not found")
 	}
@@ -27,6 +33,9 @@ func loadTarget(ctx context.Context, q queryer, host string) (Target, error) {
 	}
 	if state == "DRAINING" || state == "TERMINATING" || state == "TERMINATED" || state == "FAILED" || t.ProviderID == "" || t.Endpoint == "" {
 		return t, fail(409, "host unavailable for expected-state changes")
+	}
+	if t.ClusterID != "" && (membershipLifecycle != "ready" || membershipAccess != "approved") {
+		return t, fail(http.StatusForbidden, "cluster-zone membership does not authorize host state changes")
 	}
 	err = q.QueryRowContext(ctx, `SELECT endpoint,identity FROM zone_dominators WHERE zone_id=$1`, t.ZoneID).Scan(&t.DominatorEndpoint, &t.DominatorIdentity)
 	if err != nil {

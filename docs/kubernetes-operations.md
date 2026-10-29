@@ -20,6 +20,8 @@ make the Kubernetes Secret host-local. Missing credentials fail the operation;
 callers cannot supply a kubeconfig or redirect a request to another endpoint.
 
 Crane resolves catalog placement and the zone's registered Dominator endpoint.
+Dynamically admitted hosts additionally require a ready, approved cluster-zone
+membership at delivery time; revocation prevents new expected-state changes.
 Dominator validates its configured `CRANE_ZONE_ID`, pins the host's provider-bound
 SPIFFE identity, allocates a durable revision and blocks on Subd enforcement.
 The internal `PUT /v1/host-secrets` route accepts only `/crane-api`, not the

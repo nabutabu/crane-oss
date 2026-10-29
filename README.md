@@ -87,7 +87,7 @@ The crane-api service will start on port 43060 and begin monitoring hosts in the
 - `POST /v1/cluster-zones` - admin-only membership registration; defaults to `requested/pending`
 - `PATCH /v1/cluster-zones/{cluster_id}/{zone_id}` - admin-only operator-validated membership policy; requires both `lifecycle_state` (`requested`, `initializing`, `ready`, `failed`) and `access_state` (`pending`, `approved`, `revoked`)
 - `POST /v1/first-zone` - atomically seeds the first shared topology and membership; new groups start at target/revision 0 and retries preserve runtime state
-- `POST /v1/capacity` - capacity admission; the adapter token is bound to `CRANE_ADAPTER_CLUSTER_ID`, and `X-Crane-Cluster-ID` must match
+- `POST /v1/capacity` - capacity admission; the adapter credential is bound to the matching cluster principal in `CRANE_ADAPTER_PRINCIPALS`
 - `GET /v1/autoscaler/discovery` - adapter-authenticated groups, scheduling templates, and catalog inventory for that bound cluster
 - `PATCH /v1/node-groups/{id}/template` - admin-authenticated, revisioned scheduling and launch-template update
 - `GET /v1/node-groups/{id}/target` - authenticated target/revision read for adapter recovery
@@ -157,8 +157,9 @@ The Activity Manager uses the following decision logic:
 | AWS_SECRET_ACCESS_KEY | - | AWS secret key |
 | AWS_REGION | us-west-2 | AWS region |
 | CRANE_ADMIN_TOKEN | - | Required bearer token for topology/bootstrap mutations |
-| CRANE_ADAPTER_TOKEN | - | Required bearer token for capacity admission |
-| CRANE_ADAPTER_CLUSTER_ID | - | Cluster bound to the adapter token; required for target reads, capacity, and node removals |
+| CRANE_ADAPTER_PRINCIPALS | - | Crane API: JSON object mapping each cluster ID to its adapter bearer credential |
+| CRANE_ADAPTER_TOKEN | - | Adapter process: its cluster-specific bearer credential |
+| CRANE_ADAPTER_CLUSTER_ID | - | Adapter process: the cluster it serves; must match its entry in `CRANE_ADAPTER_PRINCIPALS` |
 
 The [Cluster Autoscaler external gRPC prototype](internal/adapter/autoscaler/README.md)
 provides a runnable adapter and the pinned CA v1.35.0 compatibility tests.

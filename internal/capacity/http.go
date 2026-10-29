@@ -1,6 +1,8 @@
 package capacity
 
 import (
+	"context"
+	"crypto/subtle"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -16,21 +18,55 @@ import (
 
 const maxBodyBytes = 1 << 20
 
-// API exposes the small platform control-plane surface. Inventory reads and
-// topology mutations require the admin bearer token. Adapter requests require a token
-// bound to one configured cluster; the header must match that binding.
-type API struct {
-	store            *Store
-	adminToken       string
-	adapterToken     string
-	adapterClusterID string
+type adapterClusterContextKey struct{}
+
+func authenticatedAdapterCluster(ctx context.Context) string {
+	clusterID, _ := ctx.Value(adapterClusterContextKey{}).(string)
+	return clusterID
 }
 
-// NewAPI builds the platform API. Unconfigured adapter credentials fail closed.
-// This prototype binds one token to one cluster; a workload identity registry
-// will replace this configuration when multiple adapters are deployed.
-func NewAPI(store *Store, adminToken, adapterToken, adapterClusterID string) *API {
-	return &API{store: store, adminToken: adminToken, adapterToken: adapterToken, adapterClusterID: adapterClusterID}
+// API exposes the small platform control-plane surface. Inventory reads and
+// topology mutations require the admin bearer token. Each adapter credential
+// is bound to one configured cluster; the header must match that binding.
+type API struct {
+	store             *Store
+	adminToken        string
+	adapterPrincipals map[string]string
+}
+
+// NewAPI binds each configured bearer credential to one
+// cluster. Cluster IDs in requests select the already authenticated principal;
+// they never grant access by themselves.
+func NewAPI(store *Store, adminToken string, principals map[string]string) *API {
+	configured := make(map[string]string, len(principals))
+	for clusterID, token := range principals {
+		configured[clusterID] = token
+	}
+	return &API{store: store, adminToken: adminToken, adapterPrincipals: configured}
+}
+
+// ParseAdapterPrincipals parses a JSON object whose keys are cluster IDs and
+// values are bearer credentials. Empty, ambiguous, and shared credentials are
+// rejected so one credential always represents one cluster principal.
+func ParseAdapterPrincipals(raw string) (map[string]string, error) {
+	if strings.TrimSpace(raw) == "" {
+		return map[string]string{}, nil
+	}
+	var principals map[string]string
+	if err := json.Unmarshal([]byte(raw), &principals); err != nil || principals == nil {
+		return nil, errors.New("CRANE_ADAPTER_PRINCIPALS must be a JSON object")
+	}
+	seen := make(map[string]struct{}, len(principals))
+	for clusterID, token := range principals {
+		if clusterID == "" || clusterID != strings.TrimSpace(clusterID) || token == "" || token != strings.TrimSpace(token) {
+			return nil, errors.New("adapter principal cluster IDs and credentials must be non-empty and canonical")
+		}
+		if _, exists := seen[token]; exists {
+			return nil, errors.New("adapter credential is assigned to multiple clusters")
+		}
+		seen[token] = struct{}{}
+	}
+	return principals, nil
 }
 
 // Handler returns the router that maps each platform endpoint to its handler.
@@ -67,14 +103,25 @@ func (a *API) admin(next http.HandlerFunc) http.Handler {
 // adapter guards capacity admission behind the configured adapter bearer token.
 func (a *API) adapter(next http.HandlerFunc) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if a.adapterToken == "" || r.Header.Get("Authorization") != "Bearer "+a.adapterToken {
+		presented := ""
+		if authorization := r.Header.Get("Authorization"); strings.HasPrefix(authorization, "Bearer ") {
+			presented = strings.TrimPrefix(authorization, "Bearer ")
+		}
+		authenticatedCluster := ""
+		for clusterID, token := range a.adapterPrincipals {
+			if presented != "" && subtle.ConstantTimeCompare([]byte(presented), []byte(token)) == 1 {
+				authenticatedCluster = clusterID
+			}
+		}
+		if authenticatedCluster == "" {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		if a.adapterClusterID == "" || strings.TrimSpace(r.Header.Get("X-Crane-Cluster-ID")) != a.adapterClusterID {
+		if strings.TrimSpace(r.Header.Get("X-Crane-Cluster-ID")) != authenticatedCluster {
 			http.Error(w, "forbidden cluster identity", http.StatusForbidden)
 			return
 		}
+		r = r.WithContext(context.WithValue(r.Context(), adapterClusterContextKey{}, authenticatedCluster))
 		// Preserve an entrypoint's active server span. Standalone handlers still
 		// accept incoming propagation when no server instrumentation is present.
 		if !trace.SpanContextFromContext(r.Context()).IsValid() {
@@ -229,7 +276,7 @@ type setTargetRequest struct {
 }
 
 func (a *API) setTarget(w http.ResponseWriter, r *http.Request) {
-	cluster := strings.TrimSpace(r.Header.Get("X-Crane-Cluster-ID"))
+	cluster := authenticatedAdapterCluster(r.Context())
 	if cluster == "" {
 		http.Error(w, "missing cluster identity", http.StatusUnauthorized)
 		return
@@ -256,7 +303,7 @@ func (a *API) setTarget(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) target(w http.ResponseWriter, r *http.Request) {
-	out, err := a.store.Target(r.Context(), a.adapterClusterID, r.PathValue("id"))
+	out, err := a.store.Target(r.Context(), authenticatedAdapterCluster(r.Context()), r.PathValue("id"))
 	if err != nil {
 		capacityError(w, err)
 		return
@@ -265,7 +312,7 @@ func (a *API) target(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) discovery(w http.ResponseWriter, r *http.Request) {
-	out, err := a.store.AutoscalerDiscovery(r.Context(), a.adapterClusterID)
+	out, err := a.store.AutoscalerDiscovery(r.Context(), authenticatedAdapterCluster(r.Context()))
 	if err != nil {
 		capacityError(w, err)
 		return
@@ -278,7 +325,7 @@ func (a *API) removeNodes(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &in) {
 		return
 	}
-	if err := a.store.CreateAutoscalerRemovals(r.Context(), a.adapterClusterID, in); err != nil {
+	if err := a.store.CreateAutoscalerRemovals(r.Context(), authenticatedAdapterCluster(r.Context()), in); err != nil {
 		capacityError(w, err)
 		return
 	}
