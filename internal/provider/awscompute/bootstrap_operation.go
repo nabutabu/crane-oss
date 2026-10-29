@@ -130,8 +130,8 @@ func (s *operationSession) EnsureInfrastructure(ctx context.Context, op api.Oper
 	return err
 }
 
-func (s *operationSession) InitializeControlPlane(context.Context, api.Operation) error {
-	return fmt.Errorf("AWS control-plane operation is not configured")
+func (s *operationSession) InitializeControlPlane(context.Context, api.Operation) (api.BootstrapStepResult, error) {
+	return api.BootstrapStepResult{}, fmt.Errorf("AWS control-plane operation is not configured")
 }
 func (s *operationSession) EnsureNetwork(context.Context, api.Operation) error {
 	return fmt.Errorf("AWS zone network operation is not configured")

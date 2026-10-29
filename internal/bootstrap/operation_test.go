@@ -13,9 +13,9 @@ func (f *operationSessionFake) EnsureInfrastructure(context.Context, api.Operati
 	f.calls = append(f.calls, "infrastructure")
 	return nil
 }
-func (f *operationSessionFake) InitializeControlPlane(context.Context, api.Operation) error {
+func (f *operationSessionFake) InitializeControlPlane(context.Context, api.Operation) (api.BootstrapStepResult, error) {
 	f.calls = append(f.calls, "control-plane")
-	return nil
+	return api.BootstrapStepResult{APIServerEndpoint: "https://cluster.test:6443", CACertHash: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}, nil
 }
 func (f *operationSessionFake) EnsureNetwork(context.Context, api.Operation) error {
 	f.calls = append(f.calls, "network")
@@ -43,7 +43,7 @@ func TestOperationExecutorDispatch(t *testing.T) {
 		exec := OperationExecutor{Session: fake}
 		op := api.Operation{Kind: tc.kind}
 		for _, phase := range tc.phases {
-			if err := exec.Step(context.Background(), op, phase); err != nil {
+			if _, err := exec.Step(context.Background(), op, phase); err != nil {
 				t.Fatal(err)
 			}
 		}

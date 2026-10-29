@@ -13,7 +13,7 @@ import (
 // executor owns cloud/Kubernetes/SPIRE clients; this package owns durable
 // ordering, leases, and the readiness handoff.
 type BootstrapExecutor interface {
-	Step(context.Context, api.Operation, api.ZoneBootstrapPhase) error
+	Step(context.Context, api.Operation, api.ZoneBootstrapPhase) (api.BootstrapStepResult, error)
 	Validated(context.Context, api.Operation) (bool, error)
 }
 
@@ -70,10 +70,20 @@ func (c *BootstrapController) RunOnce(ctx context.Context, zoneID, owner string)
 	if !ok {
 		return fmt.Errorf("bootstrap operation %s is in terminal phase %s", op.ID, phase)
 	}
+	var result api.BootstrapStepResult
 	if err = c.withLease(ctx, op, d, func(stepCtx context.Context) error {
-		return c.Executor.Step(stepCtx, op, n)
+		var stepErr error
+		result, stepErr = c.Executor.Step(stepCtx, op, n)
+		return stepErr
 	}); err != nil {
 		return err
+	}
+	if n == api.ZoneControlPlaneInitializing {
+		if err := c.Store.SetClusterDiscovery(ctx, op, result); err != nil {
+			return err
+		}
+	} else if result.APIServerEndpoint != "" || result.CACertHash != "" {
+		return fmt.Errorf("unexpected cluster discovery from %s", n)
 	}
 	if err := c.Store.BootstrapPhase(ctx, op, n, false); err != nil {
 		return err

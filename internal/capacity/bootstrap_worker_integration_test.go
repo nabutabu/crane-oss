@@ -12,9 +12,9 @@ import (
 
 type bootstrapWorkerFake struct{ phases []api.ZoneBootstrapPhase }
 
-func (f *bootstrapWorkerFake) Step(_ context.Context, _ api.Operation, phase api.ZoneBootstrapPhase) error {
+func (f *bootstrapWorkerFake) Step(_ context.Context, _ api.Operation, phase api.ZoneBootstrapPhase) (api.BootstrapStepResult, error) {
 	f.phases = append(f.phases, phase)
-	return nil
+	return api.BootstrapStepResult{}, nil
 }
 func (f *bootstrapWorkerFake) Validated(context.Context, api.Operation) (bool, error) {
 	return true, nil
@@ -25,13 +25,13 @@ type failingBootstrapExecutor struct {
 	tokens []string
 }
 
-func (f *failingBootstrapExecutor) Step(_ context.Context, op api.Operation, _ api.ZoneBootstrapPhase) error {
+func (f *failingBootstrapExecutor) Step(_ context.Context, op api.Operation, _ api.ZoneBootstrapPhase) (api.BootstrapStepResult, error) {
 	f.calls++
 	f.tokens = append(f.tokens, op.ProviderToken)
 	if f.calls == 1 {
-		return errors.New("transient provider failure")
+		return api.BootstrapStepResult{}, errors.New("transient provider failure")
 	}
-	return nil
+	return api.BootstrapStepResult{}, nil
 }
 func (f *failingBootstrapExecutor) Validated(context.Context, api.Operation) (bool, error) {
 	return true, nil
