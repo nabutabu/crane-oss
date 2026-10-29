@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -39,7 +38,6 @@ func main() {
 }
 
 func run() error {
-	configPath := flag.String("config", "", "legacy static group configuration JSON (tests only)")
 	addr := flag.String("listen", "127.0.0.1:50051", "gRPC listen address")
 	craneURL := flag.String("crane-url", "http://127.0.0.1:43060", "Crane API base URL")
 	cert := flag.String("tls-cert", "", "server certificate PEM")
@@ -47,15 +45,6 @@ func run() error {
 	ca := flag.String("client-ca", "", "trusted CA for CA client certificates")
 	flag.Parse()
 	cfg := autoscaler.Config{ClusterID: os.Getenv("CRANE_ADAPTER_CLUSTER_ID")}
-	if *configPath != "" {
-		data, err := os.ReadFile(*configPath)
-		if err != nil {
-			return fmt.Errorf("read adapter configuration")
-		}
-		if err := json.Unmarshal(data, &cfg); err != nil {
-			return fmt.Errorf("invalid adapter configuration")
-		}
-	}
 	client, err := autoscaler.NewHTTPClient(*craneURL, os.Getenv("CRANE_ADAPTER_TOKEN"), cfg.ClusterID)
 	if err != nil {
 		return err
