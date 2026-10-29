@@ -187,9 +187,9 @@ provider implementation.
 that cluster's Kubernetes control plane and Cilium, then installs its first
 zone's Dominator and its Subd agent. `attach_zone` provisions a protected host in the new zone,
 joins it to the existing cluster using a short-lived kubeadm token, and installs
-its Subd agent plus another Dominator on the existing cluster's protected control-plane host. Each
-Dominator gets a separate SPIFFE identity and database-backed `zone_dominators`
-route. The shared deployment VPC, RDS instance, Crane API, and SPIRE authority
+its Subd agent plus another Dominator pinned to the existing cluster's protected
+control-plane host. Each Dominator runs behind its own private Kubernetes Service,
+gets a separate SPIFFE identity and database-backed `zone_dominators` route. The shared deployment VPC, RDS instance, Crane API, and SPIRE authority
 are reused; no second layer-zero deployment is created.
 
 The final validation gate confirms the joined node is Ready, its Cilium agent
