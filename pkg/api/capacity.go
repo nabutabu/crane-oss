@@ -195,7 +195,7 @@ const (
 	ZoneSpireInstalling       ZoneBootstrapPhase = "SpireInstalling"
 	ZoneSpireValidating       ZoneBootstrapPhase = "SpireValidating"
 	// Kept as an alias for callers compiled against the original phase name.
-	ZoneInfrastructureProvisioning ZoneBootstrapPhase = ZoneDatabaseProvisioning
+	ZoneInfrastructureProvisioning ZoneBootstrapPhase = "InfrastructureProvisioning"
 	ZoneControlPlaneInitializing   ZoneBootstrapPhase = "ControlPlaneInitializing"
 	ZoneNetworkInstalling          ZoneBootstrapPhase = "NetworkInstalling"
 	ZoneDominatorInstalling        ZoneBootstrapPhase = "DominatorInstalling"

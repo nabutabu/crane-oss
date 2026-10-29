@@ -358,7 +358,7 @@ func (s *Store) Target(ctx context.Context, clusterID, groupID string) (api.Capa
 // Claim is reserved for provider-neutral zone bootstrap, before a zone
 // Dominator exists. Cluster work must use ClaimDominator.
 func (s *Store) Claim(ctx context.Context, zoneID, kind, owner string, duration time.Duration) (api.Operation, error) {
-	if kind != "create_zone" {
+	if kind != "create_zone" && kind != "create_cluster" && kind != "attach_zone" {
 		return api.Operation{}, ErrForbidden
 	}
 	return s.claim(ctx, zoneID, kind, owner, duration, false)
@@ -423,7 +423,7 @@ func (s *Store) Renew(ctx context.Context, op api.Operation, duration time.Durat
 		 SET lease_until=clock_timestamp()+($4 * interval '1 millisecond'),updated_at=clock_timestamp()
 		 WHERE id=$1 AND lease_owner=$2 AND fence=$3
 		   AND lease_until>clock_timestamp() AND state IN ('leased','launching')
-		   AND (kind='create_zone' OR EXISTS (
+		   AND (kind IN ('create_zone','create_cluster','attach_zone') OR EXISTS (
 		     SELECT 1 FROM node_groups g
 		     JOIN cluster_zones m ON m.cluster_id=g.cluster_id AND m.zone_id=g.zone_id
 		     JOIN zone_dominators d ON d.zone_id=g.zone_id

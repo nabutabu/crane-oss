@@ -33,7 +33,14 @@ func (c *BootstrapController) RunOnce(ctx context.Context, zoneID, owner string)
 	if d == 0 {
 		d = 2 * time.Minute
 	}
-	op, err := c.Store.Claim(ctx, zoneID, "create_zone", owner, d)
+	var op api.Operation
+	var err error
+	for _, kind := range []string{"create_cluster", "attach_zone", "create_zone"} {
+		op, err = c.Store.Claim(ctx, zoneID, kind, owner, d)
+		if err != sql.ErrNoRows {
+			break
+		}
+	}
 	if err == sql.ErrNoRows {
 		return nil
 	}
@@ -44,34 +51,70 @@ func (c *BootstrapController) RunOnce(ctx context.Context, zoneID, owner string)
 	if err != nil {
 		return err
 	}
-	next := map[api.ZoneBootstrapPhase]api.ZoneBootstrapPhase{
-		api.ZoneRequested:                api.ZoneDatabaseProvisioning,
-		api.ZoneDatabaseProvisioning:     api.ZoneDatabaseReady,
-		api.ZoneDatabaseReady:            api.ZoneSpireHostProvisioning,
-		api.ZoneSpireHostProvisioning:    api.ZoneSpireInstalling,
-		api.ZoneSpireInstalling:          api.ZoneSpireValidating,
-		api.ZoneSpireValidating:          api.ZoneControlPlaneInitializing,
-		api.ZoneControlPlaneInitializing: api.ZoneNetworkInstalling,
-		api.ZoneNetworkInstalling:        api.ZoneDominatorInstalling,
-		api.ZoneDominatorInstalling:      api.ZoneValidating,
-	}
 	if phase == api.ZoneValidating {
-		ok, e := c.Executor.Validated(ctx, op)
+		var ok bool
+		e := c.withLease(ctx, op, d, func(stepCtx context.Context) error {
+			var validationErr error
+			ok, validationErr = c.Executor.Validated(stepCtx, op)
+			return validationErr
+		})
 		if e != nil {
-			_ = c.Store.BootstrapPhase(ctx, op, api.ZoneFailed, false)
 			return e
+		}
+		if !ok {
+			return fmt.Errorf("bootstrap operation %s has not passed validation", op.ID)
 		}
 		return c.Store.BootstrapPhase(ctx, op, api.ZoneReady, ok)
 	}
-	n, ok := next[phase]
+	n, ok := bootstrapNext(op.Kind, phase)
 	if !ok {
 		return fmt.Errorf("bootstrap operation %s is in terminal phase %s", op.ID, phase)
 	}
-	if err = c.Executor.Step(ctx, op, n); err != nil {
-		_ = c.Store.BootstrapPhase(ctx, op, api.ZoneFailed, false)
+	if err = c.withLease(ctx, op, d, func(stepCtx context.Context) error {
+		return c.Executor.Step(stepCtx, op, n)
+	}); err != nil {
 		return err
 	}
 	return c.Store.BootstrapPhase(ctx, op, n, false)
+}
+
+// withLease keeps long remote steps fenced. A lost lease cancels the step;
+// provider executors must use the supplied context for every remote call.
+func (c *BootstrapController) withLease(ctx context.Context, op api.Operation, lease time.Duration, run func(context.Context) error) error {
+	stepCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	done := make(chan struct{})
+	leaseErr := make(chan error, 1)
+	interval := lease / 3
+	if interval < time.Millisecond {
+		interval = time.Millisecond
+	}
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				leaseErr <- nil
+				return
+			case <-stepCtx.Done():
+				leaseErr <- stepCtx.Err()
+				return
+			case <-ticker.C:
+				if err := c.Store.Renew(stepCtx, op, lease); err != nil {
+					cancel()
+					leaseErr <- err
+					return
+				}
+			}
+		}
+	}()
+	err := run(stepCtx)
+	close(done)
+	if e := <-leaseErr; e != nil {
+		return e
+	}
+	return err
 }
 
 func (c *BootstrapController) currentPhase(ctx context.Context, operationID string) (api.ZoneBootstrapPhase, error) {
