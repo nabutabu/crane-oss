@@ -10,7 +10,7 @@ func TestBootstrapPhaseSequences(t *testing.T) {
 		kind string
 		want []api.ZoneBootstrapPhase
 	}{
-		{"create_cluster", []api.ZoneBootstrapPhase{api.ZoneRequested, api.ZoneDatabaseProvisioning, api.ZoneDatabaseReady, api.ZoneSpireHostProvisioning, api.ZoneSpireInstalling, api.ZoneSpireValidating, api.ZoneControlPlaneInitializing, api.ZoneNetworkInstalling, api.ZoneDominatorInstalling, api.ZoneValidating, api.ZoneReady}},
+		{"create_cluster", []api.ZoneBootstrapPhase{api.ZoneRequested, api.ZoneInfrastructureProvisioning, api.ZoneControlPlaneInitializing, api.ZoneNetworkInstalling, api.ZoneDominatorInstalling, api.ZoneValidating, api.ZoneReady}},
 		{"attach_zone", []api.ZoneBootstrapPhase{api.ZoneRequested, api.ZoneInfrastructureProvisioning, api.ZoneNetworkInstalling, api.ZoneDominatorInstalling, api.ZoneValidating, api.ZoneReady}},
 	} {
 		for i := 0; i+1 < len(tc.want); i++ {
