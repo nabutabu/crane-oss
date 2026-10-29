@@ -14,7 +14,7 @@ import (
 // ReleaseBootstrapLease makes a completed nonterminal phase immediately
 // claimable. The fence prevents a stale controller from releasing a new lease.
 func (s *Store) ReleaseBootstrapLease(ctx context.Context, op api.Operation) error {
-	if op.Kind != "create_cluster" && op.Kind != "attach_zone" && op.Kind != "create_zone" {
+	if op.Kind != "create_cluster" && op.Kind != "attach_zone" {
 		return ErrForbidden
 	}
 	r, err := s.DB.ExecContext(ctx, `UPDATE operations SET state='pending',lease_owner=NULL,lease_until=NULL,updated_at=clock_timestamp()

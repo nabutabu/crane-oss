@@ -35,7 +35,7 @@ func (c *BootstrapController) RunOnce(ctx context.Context, zoneID, owner string)
 	}
 	var op api.Operation
 	var err error
-	for _, kind := range []string{"create_cluster", "attach_zone", "create_zone"} {
+	for _, kind := range []string{"create_cluster", "attach_zone"} {
 		op, err = c.Store.Claim(ctx, zoneID, kind, owner, d)
 		if err != sql.ErrNoRows {
 			break

@@ -8,8 +8,6 @@ import "github.com/nabutabu/crane-oss/pkg/api"
 func bootstrapNext(kind string, phase api.ZoneBootstrapPhase) (api.ZoneBootstrapPhase, bool) {
 	var sequence []api.ZoneBootstrapPhase
 	switch kind {
-	case "create_zone":
-		sequence = []api.ZoneBootstrapPhase{api.ZoneRequested, api.ZoneDatabaseProvisioning, api.ZoneDatabaseReady, api.ZoneSpireHostProvisioning, api.ZoneSpireInstalling, api.ZoneSpireValidating, api.ZoneControlPlaneInitializing, api.ZoneNetworkInstalling, api.ZoneDominatorInstalling, api.ZoneValidating, api.ZoneReady}
 	case "create_cluster":
 		sequence = []api.ZoneBootstrapPhase{api.ZoneRequested, api.ZoneInfrastructureProvisioning, api.ZoneControlPlaneInitializing, api.ZoneNetworkInstalling, api.ZoneDominatorInstalling, api.ZoneValidating, api.ZoneReady}
 	case "attach_zone":
