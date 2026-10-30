@@ -267,6 +267,8 @@ func TestRenderValidateScript(t *testing.T) {
 		`rollout status daemonset/cilium`,
 		`setpriv --reuid=10003 --regid=10003 --clear-groups`,
 		`crane-bootstrap-probe`,
+		`kubectl -n crane-system exec deployment/dominator -c dominator -- env`,
+		`/app/crane-bootstrap-probe -subd-url`,
 		`UPDATE zones SET lifecycle_state = 'ready'`,
 		`UPDATE clusters SET lifecycle_state = 'ready'`,
 		`BEGIN;`,
@@ -277,6 +279,9 @@ func TestRenderValidateScript(t *testing.T) {
 		if !strings.Contains(script, marker) {
 			t.Errorf("validate script missing %q", marker)
 		}
+	}
+	if strings.Contains(script, "setpriv --reuid=10002") {
+		t.Fatal("writer probe must use the Kubernetes-attested Dominator identity")
 	}
 }
 

@@ -53,9 +53,9 @@ setpriv --reuid=10003 --regid=10003 --clear-groups env \
 
 # ---- Both Subd listeners: exact host identities, update and read roles -----
 [[ range .Hosts ]]
-setpriv --reuid=10002 --regid=10002 --clear-groups env \
+kubectl -n crane-system exec deployment/dominator -c dominator -- env \
   SPIFFE_ENDPOINT_SOCKET=unix:///run/spire/sockets/agent.sock SPIFFE_TRUST_DOMAIN="$TRUST_DOMAIN" \
-  "$CRANE_DIR/bin/crane-bootstrap-probe" -subd-url 'https://[[ .PrivateIP ]]:44001' \
+  /app/crane-bootstrap-probe -subd-url 'https://[[ .PrivateIP ]]:44001' \
   -subd-id 'spiffe://[[ $.TrustDomain ]]/subd/[[ .ID ]]' -zone-id '[[ $.ZoneID ]]' -write
 setpriv --reuid=10003 --regid=10003 --clear-groups env \
   SPIFFE_ENDPOINT_SOCKET=unix:///run/spire/sockets/agent.sock SPIFFE_TRUST_DOMAIN="$TRUST_DOMAIN" \
