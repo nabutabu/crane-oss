@@ -9,12 +9,14 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/nabutabu/crane-oss/internal/bootstrap"
+	"github.com/nabutabu/crane-oss/internal/capacity"
 	"github.com/nabutabu/crane-oss/internal/provider/registry"
 	"github.com/nabutabu/crane-oss/pkg/api"
 )
@@ -36,14 +38,20 @@ func run(parent context.Context, args []string, out io.Writer) error {
 	dryRun := flags.Bool("dry-run", false, "validate local configuration and print phases without provider calls")
 	jsonOutput := flags.Bool("json", false, "emit JSON events only on stdout")
 	pending := flags.Bool("pending", false, "seed first zone in initializing state until validated")
+	worker := flags.Bool("worker", false, "run the durable CreateCluster/AttachZone worker")
+	workerInterval := flags.Duration("worker-interval", 5*time.Second, "poll interval for the durable bootstrap worker")
 	timeout := flags.Duration("operation-timeout", 90*time.Minute, "maximum duration of this invocation")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	if *timeout <= 0 {
+	if *timeout <= 0 && !*worker {
 		return fmt.Errorf("operation-timeout must be positive")
 	}
-	ctx, cancel := context.WithTimeout(parent, *timeout)
+	ctx := parent
+	var cancel context.CancelFunc = func() {}
+	if !*worker {
+		ctx, cancel = context.WithTimeout(parent, *timeout)
+	}
 	defer cancel()
 	var cfg bootstrap.Config
 	if *configPath != "" {
@@ -66,6 +74,41 @@ func run(parent context.Context, args []string, out io.Writer) error {
 			return fmt.Errorf("decode bootstrap configuration: %w", err)
 		}
 		cfg = cfg.WithDefaults()
+	}
+	if *worker {
+		if *dsn == "" || *configPath == "" {
+			return fmt.Errorf("-worker requires -dsn and -bootstrap-config")
+		}
+		if *workerInterval <= 0 {
+			return fmt.Errorf("worker-interval must be positive")
+		}
+		if err := cfg.Validate(); err != nil {
+			return err
+		}
+		db, err := sql.Open("pgx", *dsn)
+		if err != nil {
+			return fmt.Errorf("open Crane database: %w", err)
+		}
+		defer db.Close()
+		if err := capacity.CheckSchema(ctx, db); err != nil {
+			return err
+		}
+		factory, err := registry.Operation(cfg.Provider)
+		if err != nil {
+			return err
+		}
+		session, err := factory(cfg)
+		if err != nil {
+			return err
+		}
+		owner, err := os.Hostname()
+		if err != nil || owner == "" {
+			owner = "crane-bootstrap-worker"
+		}
+		owner = fmt.Sprintf("%s-%d", owner, os.Getpid())
+		logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+		controller := &capacity.BootstrapController{Store: capacity.NewStore(db), Executor: bootstrap.OperationExecutor{Session: session}}
+		return controller.Run(ctx, owner, *workerInterval, logger)
 	}
 	var in api.FirstZoneInput
 	if *raw != "" {

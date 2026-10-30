@@ -157,6 +157,50 @@ Use the Secret endpoint with a new request ID and `rollout_deployment` for backe
 rotation. Receiver token or certificate rotation requires rerunning bootstrap so the
 Collector and both applications update together.
 
+## Create clusters and attach zones
+
+After the fresh deployment is ready, `crane-api` is the durable control-plane
+entry point for additional topology. An administrator authenticates both
+operations with `CRANE_ADMIN_TOKEN`:
+
+```sh
+curl -X POST "$CRANE_API/v1/bootstrap" \
+  -H "Authorization: Bearer $CRANE_ADMIN_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"kind":"create_cluster","request_id":"cluster-2-1","cluster_id":"cluster-2","zone_id":"zone-c","parameters":{...}}'
+
+curl -X POST "$CRANE_API/v1/bootstrap" \
+  -H "Authorization: Bearer $CRANE_ADMIN_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"kind":"attach_zone","request_id":"cluster-2-zone-d","cluster_id":"cluster-2","zone_id":"zone-d","parameters":{...}}'
+```
+
+The request contains public placement and image/configuration references only;
+join tokens and credentials are never accepted. `GET /v1/bootstrap/{id}`
+returns the durable phase and failure state. A newly deployed worker runs
+`crane-bootstrap -worker -dsn ... -bootstrap-config ...`; it claims operations
+from PostgreSQL, renews its lease during provider calls, and resumes after a
+restart. The workflow remains provider-neutral; AWS is currently the registered
+provider implementation.
+
+`create_cluster` provisions a protected host in the requested zone, initializes
+that cluster's Kubernetes control plane and Cilium, then installs its first
+zone's Dominator and its Subd agent. `attach_zone` provisions a protected host in the new zone,
+joins it to the existing cluster using a short-lived kubeadm token, and installs
+its Subd agent plus another Dominator pinned to the existing cluster's protected
+control-plane host. Each Dominator runs behind its own private Kubernetes Service,
+gets a separate SPIFFE identity and database-backed `zone_dominators` route. The shared deployment VPC, RDS instance, Crane API, and SPIRE authority
+are reused; no second layer-zero deployment is created.
+
+The final validation gate confirms the joined node is Ready, its Cilium agent
+is healthy, the zone Dominator Service resolves privately, rolls out the
+zone-specific Dominator, and performs a private SPIFFE-mTLS probe before
+transitioning the operation and cluster-zone membership to `Ready`. The
+bootstrap controller records only trusted Kubernetes discovery, protected-host
+identity, and the private Dominator route. These operations are for new deployments initialized
+with the current schema; this feature does not migrate or adopt an existing
+deployment.
+
 Packer uses the normal AWS credential chain, for example
 `AWS_PROFILE=crane-bootstrap`; the bootstrap AWS adapter uses the same chain.
 There are no `-aws-profile` or `-aws-region` flags; set the profile in the

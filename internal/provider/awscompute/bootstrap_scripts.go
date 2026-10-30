@@ -50,6 +50,7 @@ type scriptData struct {
 	PlatformInstanceID                  string
 	ZoneID                              string
 	JoinEndpoint, JoinToken, JoinCAHash string
+	NodePrivateIP                       string
 }
 
 type bootstrapAgentHost struct {

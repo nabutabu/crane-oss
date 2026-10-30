@@ -66,17 +66,17 @@ func (s *operationSession) target(op api.Operation) (api.ZoneInput, string, erro
 // EnsureInfrastructure reuses the deployment VPC and platform instance
 // profile. A missing VPC is a hard failure, never a reason to build another
 // layer-zero authority during zone attachment.
-func (s *operationSession) EnsureInfrastructure(ctx context.Context, op api.Operation) error {
+func (s *operationSession) EnsureInfrastructure(ctx context.Context, op api.Operation) (api.BootstrapStepResult, error) {
 	zone, clusterID, err := s.target(op)
 	if err != nil {
-		return err
+		return api.BootstrapStepResult{}, err
 	}
 	var identity struct{ Account string }
 	if err := s.client.Call(ctx, "sts", "get-caller-identity", nil, &identity); err != nil {
-		return err
+		return api.BootstrapStepResult{}, err
 	}
 	if identity.Account != s.cfg.AWS.AccountID {
-		return fmt.Errorf("AWS credentials do not match pinned deployment account")
+		return api.BootstrapStepResult{}, fmt.Errorf("AWS credentials do not match pinned deployment account")
 	}
 	var vpcs struct {
 		Vpcs []struct {
@@ -85,18 +85,26 @@ func (s *operationSession) EnsureInfrastructure(ctx context.Context, op api.Oper
 		}
 	}
 	if err := s.client.Call(ctx, "ec2", "describe-vpcs", map[string]any{"Filters": []any{filter("tag:CraneBootstrap", s.cfg.Name)}}, &vpcs); err != nil {
-		return err
+		return api.BootstrapStepResult{}, err
 	}
 	if len(vpcs.Vpcs) != 1 || !owned(vpcs.Vpcs[0].Tags, s.cfg.Name) {
-		return fmt.Errorf("existing deployment VPC is unavailable")
+		return api.BootstrapStepResult{}, fmt.Errorf("existing deployment VPC is unavailable")
 	}
 	infra, err := ensureNetwork(ctx, s.client, s.cfg)
 	if err != nil {
-		return err
+		return api.BootstrapStepResult{}, err
 	}
 	infra, err = ensureSecurityGroups(ctx, s.client, s.cfg, infra)
 	if err != nil {
-		return err
+		return api.BootstrapStepResult{}, err
+	}
+	infra, err = ensureSecrets(ctx, s.client, s.cfg, infra)
+	if err != nil {
+		return api.BootstrapStepResult{}, err
+	}
+	infra, err = ensureRDS(ctx, s.client, s.cfg, infra)
+	if err != nil {
+		return api.BootstrapStepResult{}, err
 	}
 	var profile struct {
 		InstanceProfile struct {
@@ -106,10 +114,10 @@ func (s *operationSession) EnsureInfrastructure(ctx context.Context, op api.Oper
 	}
 	profileName := s.cfg.Name + "-platform"
 	if err := s.client.Call(ctx, "iam", "get-instance-profile", map[string]any{"InstanceProfileName": profileName}, &profile); err != nil {
-		return err
+		return api.BootstrapStepResult{}, err
 	}
 	if !owned(profile.InstanceProfile.Tags, s.cfg.Name) || len(profile.InstanceProfile.Roles) != 1 || profile.InstanceProfile.Roles[0].RoleName != profileName {
-		return fmt.Errorf("existing platform instance profile has incompatible ownership")
+		return api.BootstrapStepResult{}, fmt.Errorf("existing platform instance profile has incompatible ownership")
 	}
 	index := -1
 	for i, az := range infra.AvailabilityZones {
@@ -119,7 +127,7 @@ func (s *operationSession) EnsureInfrastructure(ctx context.Context, op api.Oper
 		}
 	}
 	if index < 0 || index >= len(infra.PublicSubnetIDs) {
-		return fmt.Errorf("target availability zone has no deployment subnet")
+		return api.BootstrapStepResult{}, fmt.Errorf("target availability zone has no deployment subnet")
 	}
 	hostInfra := infra
 	hostInfra.PublicSubnetIDs = []string{infra.PublicSubnetIDs[index]}
@@ -128,8 +136,11 @@ func (s *operationSession) EnsureInfrastructure(ctx context.Context, op api.Oper
 	if op.Kind == "create_cluster" {
 		role = "cluster-" + clusterID
 	}
-	_, err = ensureHost(ctx, s.client, s.cfg, hostInfra, role, s.cfg.Platform.AMIID, s.cfg.Platform.InstanceType, s.cfg.Platform.StorageGiB, profileName, infra.PlatformSecurityGroupID)
-	return err
+	h, err := ensureHost(ctx, s.client, s.cfg, hostInfra, role, s.cfg.Platform.AMIID, s.cfg.Platform.InstanceType, s.cfg.Platform.StorageGiB, profileName, infra.PlatformSecurityGroupID)
+	if err != nil {
+		return api.BootstrapStepResult{}, err
+	}
+	return api.BootstrapStepResult{ProviderHostID: h.ID, HostPrivateIP: h.PrivateIP, ImageID: s.cfg.Platform.AMIID}, nil
 }
 
 func (s *operationSession) operationHost(ctx context.Context, role string) (host, error) {
@@ -197,10 +208,4 @@ func (s *operationSession) InitializeControlPlane(ctx context.Context, op api.Op
 		return api.BootstrapStepResult{}, fmt.Errorf("control plane did not return public discovery")
 	}
 	return result, nil
-}
-func (s *operationSession) EnsureDominator(context.Context, api.Operation) error {
-	return fmt.Errorf("AWS Dominator operation is not configured")
-}
-func (s *operationSession) Validate(context.Context, api.Operation) (bool, error) {
-	return false, fmt.Errorf("AWS zone validation is not configured")
 }
