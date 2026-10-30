@@ -184,6 +184,8 @@ See [AWS bootstrap and IAM permissions](docs/aws-bootstrap.md) for prerequisites
 the IAM policy template, retry behavior, and AWS end-to-end validation. AWS CLI
 v2 and golden AMIs built with Packer are required. Prepare the private SPIRE
 load-balancer endpoint with `-prepare-images` before building deployment AMIs.
+For the complete initial-deployment and durable cluster/zone operation flow,
+see [the bootstrap flow](docs/bootstrap-flow.md).
 Bootstrap uses released service images and local deployment state; it uses no S3 bucket.
 Bootstrap-managed Collector deployment and backend configuration through a
 Kubernetes Secret are described in [AWS bootstrap](docs/aws-bootstrap.md#configure-the-collector-backend).
