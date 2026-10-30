@@ -26,7 +26,7 @@ func TestZoneNetworkScriptsSeparateClusterAndJoin(t *testing.T) {
 	if !strings.Contains(cilium, "helm upgrade --install cilium") || strings.Contains(cilium, "kubeadm init") {
 		t.Fatal("invalid cluster network script")
 	}
-	join, err := renderTemplate("join-zone.sh.tmpl", scriptData{KubernetesVersion: "v1.35.0", JoinEndpoint: "10.80.0.10:6443", JoinToken: "abcdef.0123456789abcdef", JoinCAHash: "sha256:" + strings.Repeat("a", 64)})
+	join, err := renderTemplate("join-zone.sh.tmpl", scriptData{KubernetesVersion: "v1.35.0", JoinEndpoint: "10.80.0.10:6443", JoinToken: strings.Repeat("a", 6) + "." + strings.Repeat("b", 16), JoinCAHash: "sha256:" + strings.Repeat("a", 64)})
 	if err != nil {
 		t.Fatal(err)
 	}
