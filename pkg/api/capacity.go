@@ -175,27 +175,24 @@ type InfrastructureReservation struct {
 
 type Operation struct {
 	ID, Kind, ZoneID, NodeGroupID, HostID, CapacityRequestID string
-	TargetRevision                                           int64
-	State, ProviderToken                                     string
-	Parameters                                               json.RawMessage
-	LeaseOwner                                               string
-	LeaseUntil                                               time.Time
-	Fence                                                    int64
-	LastError                                                string
-	CreatedAt, UpdatedAt                                     time.Time
+	// Populated from the trusted catalog for bootstrap execution, never from
+	// the operation's immutable request parameters.
+	ClusterID, APIServerEndpoint, CACertHash string
+	TargetRevision                           int64
+	State, ProviderToken                     string
+	Parameters                               json.RawMessage
+	LeaseOwner                               string
+	LeaseUntil                               time.Time
+	Fence                                    int64
+	LastError                                string
+	CreatedAt, UpdatedAt                     time.Time
 }
 
 type ZoneBootstrapPhase string
 
 const (
-	ZoneRequested             ZoneBootstrapPhase = "Requested"
-	ZoneDatabaseProvisioning  ZoneBootstrapPhase = "DatabaseProvisioning"
-	ZoneDatabaseReady         ZoneBootstrapPhase = "DatabaseReady"
-	ZoneSpireHostProvisioning ZoneBootstrapPhase = "SpireHostProvisioning"
-	ZoneSpireInstalling       ZoneBootstrapPhase = "SpireInstalling"
-	ZoneSpireValidating       ZoneBootstrapPhase = "SpireValidating"
-	// Kept as an alias for callers compiled against the original phase name.
-	ZoneInfrastructureProvisioning ZoneBootstrapPhase = ZoneDatabaseProvisioning
+	ZoneRequested                  ZoneBootstrapPhase = "Requested"
+	ZoneInfrastructureProvisioning ZoneBootstrapPhase = "InfrastructureProvisioning"
 	ZoneControlPlaneInitializing   ZoneBootstrapPhase = "ControlPlaneInitializing"
 	ZoneNetworkInstalling          ZoneBootstrapPhase = "NetworkInstalling"
 	ZoneDominatorInstalling        ZoneBootstrapPhase = "DominatorInstalling"
@@ -207,6 +204,23 @@ const (
 type ZoneBootstrapOperation struct {
 	Operation
 	Phase ZoneBootstrapPhase
+}
+
+// BootstrapRequest is immutable operator intent. Parameters must contain only
+// public configuration and opaque references, never join tokens or secrets.
+type BootstrapRequest struct {
+	Kind       string          `json:"kind"`
+	RequestID  string          `json:"request_id"`
+	ClusterID  string          `json:"cluster_id"`
+	ZoneID     string          `json:"zone_id"`
+	Parameters json.RawMessage `json:"parameters"`
+}
+
+// BootstrapStepResult contains public cluster discovery returned by a
+// provider step. It must never carry join credentials or private key material.
+type BootstrapStepResult struct {
+	APIServerEndpoint string `json:"api_server_endpoint,omitempty"`
+	CACertHash        string `json:"ca_cert_hash,omitempty"`
 }
 
 type NodeRemovalOperation struct {

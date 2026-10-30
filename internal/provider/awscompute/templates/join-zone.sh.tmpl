@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+export PATH="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+umask 077
+test "$(kubeadm version -o short)" = "[[ .KubernetesVersion ]]"
+if [ ! -f /etc/kubernetes/kubelet.conf ]; then
+  kubeadm join "[[ .JoinEndpoint ]]" \
+    --token "[[ .JoinToken ]]" \
+    --discovery-token-ca-cert-hash "[[ .JoinCAHash ]]" \
+    --cri-socket unix:///run/containerd/containerd.sock
+fi
+systemctl is-active --quiet kubelet

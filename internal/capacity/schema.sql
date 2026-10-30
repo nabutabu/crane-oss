@@ -86,7 +86,7 @@ CREATE TABLE IF NOT EXISTS host_state_requests (
  result jsonb, PRIMARY KEY(host_id,request_id), UNIQUE(host_id,revision)
 );
 CREATE TABLE IF NOT EXISTS operations (
- id text PRIMARY KEY, kind text NOT NULL CHECK(kind IN ('provision', 'create_zone', 'remove_node')),
+ id text PRIMARY KEY, kind text NOT NULL CHECK(kind IN ('provision', 'create_cluster', 'attach_zone', 'remove_node')),
  zone_id text NOT NULL REFERENCES zones(id), group_id text REFERENCES node_groups(id),
  host_id text REFERENCES host(id) DEFERRABLE INITIALLY DEFERRED,
  capacity_request_id text REFERENCES capacity_requests(id), target_revision bigint NOT NULL DEFAULT 0,
@@ -129,9 +129,10 @@ CREATE TABLE IF NOT EXISTS infrastructure_reservations (
 CREATE INDEX IF NOT EXISTS infrastructure_reservations_group ON infrastructure_reservations(group_id, state);
 CREATE TABLE IF NOT EXISTS zone_bootstrap_operations (
  operation_id text PRIMARY KEY REFERENCES operations(id), zone_id text NOT NULL REFERENCES zones(id),
- phase text NOT NULL DEFAULT 'Requested' CHECK(phase IN ('Requested', 'DatabaseProvisioning', 'DatabaseReady', 'SpireHostProvisioning', 'SpireInstalling', 'SpireValidating',
- 'InfrastructureProvisioning', 'ControlPlaneInitializing', 'NetworkInstalling', 'DominatorInstalling', 'Validating', 'Ready', 'Failed'))
+ cluster_id text REFERENCES clusters(id), request_id text,
+ phase text NOT NULL DEFAULT 'Requested' CHECK(phase IN ('Requested', 'InfrastructureProvisioning', 'ControlPlaneInitializing', 'NetworkInstalling', 'DominatorInstalling', 'Validating', 'Ready', 'Failed'))
 );
+CREATE UNIQUE INDEX IF NOT EXISTS bootstrap_request_id ON zone_bootstrap_operations(request_id) WHERE request_id IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS zone_bootstrap_active ON zone_bootstrap_operations(zone_id) WHERE phase NOT IN ('Ready','Failed');
 CREATE TABLE IF NOT EXISTS node_removal_operations (
  operation_id text PRIMARY KEY REFERENCES operations(id), group_id text NOT NULL REFERENCES node_groups(id),

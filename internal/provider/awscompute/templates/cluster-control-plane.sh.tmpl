@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Initialize one additional Kubernetes control plane on an owned deployment
+# host. The shared Crane API, PostgreSQL and SPIRE authority are untouched.
+set -euo pipefail
+export PATH="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+umask 077
+
+readonly K8S_VERSION="[[ .KubernetesVersion ]]"
+readonly POD_CIDR="[[ .PodCIDR ]]"
+readonly PRIVATE_IP="[[ .Host.PrivateIP ]]"
+readonly KUBECONFIG_FILE=/etc/kubernetes/admin.conf
+
+for executable in kubeadm kubectl openssl awk; do command -v "$executable" >/dev/null; done
+test "$(kubeadm version -o short)" = "$K8S_VERSION"
+if [ ! -f "$KUBECONFIG_FILE" ]; then
+  kubeadm init \
+    --kubernetes-version "$K8S_VERSION" \
+    --pod-network-cidr "$POD_CIDR" \
+    --apiserver-advertise-address "$PRIVATE_IP" \
+    --cri-socket unix:///run/containerd/containerd.sock
+fi
+export KUBECONFIG="$KUBECONFIG_FILE"
+kubectl get --raw=/readyz >/dev/null
+API_ENDPOINT="$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}')"
+CA_CERT_HASH="sha256:$(openssl x509 -in /etc/kubernetes/pki/ca.crt -pubkey -noout | openssl pkey -pubin -outform DER | openssl dgst -sha256 | awk '{print $2}')"
+printf 'crane-cluster-api-endpoint:%s\n' "$API_ENDPOINT"
+printf 'crane-cluster-ca-hash:%s\n' "$CA_CERT_HASH"

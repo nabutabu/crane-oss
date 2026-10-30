@@ -151,6 +151,18 @@ func (s *Store) SeedFirstZonePending(ctx context.Context, in api.FirstZoneInput)
 }
 
 func (s *Store) seedFirstZone(ctx context.Context, in api.FirstZoneInput, ready bool) error {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := seedFirstZoneTx(ctx, tx, in, ready); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func seedFirstZoneTx(ctx context.Context, tx *sql.Tx, in api.FirstZoneInput, ready bool) error {
 	if in.Group.NormalizeID() != nil {
 		return ErrInvalid
 	}
@@ -159,11 +171,7 @@ func (s *Store) seedFirstZone(ctx context.Context, in api.FirstZoneInput, ready 
 		in.Group.MinNodes != 0 {
 		return ErrInvalid
 	}
-	tx, err := s.DB.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
+	var err error
 	// One seed transaction per database; common ordering is group before pool.
 	if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(724163002)`); err != nil {
 		return err
@@ -195,7 +203,7 @@ func (s *Store) seedFirstZone(ctx context.Context, in api.FirstZoneInput, ready 
 	if err = createGroup(ctx, tx, in.Group); err != nil {
 		return err
 	}
-	return tx.Commit()
+	return nil
 }
 
 func (s *Store) CreateZone(ctx context.Context, z api.ZoneInput) error {
@@ -347,7 +355,7 @@ func (s *Store) CreateRemoval(ctx context.Context, clusterID string, expectedRev
 // The final Ready transition requires a validated handoff supplied by the trusted
 // layer-zero executor. A host cannot call this boundary to declare readiness.
 func (s *Store) BootstrapPhase(ctx context.Context, op api.Operation, next api.ZoneBootstrapPhase, validated bool) error {
-	if op.Kind != "create_zone" {
+	if op.Kind != "create_cluster" && op.Kind != "attach_zone" {
 		return errors.New("not a bootstrap operation")
 	}
 
@@ -358,11 +366,12 @@ func (s *Store) BootstrapPhase(ctx context.Context, op api.Operation, next api.Z
 	defer tx.Rollback()
 
 	var phase api.ZoneBootstrapPhase
+	var clusterID sql.NullString
 	err = tx.QueryRowContext(
 		ctx,
-		`SELECT b.phase FROM zone_bootstrap_operations b JOIN operations o ON o.id=b.operation_id WHERE o.id=$1 AND o.lease_owner=$2 AND o.fence=$3 AND o.lease_until>clock_timestamp() AND o.state IN ('leased','launching') FOR UPDATE OF o,b`,
+		`SELECT b.phase,b.cluster_id FROM zone_bootstrap_operations b JOIN operations o ON o.id=b.operation_id WHERE o.id=$1 AND o.lease_owner=$2 AND o.fence=$3 AND o.lease_until>clock_timestamp() AND o.state IN ('leased','launching') FOR UPDATE OF o,b`,
 		op.ID, op.LeaseOwner, op.Fence,
-	).Scan(&phase)
+	).Scan(&phase, &clusterID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrFenced
 	}
@@ -370,23 +379,33 @@ func (s *Store) BootstrapPhase(ctx context.Context, op api.Operation, next api.Z
 		return err
 	}
 
-	sequence := map[api.ZoneBootstrapPhase]api.ZoneBootstrapPhase{
-		api.ZoneRequested:                api.ZoneDatabaseProvisioning,
-		api.ZoneDatabaseProvisioning:     api.ZoneDatabaseReady,
-		api.ZoneDatabaseReady:            api.ZoneSpireHostProvisioning,
-		api.ZoneSpireHostProvisioning:    api.ZoneSpireInstalling,
-		api.ZoneSpireInstalling:          api.ZoneSpireValidating,
-		api.ZoneSpireValidating:          api.ZoneControlPlaneInitializing,
-		api.ZoneControlPlaneInitializing: api.ZoneNetworkInstalling,
-		api.ZoneNetworkInstalling:        api.ZoneDominatorInstalling,
-		api.ZoneDominatorInstalling:      api.ZoneValidating,
-		api.ZoneValidating:               api.ZoneReady,
-	}
-	if next != api.ZoneFailed && sequence[phase] != next {
+	expected, ok := bootstrapNext(op.Kind, phase)
+	if next != api.ZoneFailed && (!ok || expected != next) {
 		return errors.New("invalid bootstrap phase transition")
 	}
 	if next == api.ZoneReady && !validated {
 		return errors.New("bootstrap handoff has not been validated")
+	}
+	if next == api.ZoneReady && clusterID.Valid {
+		if op.Kind == "create_cluster" {
+			if _, err = tx.ExecContext(ctx, `UPDATE clusters SET lifecycle_state='ready' WHERE id=$1 AND lifecycle_state='initializing'`, clusterID.String); err != nil {
+				return err
+			}
+		}
+		if _, err = tx.ExecContext(ctx, `UPDATE zones SET lifecycle_state='ready' WHERE id=$1 AND lifecycle_state='initializing'`, op.ZoneID); err != nil {
+			return err
+		}
+		r, e := tx.ExecContext(ctx, `UPDATE cluster_zones SET lifecycle_state='ready',access_state='approved' WHERE cluster_id=$1 AND zone_id=$2 AND lifecycle_state='initializing' AND access_state='pending'`, clusterID.String, op.ZoneID)
+		if e != nil {
+			return e
+		}
+		count, e := r.RowsAffected()
+		if e != nil {
+			return e
+		}
+		if count != 1 {
+			return ErrConflict
+		}
 	}
 
 	_, err = tx.ExecContext(

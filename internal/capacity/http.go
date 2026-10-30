@@ -81,7 +81,8 @@ func (a *API) Handler() http.Handler {
 	mux.Handle("POST /v1/node-groups", a.admin(a.createNodeGroup))
 	mux.Handle("PATCH /v1/node-groups/{id}/template", a.admin(a.updateNodeGroupTemplate))
 	mux.Handle("POST /v1/first-zone", a.admin(a.seedFirstZone))
-	mux.Handle("POST /v1/bootstrap", a.admin(a.createZoneBootstrap))
+	mux.Handle("POST /v1/bootstrap", a.admin(a.createBootstrap))
+	mux.Handle("GET /v1/bootstrap/{id}", a.admin(a.bootstrapStatus))
 	mux.Handle("POST /v1/capacity", a.adapter(a.setTarget))
 	mux.Handle("GET /v1/node-groups/{id}/target", a.adapter(a.target))
 	mux.Handle("GET /v1/autoscaler/discovery", a.adapter(a.discovery))
@@ -249,22 +250,26 @@ func (a *API) updateClusterZone(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, in)
 }
 
-type zoneBootstrapRequest struct {
-	ZoneID     string          `json:"zone_id"`
-	Parameters json.RawMessage `json:"parameters"`
-}
-
-func (a *API) createZoneBootstrap(w http.ResponseWriter, r *http.Request) {
-	var in zoneBootstrapRequest
+func (a *API) createBootstrap(w http.ResponseWriter, r *http.Request) {
+	var in api.BootstrapRequest
 	if !decodeJSON(w, r, &in) {
 		return
 	}
-	id, err := a.store.CreateZoneBootstrap(r.Context(), in.ZoneID, in.Parameters)
+	id, err := a.store.CreateBootstrap(r.Context(), in)
 	if err != nil {
 		capacityError(w, err)
 		return
 	}
 	writeJSON(w, map[string]string{"operation_id": id})
+}
+
+func (a *API) bootstrapStatus(w http.ResponseWriter, r *http.Request) {
+	status, err := a.store.BootstrapStatus(r.Context(), r.PathValue("id"))
+	if err != nil {
+		capacityError(w, err)
+		return
+	}
+	writeJSON(w, status)
 }
 
 type setTargetRequest struct {
