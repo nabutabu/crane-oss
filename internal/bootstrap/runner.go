@@ -64,6 +64,7 @@ func Run(ctx context.Context, cfg Config, factory Factory, reporter *Reporter, o
 	if err != nil {
 		return result, err
 	}
+	ctx = WithReporter(ctx, reporter)
 	total := len(Phases(options.PrepareImages))
 	step := func(name string, fn func() error) error {
 		return reporter.Run(total, name, func() (string, error) {

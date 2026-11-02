@@ -7,6 +7,9 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"time"
+
+	"github.com/nabutabu/crane-oss/internal/bootstrap"
 )
 
 // AWSClient allows offline tests to exercise AWS requests without an account.
@@ -30,6 +33,31 @@ func (e *AWSError) Error() string {
 func (e *AWSError) Unwrap() error { return e.Err }
 
 func (c CLI) Call(ctx context.Context, service, operation string, input, output any) error {
+	started := time.Now()
+	label := resourceLabel(service, operation, input)
+	reporter := bootstrap.ReporterFromContext(ctx)
+	if reporter != nil {
+		_ = reporter.Detail(service, "checking "+label+"; waiting for AWS "+service+" "+operation+" to return")
+		stop := make(chan struct{})
+		defer close(stop)
+		go func() {
+			ticker := time.NewTicker(10 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-stop:
+					return
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					_ = reporter.Detail(service, "still waiting for AWS "+service+" "+operation+" for "+label+" ["+time.Since(started).Round(time.Second).String()+"]")
+				}
+			}
+		}()
+		defer func() {
+			_ = reporter.Detail(service, "AWS "+service+" "+operation+" returned for "+label+" ["+time.Since(started).Round(time.Second).String()+"]")
+		}()
+	}
 	args := []string{service, operation, "--region", c.Region, "--output", "json", "--no-cli-pager"}
 	if c.Profile != "" {
 		args = append(args, "--profile", c.Profile)
@@ -75,6 +103,24 @@ func (c CLI) Call(ctx context.Context, service, operation string, input, output 
 		}
 	}
 	return nil
+}
+
+// Only allowlisted identifiers are displayed. AWS requests can contain secrets.
+func resourceLabel(service, operation string, input any) string {
+	label := service + " resource"
+	if operation == "get-secret-value" || operation == "create-secret" {
+		return "runtime secret"
+	}
+	fields, ok := input.(map[string]any)
+	if !ok {
+		return label
+	}
+	for _, key := range []string{"DBInstanceIdentifier", "DBSubnetGroupName", "RoleName", "InstanceProfileName", "VpcId", "SubnetId", "GroupId", "CommandId"} {
+		if value, ok := fields[key].(string); ok && value != "" {
+			return label + " " + value
+		}
+	}
+	return label
 }
 
 type Infrastructure struct {
