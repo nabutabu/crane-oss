@@ -37,7 +37,7 @@ func (s *Store) RecordBootstrapHost(ctx context.Context, op api.Operation, resul
 		return err
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO host(id,role,zone,imageid,state,health,createdat,provider,providerid,protected,subd_endpoint,crane_zone)
- VALUES($1,$2,$3,$4,'CONVERGING','unknown',clock_timestamp(),'aws',$5,true,$6,$3)
+ VALUES($1,$2,$3::text,$4,'CONVERGING','unknown',clock_timestamp(),'aws',$5,true,$6,$3::text)
  ON CONFLICT(id) DO UPDATE SET role=EXCLUDED.role,zone=EXCLUDED.zone,imageid=EXCLUDED.imageid,provider=EXCLUDED.provider,providerid=EXCLUDED.providerid,protected=true,subd_endpoint=EXCLUDED.subd_endpoint
  WHERE host.provider=EXCLUDED.provider AND host.providerid=EXCLUDED.providerid AND host.protected`, hostID, role, op.ZoneID, result.ImageID, result.ProviderHostID, "https://"+result.HostPrivateIP+":44001")
 	if err != nil {
