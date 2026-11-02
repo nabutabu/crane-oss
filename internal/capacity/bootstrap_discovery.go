@@ -2,6 +2,7 @@ package capacity
 
 import (
 	"context"
+	"net"
 	"net/url"
 	"regexp"
 
@@ -10,11 +11,14 @@ import (
 
 var caHashPattern = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
 
-// SetClusterDiscovery stores only public kubeadm discovery after a fenced
+// SetClusterDiscovery stores only private kubeadm discovery after a fenced
 // provider step. Retries may repeat the same values but cannot change them.
 func (s *Store) SetClusterDiscovery(ctx context.Context, op api.Operation, result api.BootstrapStepResult) error {
 	endpoint, err := url.Parse(result.APIServerEndpoint)
 	if op.Kind != "create_cluster" || err != nil || endpoint.Scheme != "https" || endpoint.Host == "" || endpoint.User != nil || endpoint.RawQuery != "" || endpoint.Fragment != "" || !caHashPattern.MatchString(result.CACertHash) {
+		return ErrInvalid
+	}
+	if ip := net.ParseIP(endpoint.Hostname()); ip == nil || !ip.IsPrivate() {
 		return ErrInvalid
 	}
 	r, err := s.DB.ExecContext(ctx, `UPDATE clusters c SET api_server_endpoint=$4,ca_cert_hash=$5

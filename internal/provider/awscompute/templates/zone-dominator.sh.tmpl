@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+set -euo pipefail
+export AWS_REGION="[[ .Region ]]"
+export PATH="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+export KUBECONFIG=/etc/kubernetes/admin.conf
+NODE_NAME="$(kubectl get nodes -o json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(n["metadata"]["name"] for n in d["items"] if any(a["type"]=="InternalIP" and a["address"]=="[[ .Host.PrivateIP ]]" for a in n["status"].get("addresses",[]))))')"
+SECRET_DIR="$(mktemp -d)"
+trap 'rm -rf "$SECRET_DIR"' EXIT
+kubectl create namespace crane-system --dry-run=client -o yaml | kubectl apply -f -
+aws secretsmanager get-secret-value --secret-id "[[ .Infra.RuntimeSecretARN ]]" --query SecretString --output text > "$SECRET_DIR/runtime.json"
+SECRET_FILE="$SECRET_DIR/crane-runtime.json"
+DB_ENDPOINT="[[ .Infra.DBEndpoint ]]" DB_PORT="[[ .Config.RDS.Port ]]" python3 - "$SECRET_DIR/runtime.json" "$SECRET_FILE" <<'PY'
+import base64, json, os, sys
+with open(sys.argv[1]) as handle:
+    source = json.load(handle)
+values = {
+    "CRANE_DATABASE_URL": "postgres://" + source["crane_username"] + ":" + source["crane_password"] + "@" + os.environ["DB_ENDPOINT"] + ":" + os.environ["DB_PORT"] + "/crane?sslmode=verify-full&sslrootcert=/etc/crane/rds-ca.pem",
+    "DB_HOST": os.environ["DB_ENDPOINT"],
+    "DB_PORT": os.environ["DB_PORT"],
+    "DB_USER": source["crane_username"],
+    "DB_PASSWORD": source["crane_password"],
+    "DB_NAME": "crane",
+    "DB_SSLMODE": "verify-full",
+    "DB_SSLROOTCERT": "/etc/crane/rds-ca.pem",
+    "CRANE_ADMIN_TOKEN": source["admin_token"],
+    "CRANE_ADAPTER_TOKEN": source["adapter_token"],
+    "SPIFFE_TRUST_DOMAIN": "[[ .TrustDomain ]]",
+    "CRANE_ZONE_ID": "[[ .ZoneID ]]",
+}
+manifest = {"apiVersion":"v1","kind":"Secret","metadata":{"name":"crane-runtime","namespace":"crane-system"},"type":"Opaque","data":{k:base64.b64encode(v.encode()).decode() for k,v in values.items()}}
+with open(sys.argv[2], "w") as handle:
+    json.dump(manifest, handle)
+PY
+kubectl apply -f "$SECRET_FILE"
+kubectl -n crane-system create serviceaccount "dominator-[[ .ZoneID ]]" --dry-run=client -o yaml | kubectl apply -f -
+kubectl -n crane-system apply -f - <<YAML
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dominator-[[ .ZoneID ]]
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: dominator-[[ .ZoneID ]]}}
+  template:
+    metadata: {labels: {app: dominator-[[ .ZoneID ]]}}
+    spec:
+      serviceAccountName: dominator-[[ .ZoneID ]]
+      automountServiceAccountToken: false
+      nodeName: "$NODE_NAME"
+      containers:
+      - name: dominator
+        image: [[ .Config.Platform.DominatorImage ]]
+        command: ["/app/dominator"]
+        env:
+        - {name: CRANE_ZONE_ID, value: "[[ .ZoneID ]]"}
+        - {name: SPIFFE_TRUST_DOMAIN, value: "[[ .TrustDomain ]]"}
+        - {name: SPIFFE_ENDPOINT_SOCKET, value: "unix:///run/spire/sockets/agent.sock"}
+        - {name: ENVIRONMENT, value: production}
+        - {name: AWS_REGION, value: "[[ .Region ]]"}
+        envFrom:
+        - secretRef: {name: crane-runtime}
+        ports: [{containerPort: 44000, name: mtls}]
+        volumeMounts: [{name: spire, mountPath: /run/spire/sockets}]
+      volumes: [{name: spire, hostPath: {path: /run/spire/sockets}}]
+YAML
+kubectl -n crane-system apply -f - <<YAML
+apiVersion: v1
+kind: Service
+metadata:
+  name: dominator-[[ .ZoneID ]]
+spec:
+  selector: {app: dominator-[[ .ZoneID ]]}
+  ports: [{name: mtls, port: 44000, targetPort: mtls}]
+YAML
+kubectl -n crane-system rollout status deployment/dominator-[[ .ZoneID ]] --timeout=600s
+printf 'crane-dominator-endpoint:https://%s:44000\n' "$(kubectl -n crane-system get service dominator-[[ .ZoneID ]] -o jsonpath='{.spec.clusterIP}')"

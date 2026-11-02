@@ -96,6 +96,13 @@ func TestDatabaseOnlyDryRun(t *testing.T) {
 	}
 }
 
+func TestWorkerRequiresDurableInputs(t *testing.T) {
+	var output bytes.Buffer
+	if err := run(context.Background(), []string{"-worker"}, &output); err == nil || !strings.Contains(err.Error(), "-worker requires -dsn and -bootstrap-config") {
+		t.Fatalf("unexpected worker validation result: %v", err)
+	}
+}
+
 func TestRejectAWSVersionOneBeforeProvisioning(t *testing.T) {
 	t.Setenv("CRANE_DATABASE_URL", "")
 	file := filepath.Join(t.TempDir(), "config.json")

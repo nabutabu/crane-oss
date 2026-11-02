@@ -9,9 +9,9 @@ import (
 
 type operationSessionFake struct{ calls []string }
 
-func (f *operationSessionFake) EnsureInfrastructure(context.Context, api.Operation) error {
+func (f *operationSessionFake) EnsureInfrastructure(context.Context, api.Operation) (api.BootstrapStepResult, error) {
 	f.calls = append(f.calls, "infrastructure")
-	return nil
+	return api.BootstrapStepResult{ProviderHostID: "host", HostPrivateIP: "10.80.0.10", ImageID: "image"}, nil
 }
 func (f *operationSessionFake) InitializeControlPlane(context.Context, api.Operation) (api.BootstrapStepResult, error) {
 	f.calls = append(f.calls, "control-plane")
@@ -21,9 +21,9 @@ func (f *operationSessionFake) EnsureNetwork(context.Context, api.Operation) err
 	f.calls = append(f.calls, "network")
 	return nil
 }
-func (f *operationSessionFake) EnsureDominator(context.Context, api.Operation) error {
+func (f *operationSessionFake) EnsureDominator(context.Context, api.Operation) (api.BootstrapStepResult, error) {
 	f.calls = append(f.calls, "dominator")
-	return nil
+	return api.BootstrapStepResult{}, nil
 }
 func (f *operationSessionFake) Validate(context.Context, api.Operation) (bool, error) {
 	f.calls = append(f.calls, "validate")

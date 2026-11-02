@@ -92,7 +92,10 @@ The crane-api service will start on port 43060 and begin monitoring hosts in the
 - `PATCH /v1/node-groups/{id}/template` - admin-authenticated, revisioned scheduling and launch-template update
 - `GET /v1/node-groups/{id}/target` - authenticated target/revision read for adapter recovery
 - `POST /v1/node-removals` - authenticated atomic admission of explicit named-node removals; credits remain held until termination
-- `POST /v1/bootstrap` - creates a durable layer-zero bootstrap operation
+- `POST /v1/bootstrap` - creates a durable layer-zero `create_cluster` or
+  `attach_zone` operation (admin bearer token); `GET /v1/bootstrap/{id}` reports
+  its phase and durable state. New operations are executed by the
+  provider-neutral `crane-bootstrap -worker` entrypoint.
 
 ### dominator (Port 44000)
 
