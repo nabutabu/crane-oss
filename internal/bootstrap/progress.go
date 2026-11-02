@@ -1,10 +1,12 @@
 package bootstrap
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/nabutabu/crane-oss/internal/logging"
@@ -17,9 +19,11 @@ const (
 )
 
 type Reporter struct {
-	w    io.Writer
-	JSON bool
-	next int
+	mu        sync.Mutex
+	w         io.Writer
+	JSON      bool
+	next      int
+	completed int
 }
 
 type Phase struct {
@@ -77,6 +81,8 @@ func (r *Reporter) Output(name, stream, output string) error {
 }
 
 func (r *Reporter) emit(p Phase) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	p.Detail = logging.RedactText(p.Detail)
 	if r.JSON {
 		b, err := json.Marshal(p)
@@ -102,7 +108,7 @@ func (r *Reporter) emit(p Phase) error {
 		return err
 	}
 	if p.Status == statusRunning {
-		_, err := fmt.Fprintf(r.w, "[%02d/%02d] %s ...\n", p.Number, p.Total, p.Name)
+		_, err := fmt.Fprintf(r.w, "%s [%02d/%02d] %s ...\n", phaseBar(r.completed, p.Total), p.Number, p.Total, p.Name)
 		return err
 	}
 	mark := "✓"
@@ -117,5 +123,31 @@ func (r *Reporter) emit(p Phase) error {
 		_, _ = fmt.Fprintf(r.w, " [%s]", p.Elapsed)
 	}
 	_, err = fmt.Fprintln(r.w)
+	if err == nil && p.Status == statusOK {
+		r.completed++
+		_, err = fmt.Fprintf(r.w, "%s [%d/%d] phases complete\n", phaseBar(r.completed, p.Total), r.completed, p.Total)
+	}
 	return err
+}
+
+type reporterContextKey struct{}
+
+func WithReporter(ctx context.Context, reporter *Reporter) context.Context {
+	return context.WithValue(ctx, reporterContextKey{}, reporter)
+}
+
+func ReporterFromContext(ctx context.Context) *Reporter {
+	reporter, _ := ctx.Value(reporterContextKey{}).(*Reporter)
+	return reporter
+}
+
+func phaseBar(done, total int) string {
+	if total < 1 {
+		return "[----------]"
+	}
+	filled := done * 10 / total
+	if filled > 10 {
+		filled = 10
+	}
+	return "[" + strings.Repeat("#", filled) + strings.Repeat("-", 10-filled) + "]"
 }

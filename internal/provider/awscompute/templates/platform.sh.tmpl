@@ -399,7 +399,7 @@ spec:
                 fieldRef:
                   fieldPath: metadata.name
             - name: OTEL_RESOURCE_ATTRIBUTES
-              value: deployment.environment.name=production,k8s.cluster.name=layer-zero,deployment.id=[[ .Config.Name ]],service.instance.id=$(POD_NAME)
+              value: deployment.environment.name=production,k8s.cluster.name=layer-zero,deployment.id=[[ .Config.Name ]],service.instance.id=\$(POD_NAME)
             - name: SPIFFE_ENDPOINT_SOCKET
               value: "unix:///run/spire/sockets/agent.sock"
           ports:
@@ -524,7 +524,7 @@ spec:
                 fieldRef:
                   fieldPath: metadata.name
             - name: OTEL_RESOURCE_ATTRIBUTES
-              value: deployment.environment.name=production,k8s.cluster.name=layer-zero,deployment.id=[[ .Config.Name ]],service.instance.id=$(POD_NAME)
+              value: deployment.environment.name=production,k8s.cluster.name=layer-zero,deployment.id=[[ .Config.Name ]],service.instance.id=\$(POD_NAME)
             - name: SPIFFE_ENDPOINT_SOCKET
               value: "unix:///run/spire/sockets/agent.sock"
           ports:

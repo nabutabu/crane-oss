@@ -8,7 +8,7 @@ grep -Fx '    server_address = "[[ .SpireAddress ]]"' /etc/spire/agent.conf >/de
 grep -Fx '    trust_domain = "[[ .TrustDomain ]]"' /etc/spire/agent.conf >/dev/null
 grep -q 'WorkloadAttestor "systemd"' /etc/spire/agent.conf
 systemctl enable spire-agent.service >/dev/null
-systemctl restart spire-agent.service
+systemctl start spire-agent.service
 ready=0
 for _ in $(seq 1 60); do
   if spire-agent healthcheck -socketPath /run/spire/sockets/agent.sock >/dev/null 2>&1; then ready=1; break; fi
