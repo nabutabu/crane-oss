@@ -19,7 +19,7 @@ func TestPlatformWorkloadIdentityManifests(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	deployments, accounts, roles := 0, 0, 0
+	deployments, accounts, roles, namespacedRoles, namespacedBindings, provisionerBindings := 0, 0, 0, 0, 0, 0
 	for _, block := range regexp.MustCompile(`(?s)kubectl apply -f - <<YAML\n(.*?)\nYAML`).FindAllStringSubmatch(script, -1) {
 		decoder := yaml.NewYAMLOrJSONDecoder(strings.NewReader(block[1]), 4096)
 		for {
@@ -44,7 +44,7 @@ func TestPlatformWorkloadIdentityManifests(t *testing.T) {
 				}
 				deployments++
 				pod := d.Spec.Template.Spec
-				if d.Namespace != "crane-system" || pod.ServiceAccountName != d.Name || pod.AutomountServiceAccountToken == nil || *pod.AutomountServiceAccountToken {
+				if d.Namespace != "crane-system" || pod.ServiceAccountName != d.Name || pod.AutomountServiceAccountToken == nil || *pod.AutomountServiceAccountToken != (d.Name == "dominator") {
 					t.Fatal("incorrect workload service account")
 				}
 				want := &corev1.Affinity{NodeAffinity: &corev1.NodeAffinity{RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{NodeSelectorTerms: []corev1.NodeSelectorTerm{{MatchFields: []corev1.NodeSelectorRequirement{{Key: "metadata.name", Operator: corev1.NodeSelectorOpIn, Values: []string{"$NODE_NAME"}}}}}}}}
@@ -60,6 +60,28 @@ func TestPlatformWorkloadIdentityManifests(t *testing.T) {
 				if sa.Namespace != "crane-system" || (sa.Name != "crane-api" && sa.Name != "dominator") || sa.AutomountServiceAccountToken == nil || *sa.AutomountServiceAccountToken {
 					t.Fatal("incorrect service account policy")
 				}
+			case "Role":
+				namespacedRoles++
+				var role rbacv1.Role
+				if err := json.Unmarshal(raw, &role); err != nil {
+					t.Fatal(err)
+				}
+				want := []rbacv1.PolicyRule{
+					{APIGroups: []string{""}, Resources: []string{"secrets"}, Verbs: []string{"create", "delete"}},
+					{APIGroups: []string{""}, Resources: []string{"pods"}, Verbs: []string{"list"}},
+				}
+				if role.Name != "crane-dominator-provisioner" || role.Namespace != "kube-system" || !reflect.DeepEqual(role.Rules, want) {
+					t.Fatal("incorrect namespaced provisioning permissions")
+				}
+			case "RoleBinding":
+				namespacedBindings++
+				var b rbacv1.RoleBinding
+				if err := json.Unmarshal(raw, &b); err != nil {
+					t.Fatal(err)
+				}
+				if b.Namespace != "kube-system" || b.RoleRef.Kind != "Role" || b.RoleRef.Name != "crane-dominator-provisioner" || !reflect.DeepEqual(b.Subjects, []rbacv1.Subject{{Kind: "ServiceAccount", Name: "dominator", Namespace: "crane-system"}}) {
+					t.Fatal("incorrect namespaced provisioner binding")
+				}
 			case "ClusterRole":
 				var role rbacv1.ClusterRole
 				if err := json.Unmarshal(raw, &role); err != nil {
@@ -68,6 +90,8 @@ func TestPlatformWorkloadIdentityManifests(t *testing.T) {
 				roles++
 				var want []rbacv1.PolicyRule
 				switch role.Name {
+				case "crane-dominator-provisioner":
+					want = []rbacv1.PolicyRule{{APIGroups: []string{""}, Resources: []string{"nodes"}, Verbs: []string{"list", "update"}}}
 				case "crane-spire-attestor":
 					want = []rbacv1.PolicyRule{{APIGroups: []string{""}, Resources: []string{"nodes/pods"}, ResourceNames: []string{"$NODE_NAME"}, Verbs: []string{"get"}}}
 				case "crane-subd-kubernetes-operations":
@@ -86,6 +110,13 @@ func TestPlatformWorkloadIdentityManifests(t *testing.T) {
 				if err := json.Unmarshal(raw, &b); err != nil {
 					t.Fatal(err)
 				}
+				if b.Name == "crane-dominator-provisioner" {
+					provisionerBindings++
+					if !reflect.DeepEqual(b.Subjects, []rbacv1.Subject{{Kind: "ServiceAccount", Name: "dominator", Namespace: "crane-system"}}) || b.RoleRef.Name != b.Name {
+						t.Fatal("incorrect provisioner binding")
+					}
+					continue
+				}
 				if len(b.Subjects) != 1 || b.Subjects[0].Kind != "User" || b.RoleRef.Name != b.Name {
 					t.Fatal("incorrect workload RBAC subject")
 				}
@@ -99,7 +130,7 @@ func TestPlatformWorkloadIdentityManifests(t *testing.T) {
 			}
 		}
 	}
-	if deployments != 2 || accounts != 2 || roles != 2 {
+	if deployments != 2 || accounts != 2 || roles != 3 || namespacedRoles != 1 || namespacedBindings != 1 || provisionerBindings != 1 {
 		t.Fatalf("deployments=%d accounts=%d roles=%d", deployments, accounts, roles)
 	}
 	activation := strings.Index(script, `/usr/local/bin/crane-configure-spire-k8s "$NODE_NAME"`)

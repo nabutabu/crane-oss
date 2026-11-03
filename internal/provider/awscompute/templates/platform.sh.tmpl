@@ -227,6 +227,48 @@ subjects:
     apiGroup: rbac.authorization.k8s.io
     name: "crane-subd:$NODE_NAME"
 YAML
+kubectl apply -f - <<YAML
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: crane-dominator-provisioner, namespace: kube-system}
+rules:
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["create", "delete"]
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["list"]
+YAML
+kubectl apply -f - <<YAML
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: crane-dominator-provisioner, namespace: kube-system}
+subjects:
+- kind: ServiceAccount
+  name: dominator
+  namespace: crane-system
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: crane-dominator-provisioner}
+YAML
+kubectl apply -f - <<YAML
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: {name: crane-dominator-provisioner}
+rules:
+- apiGroups: [""]
+  resources: ["nodes"]
+  verbs: ["list", "update"]
+YAML
+kubectl apply -f - <<YAML
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: crane-dominator-provisioner}
+subjects:
+- kind: ServiceAccount
+  name: dominator
+  namespace: crane-system
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: crane-dominator-provisioner}
+YAML
+
 /usr/local/bin/crane-configure-spire-k8s "$NODE_NAME"
 
 
@@ -472,7 +514,7 @@ spec:
         app: dominator
     spec:
       serviceAccountName: dominator
-      automountServiceAccountToken: false
+      automountServiceAccountToken: true
       affinity:
         nodeAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:

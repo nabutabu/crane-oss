@@ -2,6 +2,7 @@
 """Run only against an explicitly named, disposable kind cluster (see README)."""
 import argparse
 import json
+import re
 from pathlib import Path
 import subprocess
 import tempfile
@@ -114,7 +115,8 @@ wait(lambda: host('/opt/issue32/spire-agent', 'healthcheck', '-socketPath', '/ru
 
 # Use the production service-account/RBAC manifest, substituting only node name.
 platform = (repo / 'internal/provider/awscompute/templates/platform.sh.tmpl').read_text()
-rbac = platform.split('step "configuring Kubernetes workload attestation"')[1].split('<<YAML\n', 1)[1].split('\nYAML', 1)[0].replace('$NODE_NAME', node)
+rbac_section = platform.split('step "configuring Kubernetes workload attestation"')[1].split('/usr/local/bin/crane-configure-spire-k8s', 1)[0]
+rbac = '\n---\n'.join(re.findall(r'<<YAML\n(.*?)\nYAML', rbac_section, re.S)).replace('$NODE_NAME', node)
 kubectl('create', 'namespace', 'crane-system', ok=False)
 kubectl('create', 'namespace', 'other', ok=False)
 kubectl('apply', '-f', '-', data=rbac)
@@ -135,7 +137,7 @@ host('ctr', '--namespace=k8s.io', 'images', 'pull', 'docker.io/library/busybox:1
 
 def pod(name, sa, namespace='crane-system', uid=10001):
     obj = {'apiVersion': 'v1', 'kind': 'Pod', 'metadata': {'name': name, 'namespace': namespace}, 'spec': {
-        'serviceAccountName': sa, 'automountServiceAccountToken': False,
+        'serviceAccountName': sa, 'automountServiceAccountToken': sa == 'dominator',
         'affinity': {'nodeAffinity': {'requiredDuringSchedulingIgnoredDuringExecution': {'nodeSelectorTerms': [{'matchFields': [{'key': 'metadata.name', 'operator': 'In', 'values': [node]}]}]}}},
         'hostNetwork': True, 'securityContext': {'runAsUser': uid, 'runAsGroup': uid},
         'containers': [{'name': 'probe', 'image': 'busybox:1.37.0', 'command': ['sh', '-c', 'sleep 3600'],
@@ -156,10 +158,19 @@ for service in ('crane-api', 'dominator'):
     for verb, resource in (('create', 'pods'), ('patch', 'deployments.apps'), ('create', 'serviceaccounts/token'), ('impersonate', 'users')):
         if kubectl('auth', 'can-i', verb, resource, '--as=system:serviceaccount:crane-system:' + service, '-n', 'crane-system', ok=False).returncode == 0:
             raise RuntimeError('workload has excessive deployment/identity authority')
+for verb, resource, namespace, allowed in (
+    ('list', 'nodes', 'crane-system', True), ('update', 'nodes', 'crane-system', True),
+    ('list', 'pods', 'kube-system', True), ('create', 'secrets', 'kube-system', True),
+    ('delete', 'secrets', 'kube-system', True), ('get', 'secrets', 'kube-system', False),
+    ('list', 'pods', 'other', False), ('create', 'secrets', 'other', False)):
+    result = kubectl('auth', 'can-i', verb, resource, '--as=system:serviceaccount:crane-system:dominator', '-n', namespace, ok=False)
+    if (result.returncode == 0) != allowed:
+        raise RuntimeError('incorrect Dominator provisioning permission: ' + verb + ' ' + resource)
 pod('api', 'crane-api')
 pod('dominator', 'dominator', uid=10002)
 wait(lambda: kubectl('-n', 'crane-system', 'exec', 'api', '--', '/tools/probe', 'identity', 'crane-api', ok=False).returncode == 0, 'authorized Pod identity')
 identity('dominator', 'dominator')
+kubectl('-n', 'crane-system', 'exec', 'dominator', '--', 'test', '-s', '/var/run/secrets/kubernetes.io/serviceaccount/token')
 pod('wrong-sa', 'default')
 identity('wrong-sa', 'crane-api', allowed=False)
 identity('wrong-sa', 'dominator', allowed=False)
