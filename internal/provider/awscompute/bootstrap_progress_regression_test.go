@@ -27,6 +27,11 @@ func TestBootstrapSocketAndManifestRegression(t *testing.T) {
 		t.Fatal("Subd bootstrap must preserve running agent")
 	}
 	validate := scripts["validate"]
+	for _, line := range strings.Split(validate, "\n") {
+		if strings.Contains(line, "-subd-id ") && !strings.Contains(line, "-zone-id ") {
+			t.Fatal("every Subd probe must receive the zone required by the released probe binary")
+		}
+	}
 	if !strings.Contains(validate, "checking Subd writer identity on host") || !strings.Contains(validate, "checking Subd reader identity on host") {
 		t.Fatal("probe target is not labelled")
 	}
