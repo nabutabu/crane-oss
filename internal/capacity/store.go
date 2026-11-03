@@ -5,9 +5,11 @@ package capacity
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"math"
+	"net"
 	"time"
 
 	"github.com/google/uuid"
@@ -178,9 +180,10 @@ func (s *Store) SetTarget(ctx context.Context, req api.CapacityRequest) (api.Cap
 
 func loadPolicy(ctx context.Context, tx *sql.Tx, id string) (policy, error) {
 	var p policy
+	var rawScheduling []byte
 	err := tx.QueryRowContext(
 		ctx,
-		`SELECT g.id,g.cluster_id,g.node_pool_id,g.zone_id,g.capacity_class,g.provider_zone_id,g.target_nodes,g.target_revision,g.min_nodes,g.max_nodes,g.template_revision,g.vcpu,g.memory_mib,g.launch_parameters,p.max_vcpu,p.max_memory_mib,p.max_nodes,(g.lifecycle_state='active' AND p.enabled AND z.enabled AND z.lifecycle_state='ready' AND c.lifecycle_state='ready' AND m.lifecycle_state='ready' AND m.access_state='approved')
+		`SELECT g.id,g.cluster_id,g.node_pool_id,g.zone_id,g.capacity_class,g.provider_zone_id,g.target_nodes,g.target_revision,g.min_nodes,g.max_nodes,g.template_revision,g.vcpu,g.memory_mib,g.launch_parameters,g.scheduling,p.max_vcpu,p.max_memory_mib,p.max_nodes,(g.lifecycle_state='active' AND p.enabled AND z.enabled AND z.lifecycle_state='ready' AND c.lifecycle_state='ready' AND m.lifecycle_state='ready' AND m.access_state='approved')
 		 FROM node_groups g
 		 JOIN node_pools p ON p.id=g.node_pool_id
 		 JOIN zones z ON z.id=g.zone_id
@@ -195,9 +198,13 @@ func loadPolicy(ctx context.Context, tx *sql.Tx, id string) (policy, error) {
 		&p.group.TargetNodes, &p.group.TargetRevision, &p.group.MinNodes, &p.group.MaxNodes,
 		&p.group.TemplateRevision, &p.group.PerNode.VCPU, &p.group.PerNode.MemoryMiB,
 		&p.group.LaunchParameters,
+		&rawScheduling,
 		&p.poolLimit.VCPU, &p.poolLimit.MemoryMiB, &p.poolLimit.Nodes,
 		&p.enabled,
 	)
+	if err == nil && json.Unmarshal(rawScheduling, &p.group.Scheduling) != nil {
+		return p, ErrInvalid
+	}
 	return p, err
 }
 
@@ -240,11 +247,16 @@ func checkReservations(ctx context.Context, tx *sql.Tx, p policy, nodes int64) e
 
 func provisionIntent(ctx context.Context, tx *sql.Tx, p policy, requestID string, revision int64) error {
 	hostID, opID := uuid.NewString(), uuid.NewString()
-	_, err := tx.ExecContext(
+	parameters, err := json.Marshal(api.ProvisioningTemplate{LaunchParameters: p.group.LaunchParameters,
+		Scheduling: p.group.Scheduling, TemplateRevision: p.group.TemplateRevision, CapacityClass: p.group.CapacityClass})
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(
 		ctx,
 		`INSERT INTO operations(id,kind,zone_id,group_id,host_id,capacity_request_id,target_revision,provider_token,parameters)
 		 VALUES($1,'provision',$2,$3,$4,$5,$6,$7,$8)`,
-		opID, p.group.ZoneID, p.group.ID, hostID, requestID, revision, uuid.NewString(), []byte(p.group.LaunchParameters),
+		opID, p.group.ZoneID, p.group.ID, hostID, requestID, revision, uuid.NewString(), parameters,
 	)
 	if err != nil {
 		return err
@@ -471,9 +483,13 @@ func fencedResult(r sql.Result, err error) error {
 	return nil
 }
 
-// RecordLaunch records a confirmed provider allocation without marking the host
-// ready. Registration/convergence and readiness gates belong to Phase 2.
+// RecordLaunch records a confirmed provider allocation while retaining the
+// operation lease for registration, convergence, and readiness.
 func (s *Store) RecordLaunch(ctx context.Context, op api.Operation, providerID string) error {
+	return s.RecordLaunchWithAddress(ctx, op, providerID, "")
+}
+
+func (s *Store) RecordLaunchWithAddress(ctx context.Context, op api.Operation, providerID, privateIP string) error {
 	if op.Kind != "provision" || providerID == "" {
 		return errors.New("invalid provider result")
 	}
@@ -487,7 +503,7 @@ func (s *Store) RecordLaunch(ctx context.Context, op api.Operation, providerID s
 	r, err := tx.ExecContext(
 		ctx,
 		`UPDATE operations
-		 SET state='succeeded',lease_owner=NULL,lease_until=NULL,updated_at=clock_timestamp()
+		 SET updated_at=clock_timestamp()
 		 WHERE id=$1 AND kind='provision' AND host_id=$4
 		   AND lease_owner=$2 AND fence=$3
 		   AND lease_until>clock_timestamp() AND state='launching'`,
@@ -497,14 +513,29 @@ func (s *Store) RecordLaunch(ctx context.Context, op api.Operation, providerID s
 		return err
 	}
 
-	_, err = tx.ExecContext(
+	endpoint := ""
+	if privateIP != "" {
+		ip := net.ParseIP(privateIP)
+		if ip == nil || !ip.IsPrivate() {
+			return ErrInvalid
+		}
+		endpoint = "https://" + net.JoinHostPort(privateIP, "44001")
+	}
+	result, err := tx.ExecContext(
 		ctx,
-		`UPDATE host SET providerid=$2,provider=z.provider,state='BOOTING',updatedat=clock_timestamp()
+		`UPDATE host SET providerid=CASE WHEN providerid IS NULL OR providerid='' OR providerid=$2 THEN $2 ELSE providerid END,
+             endpoint=CASE WHEN $3='' THEN endpoint ELSE $3 END,
+             subd_endpoint=CASE WHEN $3='' THEN subd_endpoint ELSE $3 END,
+             provider=z.provider,state=CASE WHEN state IN ('PROVISIONING','BOOTING') THEN 'BOOTING' ELSE state END,
+             updatedat=clock_timestamp()
 		 FROM zones z
-		 WHERE host.id=$1 AND z.id=host.crane_zone`,
-		op.HostID, providerID,
+		 WHERE host.id=$1 AND z.id=host.crane_zone AND (host.providerid IS NULL OR host.providerid='' OR host.providerid=$2)`,
+		op.HostID, providerID, endpoint,
 	)
 	if err != nil {
+		return err
+	}
+	if err = affectedExactlyOne(result); err != nil {
 		return err
 	}
 
@@ -517,4 +548,104 @@ func (s *Store) RecordLaunch(ctx context.Context, op api.Operation, providerID s
 		return err
 	}
 	return tx.Commit()
+}
+
+func affectedExactlyOne(result sql.Result) error {
+	n, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n != 1 {
+		return ErrConflict
+	}
+	return nil
+}
+
+// LoadProvisioningTarget hydrates mutable runtime facts from the trusted
+// catalog; immutable operation parameters remain the launch template only.
+func (s *Store) LoadProvisioningTarget(ctx context.Context, op *api.Operation) error {
+	if op == nil || op.Kind != "provision" || op.HostID == "" || op.NodeGroupID == "" {
+		return ErrInvalid
+	}
+	var template api.ProvisioningTemplate
+	if err := json.Unmarshal(op.Parameters, &template); err != nil || !json.Valid(template.LaunchParameters) || template.TemplateRevision == "" || template.CapacityClass == "" {
+		return ErrInvalid
+	}
+	op.LaunchParameters = template.LaunchParameters
+	op.Scheduling = template.Scheduling
+	op.TemplateRevision = template.TemplateRevision
+	op.CapacityClass = template.CapacityClass
+	err := s.DB.QueryRowContext(ctx, `SELECT g.cluster_id,g.node_pool_id,z.provider,z.account_id,z.region,z.provider_zone_id,
+ c.api_server_endpoint,c.ca_cert_hash,
+ COALESCE((SELECT h.providerid FROM host h WHERE h.protected AND h.crane_zone IS NULL
+   AND h.zone=z.id AND h.role='spire' ORDER BY h.createdat LIMIT 1),'')
+ FROM node_groups g JOIN zones z ON z.id=g.zone_id JOIN clusters c ON c.id=g.cluster_id
+ WHERE g.id=$1 AND g.zone_id=$2 AND c.lifecycle_state='ready' AND z.lifecycle_state='ready' AND z.enabled`, op.NodeGroupID, op.ZoneID).
+		Scan(&op.ClusterID, &op.NodePoolID, &op.Provider, &op.AccountID, &op.Region, &op.ProviderZoneID,
+			&op.APIServerEndpoint, &op.CACertHash, &op.SpireInstanceID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrInactive
+	}
+	if err == nil && op.SpireInstanceID == "" {
+		return errors.New("zone SPIRE host is unavailable")
+	}
+	return err
+}
+
+func (s *Store) SetProvisionDesiredVersion(ctx context.Context, op api.Operation, version string) error {
+	if op.Kind != "provision" || version == "" || len(version) > 128 {
+		return ErrInvalid
+	}
+	r, err := s.DB.ExecContext(ctx, `UPDATE host h SET desired_state_version=$4,updatedat=clock_timestamp()
+ FROM operations o WHERE o.id=$1 AND o.host_id=h.id AND o.kind='provision' AND o.state='launching'
+ AND o.lease_owner=$2 AND o.fence=$3 AND o.lease_until>clock_timestamp() AND h.state='REGISTERING'`,
+		op.ID, op.LeaseOwner, op.Fence, version)
+	return fencedResult(r, err)
+}
+
+// SetProvisionState persists one fenced lifecycle handoff.
+func (s *Store) SetProvisionState(ctx context.Context, op api.Operation, expected, next api.HostState) error {
+	allowed := map[api.HostState]api.HostState{
+		api.HostRequested:   api.HostProvisioning,
+		api.HostBooting:     api.HostRegistering,
+		api.HostRegistering: api.HostConverging,
+		api.HostConverging:  api.HostReady,
+	}
+	if op.Kind != "provision" || allowed[expected] != next {
+		return ErrInvalid
+	}
+	r, err := s.DB.ExecContext(ctx, `UPDATE host h SET state=$4,updatedat=clock_timestamp()
+ FROM operations o WHERE o.id=$1 AND o.host_id=h.id AND o.kind='provision'
+ AND o.state='launching' AND o.lease_owner=$2 AND o.fence=$3 AND o.lease_until>clock_timestamp()
+ AND h.state=$5`, op.ID, op.LeaseOwner, op.Fence, next, expected)
+	return fencedResult(r, err)
+}
+
+// CompleteProvision makes validated READY state the only successful handoff.
+func (s *Store) CompleteProvision(ctx context.Context, op api.Operation) error {
+	r, err := s.DB.ExecContext(ctx, `UPDATE operations o SET state='succeeded',lease_owner=NULL,lease_until=NULL,
+ updated_at=clock_timestamp() WHERE o.id=$1 AND o.kind='provision' AND o.host_id=$4
+ AND o.lease_owner=$2 AND o.fence=$3 AND o.lease_until>clock_timestamp() AND o.state='launching'
+ AND EXISTS(SELECT 1 FROM host h WHERE h.id=o.host_id AND h.state='READY'
+   AND h.providerid IS NOT NULL AND h.providerid<>'')`, op.ID, op.LeaseOwner, op.Fence, op.HostID)
+	return fencedResult(r, err)
+}
+
+// RecordProvisionFailure stores only a bounded, non-secret failure category.
+// Leaving the operation retryable lets the next lease resume the same host.
+func (s *Store) RecordProvisionFailure(ctx context.Context, op api.Operation, category string) error {
+	if category == "" || len(category) > 80 {
+		return ErrInvalid
+	}
+	r, err := s.DB.ExecContext(ctx, `UPDATE operations SET last_error=$4,updated_at=clock_timestamp()
+ WHERE id=$1 AND kind='provision' AND lease_owner=$2 AND fence=$3 AND lease_until>clock_timestamp()
+ AND state IN ('leased','launching')`, op.ID, op.LeaseOwner, op.Fence, category)
+	return fencedResult(r, err)
+}
+
+func (s *Store) ReleaseProvisionLease(ctx context.Context, op api.Operation) error {
+	r, err := s.DB.ExecContext(ctx, `UPDATE operations SET state='pending',lease_owner=NULL,lease_until=NULL,
+ updated_at=clock_timestamp() WHERE id=$1 AND kind='provision' AND lease_owner=$2 AND fence=$3
+ AND lease_until>clock_timestamp() AND state IN ('leased','launching')`, op.ID, op.LeaseOwner, op.Fence)
+	return fencedResult(r, err)
 }

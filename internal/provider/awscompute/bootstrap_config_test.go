@@ -35,6 +35,13 @@ func TestPersistedConfigNullFirstZoneUsesDefaultTopology(t *testing.T) {
 	if in.Group.Scheduling.InstanceType != cfg.Platform.InstanceType || in.Group.Scheduling.Zone != "us-west-2a" || in.Group.Scheduling.Region != cfg.AWS.Region || in.Group.Scheduling.Architecture != "amd64" {
 		t.Fatalf("bootstrap group lacks local autoscaler template: %+v", in.Group.Scheduling)
 	}
+	var launch map[string]any
+	if err := json.Unmarshal(in.Group.LaunchParameters, &launch); err != nil {
+		t.Fatal(err)
+	}
+	if launch["iam_instance_profile"] != "crane-platform-worker" || launch["subnet_id"] != "subnet-aaaa" {
+		t.Fatalf("bootstrap group lacks zone-local worker launch settings: %+v", launch)
+	}
 }
 
 func TestRejectInvalidBootstrapNetwork(t *testing.T) {

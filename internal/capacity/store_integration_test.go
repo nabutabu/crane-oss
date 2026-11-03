@@ -266,6 +266,9 @@ func TestPostgresCancellationAndFencing(t *testing.T) {
 	if err = s.BeginLaunch(ctx, newOp); err != nil {
 		t.Fatal(err)
 	}
+	if err = s.SetProvisionState(ctx, newOp, api.HostRequested, api.HostProvisioning); err != nil {
+		t.Fatal(err)
+	}
 	if err = s.RecordLaunch(ctx, newOp, "i-confirmed"); err != nil {
 		t.Fatal(err)
 	}
@@ -420,5 +423,58 @@ func TestPostgresRemovalOwnership(t *testing.T) {
 	}
 	if count(t, db, "node_removal_operations") != 1 || count(t, db, "operations") != 2 {
 		t.Fatal("partial duplicate removal")
+	}
+}
+
+func TestPostgresProvisioningHandoffIsFencedAndCompletesAtReadiness(t *testing.T) {
+	db := database(t)
+	s := NewStore(db)
+	ctx := context.Background()
+	mustExec(t, db, `INSERT INTO host(id,role,zone,imageid,state,health,createdat,provider,providerid,protected)
+ VALUES('bootstrap/spire','spire','zone','ami-spire','CONVERGING','unknown',clock_timestamp(),'aws','i-spire',true)`)
+	if _, err := s.SetTarget(ctx, request("runtime", 0, 1)); err != nil {
+		t.Fatal(err)
+	}
+	id := "spiffe://test.internal/dominator/zone"
+	op, err := s.ClaimDominator(ctx, "zone", "provision", id, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.LoadProvisioningTarget(ctx, &op); err != nil {
+		t.Fatal(err)
+	}
+	if op.ClusterID != "cluster" || op.Provider != "aws" || op.AccountID != "account" ||
+		op.Region != "us-west-2" || op.ProviderZoneID != "us-west-2a" || op.SpireInstanceID != "i-spire" {
+		t.Fatalf("trusted target was not loaded: %#v", op)
+	}
+	if err := s.BeginLaunch(ctx, op); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetProvisionState(ctx, op, api.HostRequested, api.HostProvisioning); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordLaunchWithAddress(ctx, op, "i-worker", "10.0.0.42"); err != nil {
+		t.Fatal(err)
+	}
+	var state, operationState, endpoint string
+	if err := db.QueryRow(`SELECT h.state,o.state,h.subd_endpoint FROM host h JOIN operations o ON o.id=h.operation_id WHERE h.id=$1`, op.HostID).Scan(&state, &operationState, &endpoint); err != nil {
+		t.Fatal(err)
+	}
+	if state != string(api.HostBooting) || operationState != "launching" || endpoint != "https://10.0.0.42:44001" {
+		t.Fatalf("launch completed too early or host endpoint missing: state=%s operation=%s endpoint=%s", state, operationState, endpoint)
+	}
+	for _, transition := range [][2]api.HostState{{api.HostBooting, api.HostRegistering}, {api.HostRegistering, api.HostConverging}, {api.HostConverging, api.HostReady}} {
+		if err := s.SetProvisionState(ctx, op, transition[0], transition[1]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.CompleteProvision(ctx, op); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`SELECT state FROM operations WHERE id=$1`, op.ID).Scan(&operationState); err != nil {
+		t.Fatal(err)
+	}
+	if operationState != "succeeded" {
+		t.Fatalf("operation state=%s, want succeeded", operationState)
 	}
 }

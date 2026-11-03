@@ -608,7 +608,7 @@ func ensureSecrets(ctx context.Context, aws AWSClient, cfg bootstrapConfig, infr
 }
 
 func ensureIAM(ctx context.Context, aws AWSClient, cfg bootstrapConfig, infra Infrastructure) (Infrastructure, error) {
-	for _, kind := range []string{"spire", "platform"} {
+	for _, kind := range []string{"spire", "platform", "worker"} {
 		name := cfg.Name + "-" + kind
 		trust := map[string]any{"Version": "2012-10-17", "Statement": []any{map[string]any{"Effect": "Allow", "Principal": map[string]string{"Service": "ec2.amazonaws.com"}, "Action": "sts:AssumeRole"}}}
 		trustJSON, _ := json.Marshal(trust)
@@ -634,21 +634,30 @@ func ensureIAM(ctx context.Context, aws AWSClient, cfg bootstrapConfig, infra In
 				return infra, err
 			}
 		}
-		statements := []any{
-			map[string]any{"Effect": "Allow", "Action": "ssm:GetParameter", "Resource": bundleParameterARN(cfg)},
-			map[string]any{"Effect": "Allow", "Action": "secretsmanager:GetSecretValue", "Resource": []string{infra.RuntimeSecretARN}},
-			map[string]any{"Effect": "Allow", "Action": []string{"ec2:DescribeInstances", "ec2:DescribeInstanceStatus"}, "Resource": "*", "Condition": map[string]any{"StringEquals": map[string]string{"aws:RequestedRegion": cfg.AWS.Region}}},
+		statements := []any{}
+		if kind == "worker" {
+			// Workers can fetch only the deployment's public trust bundle. SSM
+			// control and cloud provisioning remain on the protected platform role.
+			statements = append(statements, map[string]any{"Effect": "Allow", "Action": "ssm:GetParameter", "Resource": bundleParameterARN(cfg)})
+		} else {
+			statements = append(statements,
+				map[string]any{"Effect": "Allow", "Action": "ssm:GetParameter", "Resource": bundleParameterARN(cfg)},
+				map[string]any{"Effect": "Allow", "Action": "secretsmanager:GetSecretValue", "Resource": []string{infra.RuntimeSecretARN}},
+				map[string]any{"Effect": "Allow", "Action": []string{"ec2:DescribeInstances", "ec2:DescribeInstanceStatus", "ec2:DescribeImages", "ec2:DescribeSubnets", "ec2:DescribeSecurityGroups"}, "Resource": "*", "Condition": map[string]any{"StringEquals": map[string]string{"aws:RequestedRegion": cfg.AWS.Region}}},
+			)
 		}
 		if kind == "spire" {
 			statements = append(statements, map[string]any{"Effect": "Allow", "Action": "secretsmanager:GetSecretValue", "Resource": infra.DBSecretARN}, map[string]any{"Effect": "Allow", "Action": "ssm:PutParameter", "Resource": bundleParameterARN(cfg)})
-		} else {
+		} else if kind == "platform" {
 			statements = append(statements,
 				map[string]any{"Effect": "Allow", "Action": "ecr:GetAuthorizationToken", "Resource": "*"},
 				map[string]any{"Effect": "Allow", "Action": []string{"ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer", "ecr:BatchCheckLayerAvailability"}, "Resource": "arn:aws:ecr:" + cfg.AWS.Region + ":" + cfg.AWS.AccountID + ":repository/*"},
 				map[string]any{"Effect": "Allow", "Action": "ec2:RunInstances", "Resource": "*", "Condition": map[string]any{"StringEquals": map[string]string{"aws:RequestedRegion": cfg.AWS.Region}}},
 				map[string]any{"Effect": "Allow", "Action": "ec2:CreateTags", "Resource": "*", "Condition": map[string]any{"StringEquals": map[string]string{"ec2:CreateAction": "RunInstances", "aws:RequestedRegion": cfg.AWS.Region}}},
 				map[string]any{"Effect": "Allow", "Action": "ec2:TerminateInstances", "Resource": "arn:aws:ec2:" + cfg.AWS.Region + ":" + cfg.AWS.AccountID + ":instance/*", "Condition": map[string]any{"Null": map[string]string{"ec2:ResourceTag/CraneBootstrap": "true"}}},
-				map[string]any{"Effect": "Allow", "Action": "iam:PassRole", "Resource": "arn:aws:iam::" + cfg.AWS.AccountID + ":role/" + name, "Condition": map[string]any{"StringEquals": map[string]string{"iam:PassedToService": "ec2.amazonaws.com"}}})
+				map[string]any{"Effect": "Allow", "Action": "iam:PassRole", "Resource": "arn:aws:iam::" + cfg.AWS.AccountID + ":role/" + cfg.Name + "-worker", "Condition": map[string]any{"StringEquals": map[string]string{"iam:PassedToService": "ec2.amazonaws.com"}}},
+				map[string]any{"Effect": "Allow", "Action": []string{"ssm:DescribeInstanceInformation", "ssm:GetCommandInvocation"}, "Resource": "*"},
+				map[string]any{"Effect": "Allow", "Action": "ssm:SendCommand", "Resource": []string{"arn:aws:ssm:" + cfg.AWS.Region + "::document/AWS-RunShellScript", "arn:aws:ec2:" + cfg.AWS.Region + ":" + cfg.AWS.AccountID + ":instance/*"}, "Condition": map[string]any{"StringEquals": map[string]string{"ssm:resourceTag/CraneBootstrap": cfg.Name}}})
 		}
 		policyJSON, _ := json.Marshal(map[string]any{"Version": "2012-10-17", "Statement": statements})
 		if err = aws.Call(ctx, "iam", "put-role-policy", map[string]any{"RoleName": name, "PolicyName": "crane-runtime", "PolicyDocument": string(policyJSON)}, nil); err != nil {
@@ -686,6 +695,8 @@ func ensureIAM(ctx context.Context, aws AWSClient, cfg bootstrapConfig, infra In
 		}
 		if kind == "spire" {
 			infra.SpireProfile = name
+		} else if kind == "worker" {
+			infra.WorkerProfile = name
 		} else {
 			infra.PlatformProfile = name
 		}

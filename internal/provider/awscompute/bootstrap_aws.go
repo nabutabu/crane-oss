@@ -130,6 +130,6 @@ type Infrastructure struct {
 	PublicSubnetIDs, PrivateSubnetIDs                                 []string
 	AvailabilityZones                                                 []string
 	SpireSecurityGroupID, PlatformSecurityGroupID, RDSSecurityGroupID string
-	SpireProfile, PlatformProfile                                     string
+	SpireProfile, PlatformProfile, WorkerProfile                      string
 	DBEndpoint, DBSecretARN, RuntimeSecretARN                         string
 }

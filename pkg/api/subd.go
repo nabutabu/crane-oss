@@ -4,9 +4,24 @@ package api
 // are untouched. Revision is monotonically increasing within one host.
 type ExpectedHostState struct {
 	Revision uint64              `json:"revision"`
+	ImageID  string              `json:"image_id,omitempty"`
+	Track    string              `json:"track,omitempty"`
+	Version  string              `json:"version,omitempty"`
 	Services map[string]bool     `json:"services,omitempty"`
 	Packages []HostPackageChange `json:"packages,omitempty"`
 	Secret   *KubernetesSecret   `json:"secret,omitempty"`
+}
+
+type ClusterJoinRequest struct {
+	OperationID       string `json:"operation_id"`
+	APIServerEndpoint string `json:"api_server_endpoint"`
+	Token             string `json:"token"`
+	CACertHash        string `json:"ca_cert_hash"`
+}
+
+type ClusterJoinResult struct {
+	OperationID string `json:"operation_id"`
+	Outcome     string `json:"outcome"`
 }
 
 type HostPackageChange struct {
@@ -22,6 +37,7 @@ type HostAgentStatus struct {
 	AcceptedRevision uint64            `json:"accepted_revision"`
 	AppliedRevision  uint64            `json:"applied_revision"`
 	Outcome          string            `json:"outcome"`
+	ExpectedVersion  string            `json:"expected_version,omitempty"`
 	Kubernetes       *KubernetesResult `json:"kubernetes,omitempty"`
 }
 

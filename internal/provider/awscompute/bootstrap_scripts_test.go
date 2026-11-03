@@ -57,6 +57,7 @@ func testInfra() Infrastructure {
 		RuntimeSecretARN:                 "arn:aws:secretsmanager:us-west-2:123456789012:secret:crane-platform/runtime-abc123",
 		SpireSecurityGroupID:             "sg-spire",
 		PlatformSecurityGroupID:          "sg-platform",
+		WorkerProfile:                    "crane-platform-worker",
 		PublicSubnetIDs:                  []string{"subnet-aaaa", "subnet-bbbb"},
 		AvailabilityZones:                []string{"us-west-2a", "us-west-2b"},
 	}
