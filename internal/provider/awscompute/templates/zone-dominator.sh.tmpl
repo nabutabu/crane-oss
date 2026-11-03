@@ -41,6 +41,9 @@ rules:
 - apiGroups: [""]
   resources: ["secrets"]
   verbs: ["create", "delete"]
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["list"]
 YAML
 kubectl -n kube-system apply -f - <<YAML
 apiVersion: rbac.authorization.k8s.io/v1
@@ -59,10 +62,7 @@ metadata: {name: crane-dominator-provisioner-[[ .ZoneID ]]}
 rules:
 - apiGroups: [""]
   resources: ["nodes"]
-  verbs: ["get", "list", "watch", "update", "patch"]
-- apiGroups: [""]
-  resources: ["pods"]
-  verbs: ["get", "list"]
+  verbs: ["list", "update"]
 YAML
 kubectl apply -f - <<YAML
 apiVersion: rbac.authorization.k8s.io/v1

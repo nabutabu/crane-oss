@@ -33,6 +33,11 @@ authority.
   stable IDs and generic step outcomes, never AWS/SSM output, join tokens, or
   raw provider errors.
 
+Dominator Pods mount their Kubernetes service-account token. Dedicated RBAC grants
+cluster-wide Node list/update and kube-system Pod list plus Secret create/delete
+for short-lived join tokens. These permissions apply to both the initial platform
+Dominator and additional zone Dominators; Crane API does not mount a token.
+
 ## Deployment scope
 
 This feature is for new deployments initialized with the current bootstrap
