@@ -62,7 +62,7 @@ echo "[validate] checking Subd reader identity on host [[ .ID ]]"
 setpriv --reuid=10003 --regid=10003 --clear-groups env \
   SPIFFE_ENDPOINT_SOCKET=unix:///run/spire/sockets/agent.sock SPIFFE_TRUST_DOMAIN="$TRUST_DOMAIN" \
   "$CRANE_DIR/bin/crane-bootstrap-probe" -subd-url 'https://[[ .PrivateIP ]]:44001' \
-  -subd-id 'spiffe://[[ $.TrustDomain ]]/subd/[[ .ID ]]'
+  -subd-id 'spiffe://[[ $.TrustDomain ]]/subd/[[ .ID ]]' -zone-id '[[ $.ZoneID ]]'
 [[ end ]]
 
 # ---- Mark the validated zone and cluster ready (single transaction) --------
