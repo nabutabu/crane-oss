@@ -266,6 +266,9 @@ func TestPostgresCancellationAndFencing(t *testing.T) {
 	if err = s.BeginLaunch(ctx, newOp); err != nil {
 		t.Fatal(err)
 	}
+	if err = s.SetProvisionState(ctx, newOp, api.HostRequested, api.HostProvisioning); err != nil {
+		t.Fatal(err)
+	}
 	if err = s.RecordLaunch(ctx, newOp, "i-confirmed"); err != nil {
 		t.Fatal(err)
 	}
