@@ -40,10 +40,44 @@ func topology(cfg bootstrapConfig, infra Infrastructure) (api.FirstZoneInput, er
 		return in, err
 	}
 	if len(in.Group.LaunchParameters) == 0 {
-		in.Group.LaunchParameters, err = json.Marshal(map[string]any{"image_id": cfg.Platform.AMIID, "instance_type": cfg.Platform.InstanceType, "subnet_id": infra.PublicSubnetIDs[0], "security_group_ids": []string{infra.PlatformSecurityGroupID}, "iam_instance_profile": infra.PlatformProfile})
+		in.Group.LaunchParameters, err = json.Marshal(map[string]any{"image_id": cfg.Platform.AMIID, "instance_type": cfg.Platform.InstanceType})
 		if err != nil {
 			return in, err
 		}
+	}
+	var launch map[string]any
+	if err := json.Unmarshal(in.Group.LaunchParameters, &launch); err != nil || launch == nil {
+		return in, fmt.Errorf("first-zone launch parameters must be a JSON object")
+	}
+	zoneIndex := -1
+	for i, zone := range infra.AvailabilityZones {
+		if zone == in.Zone.ProviderZoneID {
+			zoneIndex = i
+			break
+		}
+	}
+	if zoneIndex < 0 || zoneIndex >= len(infra.PublicSubnetIDs) {
+		return in, fmt.Errorf("zone has no deployment subnet")
+	}
+	launch["subnet_id"] = infra.PublicSubnetIDs[zoneIndex]
+	launch["iam_instance_profile"] = infra.WorkerProfile
+	if _, ok := launch["associate_public_ip_address"]; !ok {
+		launch["associate_public_ip_address"] = true
+	}
+	groupIDs, _ := launch["security_group_ids"].([]any)
+	seen := map[string]bool{}
+	for _, value := range groupIDs {
+		if id, ok := value.(string); ok {
+			seen[id] = true
+		}
+	}
+	if !seen[infra.PlatformSecurityGroupID] {
+		groupIDs = append(groupIDs, infra.PlatformSecurityGroupID)
+	}
+	launch["security_group_ids"] = groupIDs
+	in.Group.LaunchParameters, err = json.Marshal(launch)
+	if err != nil {
+		return in, err
 	}
 	// During local configuration validation the account may be discovered later.
 	if cfg.AWS.AccountID != "" {

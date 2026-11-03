@@ -152,6 +152,7 @@ type NodeGroup struct {
 	PerNode                                                          Resources
 	// LaunchParameters is an immutable, version-pinned provider template.
 	LaunchParameters json.RawMessage
+	Scheduling       SchedulingTemplate
 }
 
 // ClusterID must come from the authenticated adapter identity at the caller.
@@ -174,18 +175,30 @@ type InfrastructureReservation struct {
 }
 
 type Operation struct {
-	ID, Kind, ZoneID, NodeGroupID, HostID, CapacityRequestID string
+	ID, Kind, ZoneID, NodeGroupID, NodePoolID, HostID, CapacityRequestID string
 	// Populated from the trusted catalog for bootstrap execution, never from
 	// the operation's immutable request parameters.
-	ClusterID, APIServerEndpoint, CACertHash string
-	TargetRevision                           int64
-	State, ProviderToken                     string
-	Parameters                               json.RawMessage
-	LeaseOwner                               string
-	LeaseUntil                               time.Time
-	Fence                                    int64
-	LastError                                string
-	CreatedAt, UpdatedAt                     time.Time
+	ClusterID, APIServerEndpoint, CACertHash    string
+	Provider, AccountID, Region, ProviderZoneID string
+	CapacityClass, TemplateRevision             string
+	LaunchParameters                            json.RawMessage
+	Scheduling                                  SchedulingTemplate
+	SpireInstanceID                             string
+	TargetRevision                              int64
+	State, ProviderToken                        string
+	Parameters                                  json.RawMessage
+	LeaseOwner                                  string
+	LeaseUntil                                  time.Time
+	Fence                                       int64
+	LastError                                   string
+	CreatedAt, UpdatedAt                        time.Time
+}
+
+type ProvisioningTemplate struct {
+	LaunchParameters json.RawMessage    `json:"launch_parameters"`
+	Scheduling       SchedulingTemplate `json:"scheduling"`
+	TemplateRevision string             `json:"template_revision"`
+	CapacityClass    string             `json:"capacity_class"`
 }
 
 type ZoneBootstrapPhase string

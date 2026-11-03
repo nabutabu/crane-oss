@@ -32,6 +32,8 @@ type Server struct {
 	mu                    sync.Mutex
 	view                  atomic.Value // api.HostAgentStatus; reads never wait for enforcement
 	saved                 savedState
+	joinPath              string
+	join                  clusterJoinState
 }
 
 func NewServer(cfg Config, identity, statePath, statusPath string, host Host) (*Server, error) {
@@ -41,7 +43,7 @@ func NewServer(cfg Config, identity, statePath, statusPath string, host Host) (*
 	if err := validateOwnID(identity, cfg.TrustDomain); err != nil {
 		return nil, err
 	}
-	s := &Server{cfg: cfg, identity: identity, host: host, statePath: statePath, statusPath: statusPath}
+	s := &Server{cfg: cfg, identity: identity, host: host, statePath: statePath, statusPath: statusPath, joinPath: statePath + ".join.json"}
 	data, err := os.ReadFile(statePath)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, errors.New("cannot read persisted Subd state")
@@ -60,6 +62,18 @@ func NewServer(cfg Config, identity, statePath, statusPath string, host Host) (*
 	} else {
 		s.saved.Outcome = "unconfigured"
 	}
+	joinData, joinErr := os.ReadFile(s.joinPath)
+	if joinErr != nil && !errors.Is(joinErr, os.ErrNotExist) {
+		return nil, errors.New("cannot read persisted cluster join status")
+	}
+	if joinErr == nil {
+		if json.Unmarshal(joinData, &s.join) != nil || validateJoinState(s.join) != nil {
+			return nil, errors.New("invalid persisted cluster join status")
+		}
+		if s.join.Outcome == "applying" {
+			s.join.Outcome = "interrupted"
+		}
+	}
 	s.view.Store(s.status())
 	return s, nil
 }
@@ -71,7 +85,11 @@ func digest(in api.ExpectedHostState) string {
 }
 
 func (s *Server) status() api.HostAgentStatus {
-	return api.HostAgentStatus{Identity: s.identity, PID: os.Getpid(), InvocationID: os.Getenv("INVOCATION_ID"), Ready: true, AcceptedRevision: s.saved.Request.Revision, AppliedRevision: s.saved.AppliedRevision, Outcome: s.saved.Outcome, Kubernetes: s.saved.Kubernetes}
+	status := api.HostAgentStatus{Identity: s.identity, PID: os.Getpid(), InvocationID: os.Getenv("INVOCATION_ID"), Ready: true, AcceptedRevision: s.saved.Request.Revision, AppliedRevision: s.saved.AppliedRevision, Outcome: s.saved.Outcome, Kubernetes: s.saved.Kubernetes}
+	if s.saved.Outcome == "applied" && s.saved.AppliedRevision == s.saved.Request.Revision {
+		status.ExpectedVersion = s.saved.Request.Version
+	}
+	return status
 }
 
 func (s *Server) publish() error {
@@ -85,6 +103,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/health", s.health)
 	mux.HandleFunc("GET /v1/state", s.current)
 	mux.HandleFunc("PUT /v1/expected-state", s.update)
+	mux.HandleFunc("PUT /v1/cluster-join", s.clusterJoin)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// go-spiffe verifies chains in VerifyPeerCertificate, so VerifiedChains
 		// is intentionally empty. Serve always installs that verification hook.

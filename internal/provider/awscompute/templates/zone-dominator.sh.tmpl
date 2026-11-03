@@ -33,6 +33,47 @@ with open(sys.argv[2], "w") as handle:
 PY
 kubectl apply -f "$SECRET_FILE"
 kubectl -n crane-system create serviceaccount "dominator-[[ .ZoneID ]]" --dry-run=client -o yaml | kubectl apply -f -
+kubectl -n kube-system apply -f - <<YAML
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: crane-dominator-provisioner}
+rules:
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["create", "delete"]
+YAML
+kubectl -n kube-system apply -f - <<YAML
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: crane-dominator-provisioner}
+subjects:
+- kind: ServiceAccount
+  name: dominator-[[ .ZoneID ]]
+  namespace: crane-system
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: crane-dominator-provisioner}
+YAML
+kubectl apply -f - <<YAML
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: {name: crane-dominator-provisioner-[[ .ZoneID ]]}
+rules:
+- apiGroups: [""]
+  resources: ["nodes"]
+  verbs: ["get", "list", "watch", "update", "patch"]
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list"]
+YAML
+kubectl apply -f - <<YAML
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: crane-dominator-provisioner-[[ .ZoneID ]]}
+subjects:
+- kind: ServiceAccount
+  name: dominator-[[ .ZoneID ]]
+  namespace: crane-system
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: crane-dominator-provisioner-[[ .ZoneID ]]}
+YAML
 kubectl -n crane-system apply -f - <<YAML
 apiVersion: apps/v1
 kind: Deployment
@@ -45,7 +86,7 @@ spec:
     metadata: {labels: {app: dominator-[[ .ZoneID ]]}}
     spec:
       serviceAccountName: dominator-[[ .ZoneID ]]
-      automountServiceAccountToken: false
+      automountServiceAccountToken: true
       nodeName: "$NODE_NAME"
       containers:
       - name: dominator

@@ -41,3 +41,17 @@ type Provider interface {
 	ProvisionSpireHost(ctx context.Context, id string, connInfo api.DBConnectionInfo) (string, error)
 	RegisterTargets(ctx context.Context, targetGroupName string, instanceID string, port int32) error
 }
+
+type RuntimeHost struct {
+	ProviderID string
+	PrivateIP  string
+}
+
+// RuntimeProvisioner is a provider capability used by the zone-owned
+// provisioning controller. It contains only provider operations; catalog
+// lifecycle and readiness remain under Dominator and capacity ownership.
+type RuntimeProvisioner interface {
+	LaunchWorker(context.Context, api.Operation) (RuntimeHost, error)
+	ReconcileSubdRegistration(context.Context, api.Operation, string) error
+	ConfigureSubd(context.Context, api.Operation, string, string) error
+}

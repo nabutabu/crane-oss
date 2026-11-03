@@ -16,11 +16,15 @@ import (
 	"github.com/nabutabu/crane-oss/internal/dominator"
 	"github.com/nabutabu/crane-oss/internal/hostcatalog/service"
 	"github.com/nabutabu/crane-oss/internal/hostcatalog/store"
+	"github.com/nabutabu/crane-oss/internal/hostrpc"
 	"github.com/nabutabu/crane-oss/internal/logging"
+	"github.com/nabutabu/crane-oss/internal/provider/awscompute"
 	"github.com/nabutabu/crane-oss/internal/telemetry"
 	"github.com/nabutabu/crane-oss/internal/version"
 	"github.com/spiffe/go-spiffe/v2/workloadapi"
 	"go.opentelemetry.io/otel"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 )
 
 func main() {
@@ -94,6 +98,30 @@ func run() (runErr error) {
 	if err != nil {
 		return fmt.Errorf("create policy resolver: %w", err)
 	}
+	trustDomain := config.GetEnv("SPIFFE_TRUST_DOMAIN", "crane-oss")
+	zoneID := config.GetEnv("CRANE_ZONE_ID", "")
+	awsRuntime, err := awscompute.NewRuntime(ctx, config.GetEnv("AWS_REGION", "us-west-2"), trustDomain)
+	if err != nil {
+		return fmt.Errorf("create AWS runtime provisioner: %w", err)
+	}
+	kubeConfig, err := rest.InClusterConfig()
+	if err != nil {
+		return fmt.Errorf("create Dominator Kubernetes client configuration: %w", err)
+	}
+	kubernetesClient, err := kubernetes.NewForConfig(kubeConfig)
+	if err != nil {
+		return fmt.Errorf("create Dominator Kubernetes client: %w", err)
+	}
+	provisioner := &dominator.ProvisionExecutor{Store: capacity.NewStore(db), Provider: awsRuntime,
+		Kubernetes: kubernetesClient, Caller: hostrpc.Client{Source: source}, Resolver: resolver, TrustDomain: trustDomain}
+	provisionController := &capacity.ProvisionController{Store: capacity.NewStore(db), Executor: provisioner,
+		ZoneID: zoneID, Identity: svid.ID.String()}
+	workerDone := make(chan struct{})
+	go func() {
+		defer close(workerDone)
+		_ = provisionController.Run(ctx, 5*time.Second, logger.Logger)
+	}()
+	defer func() { stop(); <-workerDone }()
 
 	server := dominator.NewServer(":44000", db, hostCatalog, resolver, logger.Logger)
 	server.Middleware = func(next http.Handler) http.Handler { return telemetryProvider.HTTPHandler(next, logger.Logger) }

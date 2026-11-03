@@ -261,7 +261,7 @@ func TestInfrastructureFirstRunAndRetry(t *testing.T) {
 	if creates != createdFirst {
 		t.Fatalf("retry created %d additional resources", creates-createdFirst)
 	}
-	if first.VPCID == "" || len(first.PrivateSubnetIDs) != 2 || len(first.PublicSubnetIDs) != 2 || first.DBSecretARN == "" || first.RuntimeSecretARN == "" || first.SpireProfile == "" || first.PlatformProfile == "" {
+	if first.VPCID == "" || len(first.PrivateSubnetIDs) != 2 || len(first.PublicSubnetIDs) != 2 || first.DBSecretARN == "" || first.RuntimeSecretARN == "" || first.SpireProfile == "" || first.PlatformProfile == "" || first.WorkerProfile == "" {
 		t.Fatalf("lost infrastructure state: %+v", first)
 	}
 	if !strings.Contains(policies[cfg.Name+"-spire"], bundleParameterARN(cfg)) || !strings.Contains(policies[cfg.Name+"-spire"], "ssm:PutParameter") {
@@ -269,6 +269,12 @@ func TestInfrastructureFirstRunAndRetry(t *testing.T) {
 	}
 	if !strings.Contains(policies[cfg.Name+"-platform"], "ec2:ResourceTag/CraneBootstrap") {
 		t.Fatal("platform role does not protect bootstrap instances")
+	}
+	if !strings.Contains(policies[cfg.Name+"-platform"], cfg.Name+"-worker") || !strings.Contains(policies[cfg.Name+"-platform"], "ssm:SendCommand") {
+		t.Fatal("platform role cannot launch and configure workers")
+	}
+	if !strings.Contains(policies[cfg.Name+"-worker"], bundleParameterARN(cfg)) || strings.Contains(policies[cfg.Name+"-worker"], "secretsmanager:GetSecretValue") {
+		t.Fatal("worker role does not have the expected least-privilege bundle access")
 	}
 	for role, policy := range policies {
 		var document struct {

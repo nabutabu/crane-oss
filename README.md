@@ -209,6 +209,13 @@ provisioning operation; an explicit `/v1/capacity` request is still required.
 `crane-api` and Dominator check that bootstrap initialized the schema and never
 change it at startup. The baseline does not upgrade earlier POC schemas.
 
+Dominator-driven worker provisioning requires a new deployment initialized by
+the current bootstrap workflow, including its worker instance profile and
+prepared golden image metadata. It does not retrofit existing deployments or
+databases; no startup migration or schema upgrade is performed. See
+[ADR-014](docs/decisions/adr-014-dominator-worker-provisioning.md) for the
+execution, readiness, and observability contract.
+
 ## Contributing
 
 1. Fork the repository
