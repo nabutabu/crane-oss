@@ -53,7 +53,7 @@ func database(t *testing.T) *sql.DB {
 		t.Fatalf("schema readiness: %v", err)
 	}
 	_, err = db.Exec(`
-INSERT INTO zones(id,provider,account_id,region,provider_zone_id,lifecycle_state) VALUES('zone','aws','account','us-west-2','us-west-2a','ready');
+INSERT INTO zones(id,provider,account_id,region,provider_zone_id,kubernetes_region,kubernetes_zone,lifecycle_state) VALUES('zone','aws','account','us-west-2','us-west-2a','us-west-2','us-west-2a','ready');
 INSERT INTO clusters(id,kubeadm_version,kubelet_version,container_runtime,cni,lifecycle_state) VALUES('cluster','1.35.0','1.35.0','containerd','cilium','ready');
 INSERT INTO cluster_zones(cluster_id,zone_id,lifecycle_state,access_state) VALUES('cluster','zone','ready','approved');
 INSERT INTO zone_dominators(zone_id,endpoint,identity) VALUES('zone','https://dominator:44000','spiffe://test.internal/dominator/zone');

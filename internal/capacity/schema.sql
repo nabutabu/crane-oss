@@ -3,7 +3,9 @@
 CREATE TABLE IF NOT EXISTS zones (
  id text PRIMARY KEY, provider text NOT NULL, account_id text NOT NULL,
  region text NOT NULL, provider_zone_id text NOT NULL,
+ kubernetes_region text NOT NULL, kubernetes_zone text NOT NULL UNIQUE,
  enabled boolean NOT NULL DEFAULT true, lifecycle_state text NOT NULL DEFAULT 'requested',
+ CHECK(kubernetes_region <> '' AND kubernetes_zone <> ''),
  UNIQUE(provider, account_id, region, provider_zone_id), UNIQUE(id, provider_zone_id), UNIQUE(id,provider,region)
 );
 CREATE TABLE IF NOT EXISTS clusters (

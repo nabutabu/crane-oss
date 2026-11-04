@@ -15,6 +15,7 @@ type Resources struct {
 
 type Zone struct {
 	ID, Provider, AccountID, Region, ProviderZoneID string
+	KubernetesRegion, KubernetesZone                string
 	Enabled                                         bool
 	LifecycleState                                  string
 }
@@ -22,11 +23,13 @@ type Zone struct {
 // TopologyInput types are used by the authenticated platform API. They keep
 // provisioning intent explicit and version-pinned at the admission boundary.
 type ZoneInput struct {
-	ID             string `json:"id"`
-	Provider       string `json:"provider"`
-	AccountID      string `json:"account_id"`
-	Region         string `json:"region"`
-	ProviderZoneID string `json:"provider_zone_id"`
+	ID               string `json:"id"`
+	Provider         string `json:"provider"`
+	AccountID        string `json:"account_id"`
+	Region           string `json:"region"`
+	ProviderZoneID   string `json:"provider_zone_id"`
+	KubernetesRegion string `json:"kubernetes_region,omitempty"`
+	KubernetesZone   string `json:"kubernetes_zone,omitempty"`
 }
 
 type ClusterInput struct {

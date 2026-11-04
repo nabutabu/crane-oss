@@ -66,7 +66,7 @@ func TestBootstrapRetryEnrichesEmptySchedulingOnce(t *testing.T) {
 		}
 	}
 	g.Scheduling.Zone = "us-west-2b"
-	if err := s.CreateNodeGroup(context.Background(), g); !errors.Is(err, ErrConflict) {
+	if err := s.CreateNodeGroup(context.Background(), g); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("changed retry: %v", err)
 	}
 }
