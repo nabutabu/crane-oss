@@ -500,9 +500,17 @@ func (s *Store) RecordLaunch(ctx context.Context, op api.Operation, providerID s
 	return s.RecordLaunchWithAddress(ctx, op, providerID, "")
 }
 
-func (s *Store) RecordLaunchWithAddress(ctx context.Context, op api.Operation, providerID, privateIP string) error {
+func (s *Store) RecordLaunchWithAddress(ctx context.Context, op api.Operation, providerID, privateIP string, nodeProviderIDs ...string) error {
 	if op.Kind != "provision" || providerID == "" {
 		return errors.New("invalid provider result")
+	}
+
+	nodeProviderID := ""
+	if len(nodeProviderIDs) > 1 {
+		return ErrInvalid
+	}
+	if len(nodeProviderIDs) == 1 {
+		nodeProviderID = nodeProviderIDs[0]
 	}
 
 	tx, err := s.DB.BeginTx(ctx, nil)
@@ -535,13 +543,14 @@ func (s *Store) RecordLaunchWithAddress(ctx context.Context, op api.Operation, p
 	result, err := tx.ExecContext(
 		ctx,
 		`UPDATE host SET providerid=CASE WHEN providerid IS NULL OR providerid='' OR providerid=$2 THEN $2 ELSE providerid END,
+             kubernetes_provider_id=CASE WHEN $4='' THEN kubernetes_provider_id ELSE $4 END,
              endpoint=CASE WHEN $3='' THEN endpoint ELSE $3 END,
              subd_endpoint=CASE WHEN $3='' THEN subd_endpoint ELSE $3 END,
              provider=z.provider,state=CASE WHEN state IN ('PROVISIONING','BOOTING') THEN 'BOOTING' ELSE state END,
              updatedat=clock_timestamp()
 		 FROM zones z
-		 WHERE host.id=$1 AND z.id=host.crane_zone AND (host.providerid IS NULL OR host.providerid='' OR host.providerid=$2)`,
-		op.HostID, providerID, endpoint,
+		 WHERE host.id=$1 AND z.id=host.crane_zone AND (host.providerid IS NULL OR host.providerid='' OR host.providerid=$2) AND (host.kubernetes_provider_id='' OR $4='' OR host.kubernetes_provider_id=$4)`,
+		op.HostID, providerID, endpoint, nodeProviderID,
 	)
 	if err != nil {
 		return err
@@ -625,7 +634,6 @@ func (s *Store) SetProvisionState(ctx context.Context, op api.Operation, expecte
 		api.HostRequested:   api.HostProvisioning,
 		api.HostBooting:     api.HostRegistering,
 		api.HostRegistering: api.HostConverging,
-		api.HostConverging:  api.HostReady,
 	}
 	if op.Kind != "provision" || allowed[expected] != next {
 		return ErrInvalid
@@ -643,7 +651,7 @@ func (s *Store) CompleteProvision(ctx context.Context, op api.Operation) error {
  updated_at=clock_timestamp() WHERE o.id=$1 AND o.kind='provision' AND o.host_id=$4
  AND o.lease_owner=$2 AND o.fence=$3 AND o.lease_until>clock_timestamp() AND o.state='launching'
  AND EXISTS(SELECT 1 FROM host h WHERE h.id=o.host_id AND h.state='READY'
-   AND h.providerid IS NOT NULL AND h.providerid<>'')`, op.ID, op.LeaseOwner, op.Fence, op.HostID)
+   AND h.providerid IS NOT NULL AND h.providerid<>'' AND EXISTS(SELECT 1 FROM worker_provisioning_state b WHERE b.host_id=h.id AND b.operation_id=o.id AND b.release_started))`, op.ID, op.LeaseOwner, op.Fence, op.HostID)
 	return fencedResult(r, err)
 }
 

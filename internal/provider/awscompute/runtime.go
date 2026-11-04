@@ -131,6 +131,7 @@ func (r *Runtime) LaunchWorker(ctx context.Context, op api.Operation) (provider.
 		return result, errors.New("AWS worker launch returned no instance")
 	}
 	result.ProviderID = aws.ToString(out.Instances[0].InstanceId)
+	result.KubernetesProviderID = fmt.Sprintf("aws:///%s/%s", op.ProviderZoneID, result.ProviderID)
 	result.PrivateIP = aws.ToString(out.Instances[0].PrivateIpAddress)
 	if result.ProviderID == "" || result.PrivateIP == "" {
 		return provider.RuntimeHost{}, errors.New("AWS worker launch returned incomplete identity")

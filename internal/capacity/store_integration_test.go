@@ -463,14 +463,34 @@ func TestPostgresProvisioningHandoffIsFencedAndCompletesAtReadiness(t *testing.T
 	if state != string(api.HostBooting) || operationState != "launching" || endpoint != "https://10.0.0.42:44001" {
 		t.Fatalf("launch completed too early or host endpoint missing: state=%s operation=%s endpoint=%s", state, operationState, endpoint)
 	}
-	for _, transition := range [][2]api.HostState{{api.HostBooting, api.HostRegistering}, {api.HostRegistering, api.HostConverging}, {api.HostConverging, api.HostReady}} {
-		if err := s.SetProvisionState(ctx, op, transition[0], transition[1]); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := s.CompleteProvision(ctx, op); err != nil {
+	if err := s.SetProvisionState(ctx, op, api.HostBooting, api.HostRegistering); err != nil {
 		t.Fatal(err)
 	}
+	binding := ProvisionBinding{NodeName: api.WorkerNodeName(op.HostID), NodeUID: "worker-node-uid", ProviderID: "aws:///us-west-2a/i-worker", ContractHash: strings.Repeat("a", 64)}
+	if err := s.BindProvisionNode(ctx, op, binding); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.PinProvisionExpectedState(ctx, op, api.ExpectedHostState{Revision: 1, Version: "v1"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetProvisionState(ctx, op, api.HostRegistering, api.HostConverging); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetProvisionState(ctx, op, api.HostConverging, api.HostReady); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("direct READY bypass: %v", err)
+	}
+	if err := s.PrepareProvisionRelease(ctx, op, "v1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.FinalizeProvision(ctx, op, "v1", func(ctx context.Context) error {
+		if !ProvisionReleaseAuthorized(ctx, op) {
+			t.Fatal("release callback not authorized")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
 	if err := db.QueryRow(`SELECT state FROM operations WHERE id=$1`, op.ID).Scan(&operationState); err != nil {
 		t.Fatal(err)
 	}

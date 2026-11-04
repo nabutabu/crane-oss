@@ -81,6 +81,7 @@ CREATE TABLE IF NOT EXISTS host (
  secretarn varchar, rdssgid varchar,
  protected boolean NOT NULL DEFAULT false,
  subd_endpoint text NOT NULL DEFAULT '',
+ kubernetes_provider_id text NOT NULL DEFAULT '',
  node_group_id text, node_pool_id text, crane_zone text REFERENCES zones(id), operation_id text,
  desired_state_version text NOT NULL DEFAULT '', observed_state_version text NOT NULL DEFAULT '',
  allocatable_vcpu bigint NOT NULL DEFAULT 0 CHECK(allocatable_vcpu >= 0),
@@ -123,6 +124,13 @@ DO $$ BEGIN
  END IF;
 END $$;
 CREATE INDEX IF NOT EXISTS operations_claim ON operations(zone_id, kind, state, lease_until);
+-- Provider-authenticated kubelet evidence and a recoverable scheduling release.
+CREATE TABLE IF NOT EXISTS worker_provisioning_state (
+ host_id text PRIMARY KEY REFERENCES host(id), operation_id text NOT NULL UNIQUE REFERENCES operations(id),
+ node_name text NOT NULL, node_uid text NOT NULL UNIQUE, provider_id text NOT NULL,
+ contract_hash text NOT NULL, expected_state jsonb NOT NULL DEFAULT '{}',
+ release_started boolean NOT NULL DEFAULT false
+);
 CREATE OR REPLACE FUNCTION crane_immutable_operation() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF ROW(NEW.kind,NEW.zone_id,NEW.group_id,NEW.host_id,NEW.capacity_request_id,NEW.target_revision,NEW.provider_token,NEW.parameters)

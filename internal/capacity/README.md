@@ -111,3 +111,11 @@ one Crane database without a provider-supported topology translation. Node
 group scheduling regions and zones must match the stored zone mapping.
 
 Provider-native topology is checked through the provider capability on administration requests. Unsupported providers, unknown native zones, account mismatches, and unsupported CSI aliases are rejected. Kubernetes scheduling metadata uses the same label builder in discovery templates and worker registration.
+
+Worker readiness persists the provider-authenticated Node UID and immutable
+registration fingerprint. Initial expected state is pinned on first delivery.
+A committed release intent allows a retry to recognize quarantine removal
+whose response or database completion was lost. The bounded Kubernetes release
+runs while the active operation, host and membership are locked; READY and
+operation success then commit together. Template taints and operator cordons
+are preserved. A direct CONVERGING-to-READY store transition is rejected.

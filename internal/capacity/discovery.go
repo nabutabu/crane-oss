@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"fmt"
 
 	"github.com/nabutabu/crane-oss/pkg/api"
 )
@@ -60,22 +59,19 @@ func (s *Store) AutoscalerDiscovery(ctx context.Context, clusterID string) (api.
 	}
 	for i := range out.Groups {
 		g := &out.Groups[i]
-		nodes, queryErr := tx.QueryContext(ctx, `SELECT h.id,COALESCE(h.providerid,''),h.state,z.provider,z.provider_zone_id
- FROM host h JOIN zones z ON z.id=h.crane_zone
+		nodes, queryErr := tx.QueryContext(ctx, `SELECT h.id,h.kubernetes_provider_id,h.state
+ FROM host h
  WHERE h.node_group_id=$1 AND h.state <> 'TERMINATED' ORDER BY h.id`, g.ID)
 		if queryErr != nil {
 			return api.AutoscalerDiscovery{}, queryErr
 		}
 		for nodes.Next() {
 			var n api.AutoscalerNode
-			var provider, zone string
-			if err = nodes.Scan(&n.HostID, &n.ProviderID, &n.State, &provider, &zone); err != nil {
+			if err = nodes.Scan(&n.HostID, &n.ProviderID, &n.State); err != nil {
 				break
 			}
 			if n.ProviderID != "" {
-				if provider == "aws" {
-					n.ProviderID = fmt.Sprintf("aws:///%s/%s", zone, n.ProviderID)
-				}
+
 				g.Nodes = append(g.Nodes, n)
 			}
 		}

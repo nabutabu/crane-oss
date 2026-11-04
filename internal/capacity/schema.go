@@ -33,7 +33,7 @@ func InitializeSchema(ctx context.Context, db *sql.DB) error {
 // Services call this at startup and never alter the database schema.
 func CheckSchema(ctx context.Context, db *sql.DB) error {
 	required := []string{
-		"zone_dominators", "host_state_requests",
+		"zone_dominators", "host_state_requests", "worker_provisioning_state",
 		"topology_regions", "zones", "clusters", "cluster_zones", "node_pools", "node_groups",
 		"capacity_requests", "host", "operations", "infrastructure_reservations",
 		"zone_bootstrap_operations", "node_removal_operations", "actions",
@@ -53,10 +53,10 @@ func CheckSchema(ctx context.Context, db *sql.DB) error {
 		return fmt.Errorf("Crane schema is not initialized (missing tables: %s); run crane-bootstrap", strings.Join(missing, ", "))
 	}
 	var columns int
-	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='host' AND column_name IN ('protected','subd_endpoint')`).Scan(&columns); err != nil {
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='host' AND column_name IN ('protected','subd_endpoint','kubernetes_provider_id')`).Scan(&columns); err != nil {
 		return fmt.Errorf("check host schema readiness: %w", err)
 	}
-	if columns != 2 {
+	if columns != 3 {
 		return fmt.Errorf("Crane host schema is incompatible; initialize a fresh database with crane-bootstrap")
 	}
 	var compatible bool

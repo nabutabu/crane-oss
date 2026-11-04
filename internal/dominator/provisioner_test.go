@@ -7,7 +7,7 @@ import (
 )
 
 func TestWorkerExpectedStateReadyRequiresExactVersion(t *testing.T) {
-	status := api.HostAgentStatus{Ready: true, AcceptedRevision: 2, AppliedRevision: 2, Outcome: "applied", ExpectedVersion: "policy-v2"}
+	status := api.HostAgentStatus{Ready: true, AcceptedRevision: 1, AppliedRevision: 1, Outcome: "applied", ExpectedVersion: "policy-v2"}
 	if !workerExpectedStateReady(status, "policy-v2") {
 		t.Fatal("matching state was rejected")
 	}
@@ -17,7 +17,7 @@ func TestWorkerExpectedStateReadyRequiresExactVersion(t *testing.T) {
 	if workerExpectedStateReady(status, "") {
 		t.Fatal("missing durable desired version was admitted")
 	}
-	status.AppliedRevision = 1
+	status.AppliedRevision = 0
 	if workerExpectedStateReady(status, "policy-v2") {
 		t.Fatal("unapplied revision was admitted")
 	}

@@ -69,6 +69,7 @@ func TestPlatformWorkloadIdentityManifests(t *testing.T) {
 				want := []rbacv1.PolicyRule{
 					{APIGroups: []string{""}, Resources: []string{"secrets"}, Verbs: []string{"create", "delete"}},
 					{APIGroups: []string{""}, Resources: []string{"pods"}, Verbs: []string{"list"}},
+					{APIGroups: []string{"apps"}, Resources: []string{"daemonsets"}, Verbs: []string{"get"}},
 					{APIGroups: []string{""}, Resources: []string{"configmaps"}, ResourceNames: []string{"crane-cluster-identity"}, Verbs: []string{"get"}},
 				}
 				if role.Name != "crane-dominator-provisioner" || role.Namespace != "kube-system" || !reflect.DeepEqual(role.Rules, want) {

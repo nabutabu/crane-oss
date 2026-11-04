@@ -43,8 +43,9 @@ type Provider interface {
 }
 
 type RuntimeHost struct {
-	ProviderID string
-	PrivateIP  string
+	KubernetesProviderID string
+	ProviderID           string
+	PrivateIP            string
 }
 
 // RuntimeIdentity contains facts obtained from the provider, never from Node labels.
