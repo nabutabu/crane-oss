@@ -104,7 +104,7 @@ func TestPostgresBootstrapWorkerRetriesFailedStep(t *testing.T) {
 		t.Fatal(err)
 	}
 	fake := &failingBootstrapExecutor{}
-	controller := BootstrapController{Store: NewStore(db), Executor: fake, Lease: 25 * time.Millisecond}
+	controller := BootstrapController{Store: NewStore(db), Executor: fake, Lease: time.Second}
 	if err := controller.RunOnce(ctx, "zone", "first-worker"); err == nil {
 		t.Fatal("expected transient failure")
 	}
@@ -115,7 +115,7 @@ func TestPostgresBootstrapWorkerRetriesFailedStep(t *testing.T) {
 	if phase != "Requested" {
 		t.Fatalf("failure advanced phase to %s", phase)
 	}
-	time.Sleep(40 * time.Millisecond)
+	time.Sleep(1100 * time.Millisecond)
 	if err := controller.RunOnce(ctx, "zone", "second-worker"); err != nil {
 		t.Fatal(err)
 	}
