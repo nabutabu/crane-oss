@@ -16,10 +16,16 @@ authority.
 - The zone's registered Dominator claims provision operations and owns their
   execution lease. Each external step is idempotent or uses the persisted AWS
   client token. Fencing protects every durable lifecycle handoff.
+  Releasing a lease clears its owner and expiry; an unowned operation remains
+  claimable immediately, including when its host has reached the launching
+  phase. Reclaiming preserves that phase and advances the fence.
 - The AWS runtime launches from the immutable group template and a prepared
   deployment image. It uses the deployment's worker instance profile, public
   SPIRE bundle parameter, and private Subd endpoint. It does not grant workers
   control-plane AWS permissions.
+  SSM command permissions authorize the exact AWS-owned script document
+  separately from target instances, whose deployment ownership tag remains
+  required.
 - Dominator reconciles the exact AWS-IID-parented Subd SPIRE entry, configures
   Subd over SSM, supplies a short-lived Kubernetes bootstrap token over the
   pinned Subd SPIFFE mTLS identity, and removes the token after the join call.

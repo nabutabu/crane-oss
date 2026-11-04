@@ -412,7 +412,8 @@ func (s *Store) claim(ctx context.Context, zoneID, kind, owner string, duration 
 		 WHERE id=(
 		   SELECT id FROM operations
 		   WHERE operations.zone_id=$1 AND operations.kind=$2
-		     AND (state='pending' OR (state IN ('leased','launching') AND lease_until<=clock_timestamp()))
+		     AND (state='pending' OR (state IN ('leased','launching')
+		       AND (lease_until IS NULL OR lease_until<=clock_timestamp())))
 		     AND (NOT $5 OR EXISTS (
 		       SELECT 1 FROM zone_dominators d
 		       JOIN node_groups g ON g.id=operations.group_id AND g.zone_id=operations.zone_id
