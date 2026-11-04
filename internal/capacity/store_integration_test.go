@@ -511,6 +511,9 @@ func TestPostgresProvisionLeasePreservesLaunchedPhaseAcrossReleaseAndRecovery(t 
 		t.Fatalf("released launched operation state=%s, want launching", state)
 	}
 
+	// A fresh claim cannot overlap a still-live lease; model the next controller
+	// pass after the lease expires.
+	mustExec(t, db, `UPDATE operations SET lease_until=clock_timestamp()-interval '1 second' WHERE id=$1`, op.ID)
 	recovered, err := s.ClaimDominator(ctx, "zone", "provision", "spiffe://test.internal/dominator/zone", time.Minute)
 	if err != nil {
 		t.Fatal(err)
