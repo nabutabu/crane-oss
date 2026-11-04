@@ -13,6 +13,7 @@ import (
 	"github.com/nabutabu/crane-oss/internal/hostrpc"
 	"github.com/nabutabu/crane-oss/internal/provider"
 	"github.com/nabutabu/crane-oss/pkg/api"
+	"go.opentelemetry.io/otel/trace"
 	"k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -150,9 +151,10 @@ func (p *ProvisionExecutor) Ready(ctx context.Context, op api.Operation, host ap
 	if err != nil || code != 200 || status.Identity != identity {
 		return false, errors.New("worker Subd identity check failed")
 	}
-	if !status.Ready || status.AcceptedRevision == 0 || status.AppliedRevision != status.AcceptedRevision || status.Outcome != "applied" || status.ExpectedVersion == "" {
+	if !workerExpectedStateReady(status, host.DesiredStateVersion) {
 		return false, nil
 	}
+	trace.SpanFromContext(ctx).AddEvent("worker expected state version verified")
 	if node.Spec.Unschedulable {
 		node.Spec.Unschedulable = false
 		if _, err := p.Kubernetes.CoreV1().Nodes().Update(ctx, node, metav1.UpdateOptions{}); err != nil {
@@ -197,7 +199,7 @@ func (p *ProvisionExecutor) ensureNodeIdentity(ctx context.Context, op api.Opera
 		node.Labels = map[string]string{}
 	}
 	labelsToSet := map[string]string{"kubernetes.io/os": "linux", "kubernetes.io/arch": op.Scheduling.Architecture,
-		"topology.kubernetes.io/region": op.Region, "topology.kubernetes.io/zone": op.ProviderZoneID,
+		"topology.kubernetes.io/region": op.KubernetesRegion, "topology.kubernetes.io/zone": op.KubernetesZone,
 		"node.kubernetes.io/instance-type": op.Scheduling.InstanceType, "platform.crane.io/node-pool": op.NodePoolID}
 	for key, value := range op.Scheduling.Labels {
 		labelsToSet[key] = value
@@ -225,6 +227,12 @@ func (p *ProvisionExecutor) ensureNodeIdentity(ctx context.Context, op api.Opera
 		return nil, false, errors.New("cannot bind Kubernetes node to capacity catalog")
 	}
 	return updated, true, nil
+}
+
+func workerExpectedStateReady(status api.HostAgentStatus, desiredVersion string) bool {
+	return desiredVersion != "" && status.Ready && status.AcceptedRevision != 0 &&
+		status.AppliedRevision == status.AcceptedRevision && status.Outcome == "applied" &&
+		status.ExpectedVersion == desiredVersion
 }
 
 func nodeReady(node *v1.Node) bool {
