@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"log/slog"
 	"net"
 	"net/url"
 	"time"
@@ -43,6 +44,9 @@ func (p *ProvisionExecutor) Launch(ctx context.Context, op api.Operation) (capac
 func (p *ProvisionExecutor) EnrollAndJoin(ctx context.Context, op api.Operation, host api.Host) error {
 	if p.Provider == nil || p.Kubernetes == nil || p.Caller == nil || p.TrustDomain == "" || p.Store == nil || host.ProviderID == "" || host.SubdEndpoint == "" {
 		return errors.New("runtime host enrollment is not configured")
+	}
+	if _, err := p.verifiedWorker(ctx, op, host); err != nil {
+		return err
 	}
 	if err := p.Provider.ReconcileSubdRegistration(ctx, op, host.ProviderID); err != nil {
 		return err
@@ -188,7 +192,11 @@ func (p *ProvisionExecutor) ensureNodeIdentity(ctx context.Context, op api.Opera
 		return nil, false, errors.New("worker private address maps to multiple Kubernetes nodes")
 	}
 	node := matches[0]
-	providerID := "aws:///" + op.ProviderZoneID + "/" + host.ProviderID
+	identity, err := p.verifiedWorker(ctx, op, host)
+	if err != nil {
+		return nil, false, err
+	}
+	providerID := identity.KubernetesProviderID
 	if node.Spec.ProviderID != "" && node.Spec.ProviderID != providerID {
 		return nil, false, errors.New("Kubernetes provider identity conflicts with catalog")
 	}
@@ -276,4 +284,18 @@ func subdPrivateIP(raw string) (string, error) {
 		return "", errors.New("invalid catalog Subd endpoint")
 	}
 	return name, nil
+}
+
+func (p *ProvisionExecutor) verifiedWorker(ctx context.Context, op api.Operation, host api.Host) (provider.RuntimeIdentity, error) {
+	if p.Provider == nil || host.ID != op.HostID || host.NodeGroupID != op.NodeGroupID || host.NodePoolID != op.NodePoolID || host.Provider != op.Provider {
+		return provider.RuntimeIdentity{}, errors.New("worker catalog identity mismatch")
+	}
+	identity, err := p.Provider.VerifyWorker(ctx, op, host.ProviderID)
+	ip, ipErr := subdPrivateIP(host.SubdEndpoint)
+	if err != nil || ipErr != nil || identity.PrivateIP != ip || identity.KubernetesProviderID == "" {
+		return provider.RuntimeIdentity{}, errors.New("worker provider identity mismatch")
+	}
+	trace.SpanFromContext(ctx).AddEvent("worker provider identity verified")
+	slog.InfoContext(ctx, "worker provider identity verified", "operation_id", op.ID, "host_id", host.ID, "zone_id", op.ZoneID)
+	return identity, nil
 }

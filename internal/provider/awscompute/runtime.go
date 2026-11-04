@@ -24,6 +24,7 @@ import (
 )
 
 type runtimeEC2 interface {
+	DescribeInstances(context.Context, *ec2.DescribeInstancesInput, ...func(*ec2.Options)) (*ec2.DescribeInstancesOutput, error)
 	RunInstances(context.Context, *ec2.RunInstancesInput, ...func(*ec2.Options)) (*ec2.RunInstancesOutput, error)
 	DescribeImages(context.Context, *ec2.DescribeImagesInput, ...func(*ec2.Options)) (*ec2.DescribeImagesOutput, error)
 	DescribeSubnets(context.Context, *ec2.DescribeSubnetsInput, ...func(*ec2.Options)) (*ec2.DescribeSubnetsOutput, error)
@@ -117,6 +118,9 @@ func (r *Runtime) LaunchWorker(ctx context.Context, op api.Operation) (provider.
 			{Key: aws.String("CraneOperationID"), Value: aws.String(op.ID)},
 			{Key: aws.String("CraneNodeGroupID"), Value: aws.String(op.NodeGroupID)},
 			{Key: aws.String("CraneZoneID"), Value: aws.String(op.ZoneID)},
+			{Key: aws.String("CraneClusterID"), Value: aws.String(op.ClusterID)},
+			{Key: aws.String("CraneNodePoolID"), Value: aws.String(op.NodePoolID)},
+			{Key: aws.String("CraneTemplateRevision"), Value: aws.String(op.TemplateRevision)},
 			{Key: aws.String("Name"), Value: aws.String("crane-" + op.CapacityClass + "-" + op.HostID)},
 		}}},
 	})

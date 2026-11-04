@@ -643,7 +643,7 @@ func ensureIAM(ctx context.Context, aws AWSClient, cfg bootstrapConfig, infra In
 			statements = append(statements,
 				map[string]any{"Effect": "Allow", "Action": "ssm:GetParameter", "Resource": bundleParameterARN(cfg)},
 				map[string]any{"Effect": "Allow", "Action": "secretsmanager:GetSecretValue", "Resource": []string{infra.RuntimeSecretARN}},
-				map[string]any{"Effect": "Allow", "Action": []string{"ec2:DescribeInstances", "ec2:DescribeInstanceStatus", "ec2:DescribeImages", "ec2:DescribeSubnets", "ec2:DescribeSecurityGroups"}, "Resource": "*", "Condition": map[string]any{"StringEquals": map[string]string{"aws:RequestedRegion": cfg.AWS.Region}}},
+				map[string]any{"Effect": "Allow", "Action": []string{"ec2:DescribeInstances", "ec2:DescribeAvailabilityZones", "ec2:DescribeInstanceStatus", "ec2:DescribeImages", "ec2:DescribeSubnets", "ec2:DescribeSecurityGroups"}, "Resource": "*", "Condition": map[string]any{"StringEquals": map[string]string{"aws:RequestedRegion": cfg.AWS.Region}}},
 			)
 		}
 		if kind == "spire" {
