@@ -246,7 +246,7 @@ func TestPostgresCancellationAndFencing(t *testing.T) {
 	if err = s.BeginLaunch(ctx, op); err != nil {
 		t.Fatal(err)
 	}
-	mustExec(t, db, `UPDATE operations SET lease_until=clock_timestamp()-interval '1 second' WHERE id=$1`, op.ID)
+	mustExec(t, db, `UPDATE operations SET lease_owner=$2,lease_until=clock_timestamp()-interval '1 second' WHERE id=$1`, op.ID, op.LeaseOwner)
 	if err = s.Renew(ctx, op, time.Minute); !errors.Is(err, ErrFenced) {
 		t.Fatalf("expired renew: %v", err)
 	}
@@ -513,7 +513,7 @@ func TestPostgresProvisionLeasePreservesLaunchedPhaseAcrossReleaseAndRecovery(t 
 
 	// A fresh claim cannot overlap a still-live lease; model the next controller
 	// pass after the lease expires.
-	mustExec(t, db, `UPDATE operations SET lease_until=clock_timestamp()-interval '1 second' WHERE id=$1`, op.ID)
+	mustExec(t, db, `UPDATE operations SET lease_owner=$2,lease_until=clock_timestamp()-interval '1 second' WHERE id=$1`, op.ID, op.LeaseOwner)
 	recovered, err := s.ClaimDominator(ctx, "zone", "provision", "spiffe://test.internal/dominator/zone", time.Minute)
 	if err != nil {
 		t.Fatal(err)
