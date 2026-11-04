@@ -289,6 +289,10 @@ func cancelPending(ctx context.Context, tx *sql.Tx, groupID string, count int64)
 		ctx,
 		`SELECT id,host_id FROM operations
 		 WHERE group_id=$1 AND kind='provision' AND state='pending' AND lease_owner IS NULL
+		   AND EXISTS (
+		     SELECT 1 FROM host h
+		     WHERE h.id=operations.host_id AND h.state IN ('REQUESTED','PROVISIONING')
+		   )
 		 ORDER BY created_at DESC,id
 		 LIMIT $2
 		 FOR UPDATE`,
@@ -386,6 +390,9 @@ func (s *Store) ClaimDominator(ctx context.Context, zoneID, kind, identity strin
 
 // claim recovers expired work with a monotonically increasing fence. Provider
 // tokens and parameters never change on recovery, including lost responses.
+// A provision host beyond the provider launch boundary keeps the launching
+// phase even if an older controller released or persisted the operation as
+// pending/leased.
 func (s *Store) claim(ctx context.Context, zoneID, kind, owner string, duration time.Duration, authorize bool) (api.Operation, error) {
 	var op api.Operation
 	if zoneID == "" || owner == "" || duration < time.Millisecond || duration > 24*time.Hour {
@@ -394,7 +401,10 @@ func (s *Store) claim(ctx context.Context, zoneID, kind, owner string, duration 
 	err := s.DB.QueryRowContext(
 		ctx,
 		`UPDATE operations
-		 SET state=CASE WHEN state='launching' THEN 'launching' ELSE 'leased' END,
+		 SET state=CASE WHEN operations.kind='provision' AND EXISTS (
+		       SELECT 1 FROM host h
+		       WHERE h.id=operations.host_id AND h.state IN ('BOOTING','REGISTERING','CONVERGING')
+		     ) THEN 'launching' ELSE 'leased' END,
 		     lease_owner=$3,
 		     lease_until=clock_timestamp()+($4 * interval '1 millisecond'),
 		     fence=fence+1,
@@ -644,7 +654,9 @@ func (s *Store) RecordProvisionFailure(ctx context.Context, op api.Operation, ca
 }
 
 func (s *Store) ReleaseProvisionLease(ctx context.Context, op api.Operation) error {
-	r, err := s.DB.ExecContext(ctx, `UPDATE operations SET state='pending',lease_owner=NULL,lease_until=NULL,
+	r, err := s.DB.ExecContext(ctx, `UPDATE operations o SET state=CASE WHEN EXISTS (
+	SELECT 1 FROM host h WHERE h.id=o.host_id AND h.state IN ('BOOTING','REGISTERING','CONVERGING')
+	) THEN 'launching' ELSE 'pending' END,lease_owner=NULL,lease_until=NULL,
  updated_at=clock_timestamp() WHERE id=$1 AND kind='provision' AND lease_owner=$2 AND fence=$3
  AND lease_until>clock_timestamp() AND state IN ('leased','launching')`, op.ID, op.LeaseOwner, op.Fence)
 	return fencedResult(r, err)

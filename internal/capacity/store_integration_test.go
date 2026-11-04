@@ -246,7 +246,7 @@ func TestPostgresCancellationAndFencing(t *testing.T) {
 	if err = s.BeginLaunch(ctx, op); err != nil {
 		t.Fatal(err)
 	}
-	mustExec(t, db, `UPDATE operations SET lease_until=clock_timestamp()-interval '1 second' WHERE id=$1`, op.ID)
+	mustExec(t, db, `UPDATE operations SET lease_owner=$2,lease_until=clock_timestamp()-interval '1 second' WHERE id=$1`, op.ID, op.LeaseOwner)
 	if err = s.Renew(ctx, op, time.Minute); !errors.Is(err, ErrFenced) {
 		t.Fatalf("expired renew: %v", err)
 	}
@@ -476,5 +476,120 @@ func TestPostgresProvisioningHandoffIsFencedAndCompletesAtReadiness(t *testing.T
 	}
 	if operationState != "succeeded" {
 		t.Fatalf("operation state=%s, want succeeded", operationState)
+	}
+}
+
+func TestPostgresProvisionLeasePreservesLaunchedPhaseAcrossReleaseAndRecovery(t *testing.T) {
+	db := database(t)
+	s := NewStore(db)
+	ctx := context.Background()
+	if _, err := s.SetTarget(ctx, request("launch-release", 0, 1)); err != nil {
+		t.Fatal(err)
+	}
+	op, err := s.ClaimDominator(ctx, "zone", "provision", "spiffe://test.internal/dominator/zone", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.BeginLaunch(ctx, op); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetProvisionState(ctx, op, api.HostRequested, api.HostProvisioning); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordLaunch(ctx, op, "i-reused"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReleaseProvisionLease(ctx, op); err != nil {
+		t.Fatal(err)
+	}
+
+	var state string
+	if err := db.QueryRow(`SELECT state FROM operations WHERE id=$1`, op.ID).Scan(&state); err != nil {
+		t.Fatal(err)
+	}
+	if state != "launching" {
+		t.Fatalf("released launched operation state=%s, want launching", state)
+	}
+
+	// A fresh claim cannot overlap a still-live lease; model the next controller
+	// pass after the lease expires.
+	mustExec(t, db, `UPDATE operations SET lease_owner=$2,lease_until=clock_timestamp()-interval '1 second' WHERE id=$1`, op.ID, op.LeaseOwner)
+	recovered, err := s.ClaimDominator(ctx, "zone", "provision", "spiffe://test.internal/dominator/zone", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recovered.State != "launching" || recovered.Fence <= op.Fence {
+		t.Fatalf("recovered operation=%#v, want launching with a new fence", recovered)
+	}
+	if err := s.SetProvisionState(ctx, recovered, api.HostBooting, api.HostRegistering); err != nil {
+		t.Fatalf("recovered operation could not continue enrollment: %v", err)
+	}
+
+	if err := s.ReleaseProvisionLease(ctx, recovered); err != nil {
+		t.Fatal(err)
+	}
+	mustExec(t, db, `UPDATE host SET state='CONVERGING' WHERE id=$1`, op.HostID)
+	mustExec(t, db, `UPDATE operations SET lease_owner=$2,lease_until=clock_timestamp()-interval '1 second' WHERE id=$1`, op.ID, recovered.LeaseOwner)
+	recovered, err = s.ClaimDominator(ctx, "zone", "provision", "spiffe://test.internal/dominator/zone", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recovered.State != "launching" {
+		t.Fatalf("readiness recovery state=%s, want launching", recovered.State)
+	}
+}
+
+func TestPostgresProvisionClaimNormalizesLegacyLaunchedStates(t *testing.T) {
+	for _, prior := range []string{"pending", "leased"} {
+		t.Run(prior, func(t *testing.T) {
+			db := database(t)
+			s := NewStore(db)
+			ctx := context.Background()
+			if _, err := s.SetTarget(ctx, request("legacy-"+prior, 0, 1)); err != nil {
+				t.Fatal(err)
+			}
+			var opID, hostID string
+			if err := db.QueryRow(`SELECT id,host_id FROM operations`).Scan(&opID, &hostID); err != nil {
+				t.Fatal(err)
+			}
+			mustExec(t, db, `UPDATE host SET state='BOOTING',provider='aws',providerid='i-legacy' WHERE id=$1`, hostID)
+			if prior == "pending" {
+				mustExec(t, db, `UPDATE operations SET state='pending',lease_owner=NULL,lease_until=NULL WHERE id=$1`, opID)
+			} else {
+				mustExec(t, db, `UPDATE operations SET state='leased',lease_owner='old-owner',lease_until=clock_timestamp()-interval '1 second' WHERE id=$1`, opID)
+			}
+			recovered, err := s.ClaimDominator(ctx, "zone", "provision", "spiffe://test.internal/dominator/zone", time.Minute)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if recovered.State != "launching" {
+				t.Fatalf("legacy %s record recovered as %s, want launching", prior, recovered.State)
+			}
+		})
+	}
+}
+
+func TestPostgresCancellationOnlyCancelsPreLaunchPendingOperations(t *testing.T) {
+	db := database(t)
+	s := NewStore(db)
+	ctx := context.Background()
+	if _, err := s.SetTarget(ctx, request("cancel-launched", 0, 1)); err != nil {
+		t.Fatal(err)
+	}
+	var opID, hostID string
+	if err := db.QueryRow(`SELECT id,host_id FROM operations`).Scan(&opID, &hostID); err != nil {
+		t.Fatal(err)
+	}
+	mustExec(t, db, `UPDATE host SET state='BOOTING',provider='aws',providerid='i-protected' WHERE id=$1`, hostID)
+	mustExec(t, db, `UPDATE operations SET state='pending',lease_owner=NULL,lease_until=NULL WHERE id=$1`, opID)
+	if _, err := s.SetTarget(ctx, request("cancel", 1, 0)); err != nil {
+		t.Fatal(err)
+	}
+	var state string
+	if err := db.QueryRow(`SELECT state FROM operations WHERE id=$1`, opID).Scan(&state); err != nil {
+		t.Fatal(err)
+	}
+	if state == "cancelled" {
+		t.Fatal("cancellation removed a launched host")
 	}
 }
