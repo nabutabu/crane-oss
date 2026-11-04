@@ -529,6 +529,7 @@ func TestPostgresProvisionLeasePreservesLaunchedPhaseAcrossReleaseAndRecovery(t 
 		t.Fatal(err)
 	}
 	mustExec(t, db, `UPDATE host SET state='CONVERGING' WHERE id=$1`, op.HostID)
+	mustExec(t, db, `UPDATE operations SET lease_owner=$2,lease_until=clock_timestamp()-interval '1 second' WHERE id=$1`, op.ID, recovered.LeaseOwner)
 	recovered, err = s.ClaimDominator(ctx, "zone", "provision", "spiffe://test.internal/dominator/zone", time.Minute)
 	if err != nil {
 		t.Fatal(err)
