@@ -26,6 +26,7 @@ values = {
     "CRANE_ADAPTER_TOKEN": source["adapter_token"],
     "SPIFFE_TRUST_DOMAIN": "[[ .TrustDomain ]]",
     "CRANE_ZONE_ID": "[[ .ZoneID ]]",
+    "CRANE_CLUSTER_ID": "[[ .ClusterID ]]",
 }
 manifest = {"apiVersion":"v1","kind":"Secret","metadata":{"name":"crane-runtime","namespace":"crane-system"},"type":"Opaque","data":{k:base64.b64encode(v.encode()).decode() for k,v in values.items()}}
 with open(sys.argv[2], "w") as handle:
@@ -44,11 +45,15 @@ rules:
 - apiGroups: [""]
   resources: ["pods"]
   verbs: ["list"]
+- apiGroups: [""]
+  resources: ["configmaps"]
+  resourceNames: ["crane-cluster-identity"]
+  verbs: ["get"]
 YAML
 kubectl -n kube-system apply -f - <<YAML
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
-metadata: {name: crane-dominator-provisioner}
+metadata: {name: crane-dominator-provisioner-[[ .ZoneID ]]}
 subjects:
 - kind: ServiceAccount
   name: dominator-[[ .ZoneID ]]
@@ -62,7 +67,17 @@ metadata: {name: crane-dominator-provisioner-[[ .ZoneID ]]}
 rules:
 - apiGroups: [""]
   resources: ["nodes"]
-  verbs: ["list", "update"]
+  verbs: ["get", "list", "update"]
+- apiGroups: ["certificates.k8s.io"]
+  resources: ["certificatesigningrequests"]
+  verbs: ["get", "list"]
+- apiGroups: ["certificates.k8s.io"]
+  resources: ["certificatesigningrequests/approval"]
+  verbs: ["update"]
+- apiGroups: ["certificates.k8s.io"]
+  resources: ["signers"]
+  resourceNames: ["kubernetes.io/kube-apiserver-client-kubelet"]
+  verbs: ["approve"]
 YAML
 kubectl apply -f - <<YAML
 apiVersion: rbac.authorization.k8s.io/v1
@@ -94,6 +109,7 @@ spec:
         command: ["/app/dominator"]
         env:
         - {name: CRANE_ZONE_ID, value: "[[ .ZoneID ]]"}
+        - {name: CRANE_CLUSTER_ID, value: "[[ .ClusterID ]]"}
         - {name: SPIFFE_TRUST_DOMAIN, value: "[[ .TrustDomain ]]"}
         - {name: SPIFFE_ENDPOINT_SOCKET, value: "unix:///run/spire/sockets/agent.sock"}
         - {name: ENVIRONMENT, value: production}

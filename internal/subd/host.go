@@ -1,12 +1,8 @@
 package subd
 
 import (
-	"bytes"
 	"context"
 	"errors"
-	"fmt"
-	"net/url"
-	"os"
 	"os/exec"
 	"regexp"
 	"sort"
@@ -27,8 +23,9 @@ type clusterJoinHost interface {
 }
 
 type LocalHost struct {
-	run        func(context.Context, string, ...string) error
-	Kubeconfig string
+	run           func(context.Context, string, ...string) error
+	Kubeconfig    string
+	KubeletConfig string
 }
 
 var serviceName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.@:-]*\.service$`)
@@ -101,51 +98,6 @@ func (h LocalHost) Apply(ctx context.Context, in api.ExpectedHostState) error {
 		if run(ctx, "apt-get", "-y", p.Action, "--", p.Name) != nil {
 			return errors.New("package update failed")
 		}
-	}
-	return nil
-}
-
-func (h LocalHost) JoinCluster(ctx context.Context, in api.ClusterJoinRequest) error {
-	endpoint, err := url.Parse(in.APIServerEndpoint)
-	if err != nil || endpoint.Scheme != "https" || endpoint.Host == "" || endpoint.User != nil || endpoint.RawQuery != "" || endpoint.Fragment != "" {
-		return errors.New("invalid Kubernetes API endpoint")
-	}
-	if !joinTokenRE.MatchString(in.Token) || !joinCAHashRE.MatchString(in.CACertHash) {
-		return errors.New("invalid Kubernetes join credentials")
-	}
-	configPath := "/etc/kubernetes/kubelet.conf"
-	if data, readErr := os.ReadFile(configPath); readErr == nil {
-		if bytes.Contains(data, []byte(endpoint.Host)) {
-			return nil
-		}
-		return errors.New("host is already joined to another cluster")
-	} else if !errors.Is(readErr, os.ErrNotExist) {
-		return errors.New("cannot inspect current cluster membership")
-	}
-	config := fmt.Sprintf("apiVersion: kubeadm.k8s.io/v1beta4\nkind: JoinConfiguration\ndiscovery:\n  bootstrapToken:\n    apiServerEndpoint: %q\n    token: %q\n    caCertHashes:\n    - %q\n", endpoint.Host, in.Token, in.CACertHash)
-	f, err := os.CreateTemp("/run", "crane-kubeadm-join-*.yaml")
-	if err != nil {
-		return errors.New("cannot stage Kubernetes join")
-	}
-	path := f.Name()
-	defer os.Remove(path)
-	if err := f.Chmod(0600); err != nil {
-		f.Close()
-		return errors.New("cannot protect Kubernetes join credentials")
-	}
-	if _, err := f.WriteString(config); err != nil {
-		f.Close()
-		return errors.New("cannot stage Kubernetes join credentials")
-	}
-	if err := f.Close(); err != nil {
-		return errors.New("cannot stage Kubernetes join credentials")
-	}
-	run := h.run
-	if run == nil {
-		run = hostCommand
-	}
-	if err := run(ctx, "kubeadm", "join", "--config", path); err != nil {
-		return errors.New("Kubernetes node join failed")
 	}
 	return nil
 }

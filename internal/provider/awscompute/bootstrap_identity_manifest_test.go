@@ -69,6 +69,7 @@ func TestPlatformWorkloadIdentityManifests(t *testing.T) {
 				want := []rbacv1.PolicyRule{
 					{APIGroups: []string{""}, Resources: []string{"secrets"}, Verbs: []string{"create", "delete"}},
 					{APIGroups: []string{""}, Resources: []string{"pods"}, Verbs: []string{"list"}},
+					{APIGroups: []string{""}, Resources: []string{"configmaps"}, ResourceNames: []string{"crane-cluster-identity"}, Verbs: []string{"get"}},
 				}
 				if role.Name != "crane-dominator-provisioner" || role.Namespace != "kube-system" || !reflect.DeepEqual(role.Rules, want) {
 					t.Fatal("incorrect namespaced provisioning permissions")
@@ -91,7 +92,12 @@ func TestPlatformWorkloadIdentityManifests(t *testing.T) {
 				var want []rbacv1.PolicyRule
 				switch role.Name {
 				case "crane-dominator-provisioner":
-					want = []rbacv1.PolicyRule{{APIGroups: []string{""}, Resources: []string{"nodes"}, Verbs: []string{"list", "update"}}}
+					want = []rbacv1.PolicyRule{
+						{APIGroups: []string{""}, Resources: []string{"nodes"}, Verbs: []string{"get", "list", "update"}},
+						{APIGroups: []string{"certificates.k8s.io"}, Resources: []string{"certificatesigningrequests"}, Verbs: []string{"get", "list"}},
+						{APIGroups: []string{"certificates.k8s.io"}, Resources: []string{"certificatesigningrequests/approval"}, Verbs: []string{"update"}},
+						{APIGroups: []string{"certificates.k8s.io"}, Resources: []string{"signers"}, ResourceNames: []string{"kubernetes.io/kube-apiserver-client-kubelet"}, Verbs: []string{"approve"}},
+					}
 				case "crane-spire-attestor":
 					want = []rbacv1.PolicyRule{{APIGroups: []string{""}, Resources: []string{"nodes/pods"}, ResourceNames: []string{"$NODE_NAME"}, Verbs: []string{"get"}}}
 				case "crane-subd-kubernetes-operations":

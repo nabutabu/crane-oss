@@ -81,3 +81,21 @@ Both catalog records are protected, outside worker capacity and credits.
 Successful bootstrap validation sets their lifecycle ready; health stays unknown
 and heartbeat timestamps stay unset until an appropriate monitoring integration
 is implemented. This does not declare any worker Kubernetes node ready.
+
+## Capacity worker registration
+
+The private `PUT /v1/cluster-join` request includes a fenced, immutable worker
+registration contract: cluster, host, group, pool, template revision, provider
+identity and scheduling metadata. Subd registers kubelet with the canonical
+labels, template taints and `platform.crane.io/provisioning=pending:NoSchedule`.
+The join journal stores a contract fingerprint and fence, never the join token.
+Exact retries can rotate credentials; changed contracts and older fences fail.
+An interrupted bootstrap can refresh its token only after its existing cluster
+discovery configuration matches the pinned destination.
+
+`POST /v1/cluster-membership` is restricted to the configured writer identity.
+Its fresh challenge is signed with the host's kubelet private key; the response
+contains the public client certificate, contract fingerprint, Node name and UID.
+Dominator verifies the cluster CA and signature over all those fields. The
+private key never leaves the host. A worker's Node identity therefore depends
+on provider-bound SPIFFE identity and cluster-issued credentials.

@@ -28,9 +28,14 @@ type ProvisionExecutor struct {
 	Caller      hostrpc.Caller
 	Resolver    *PolicyResolver
 	TrustDomain string
+	ClusterID   string
+	ClusterCA   []byte
 }
 
 func (p *ProvisionExecutor) Launch(ctx context.Context, op api.Operation) (capacity.ProvisionResult, error) {
+	if err := p.validateCluster(ctx, op); err != nil {
+		return capacity.ProvisionResult{}, err
+	}
 	if p.Provider == nil {
 		return capacity.ProvisionResult{}, errors.New("runtime provider unavailable")
 	}
@@ -42,6 +47,9 @@ func (p *ProvisionExecutor) Launch(ctx context.Context, op api.Operation) (capac
 }
 
 func (p *ProvisionExecutor) EnrollAndJoin(ctx context.Context, op api.Operation, host api.Host) error {
+	if err := p.validateCluster(ctx, op); err != nil {
+		return err
+	}
 	if p.Provider == nil || p.Kubernetes == nil || p.Caller == nil || p.TrustDomain == "" || p.Store == nil || host.ProviderID == "" || host.SubdEndpoint == "" {
 		return errors.New("runtime host enrollment is not configured")
 	}
@@ -74,6 +82,10 @@ func (p *ProvisionExecutor) joinWorker(ctx context.Context, op api.Operation, ho
 	if op.APIServerEndpoint == "" || op.CACertHash == "" {
 		return errors.New("trusted cluster discovery is unavailable")
 	}
+	reg, err := p.registration(ctx, op, host)
+	if err != nil {
+		return err
+	}
 	tokenIDBytes := make([]byte, 3)
 	tokenSecretBytes := make([]byte, 8)
 	if _, err := rand.Read(tokenIDBytes); err != nil {
@@ -89,25 +101,36 @@ func (p *ProvisionExecutor) joinWorker(ctx context.Context, op api.Operation, ho
 		Type: v1.SecretType("bootstrap.kubernetes.io/token"), Data: map[string][]byte{
 			"token-id": []byte(tokenID), "token-secret": []byte(tokenSecret), "expiration": []byte(expires),
 			"usage-bootstrap-authentication": []byte("true"), "usage-bootstrap-signing": []byte("true"),
-			"auth-extra-groups": []byte("system:bootstrappers:kubeadm:default-node-token"),
+			"auth-extra-groups": []byte("system:bootstrappers:crane"),
 		}}
 	if _, err := p.Kubernetes.CoreV1().Secrets("kube-system").Create(ctx, secret, metav1.CreateOptions{}); err != nil {
 		return errors.New("cannot create short-lived Kubernetes join token")
 	}
 	request := api.ClusterJoinRequest{OperationID: op.ID, APIServerEndpoint: op.APIServerEndpoint,
-		Token: tokenID + "." + tokenSecret, CACertHash: op.CACertHash}
+		Token: tokenID + "." + tokenSecret, CACertHash: op.CACertHash, Registration: reg, Fence: op.Fence}
+	approvalCtx, cancelApproval := context.WithCancel(ctx)
+	approvalDone := make(chan error, 1)
+	go func() {
+		err := p.approveWorkerCSRs(approvalCtx, op, tokenID, reg.NodeName)
+		if err != nil {
+			cancelApproval()
+		}
+		approvalDone <- err
+	}()
 	var result api.ClusterJoinResult
-	code, callErr := p.Caller.Call(ctx, host.SubdEndpoint, identity, "PUT", "/v1/cluster-join", request, &result)
+	code, callErr := p.Caller.Call(approvalCtx, host.SubdEndpoint, identity, "PUT", "/v1/cluster-join", request, &result)
+	cancelApproval()
+	approvalErr := <-approvalDone
 	cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	deleteErr := p.Kubernetes.CoreV1().Secrets("kube-system").Delete(cleanupCtx, name, metav1.DeleteOptions{})
-	if callErr != nil || code != 200 || result.OperationID != op.ID || result.Outcome != "applied" {
+	if approvalErr != nil || callErr != nil || code != 200 || result.OperationID != op.ID || result.Outcome != "applied" {
 		return errors.New("worker cluster join did not complete")
 	}
 	if deleteErr != nil {
 		return errors.New("temporary Kubernetes join token cleanup failed")
 	}
-	_, _, err := p.ensureNodeIdentity(ctx, op, host, true)
+	_, _, err = p.ensureNodeIdentity(ctx, op, host, true)
 	return err
 }
 
@@ -139,6 +162,9 @@ func (p *ProvisionExecutor) deliverExpectedState(ctx context.Context, op api.Ope
 }
 
 func (p *ProvisionExecutor) Ready(ctx context.Context, op api.Operation, host api.Host) (bool, error) {
+	if err := p.validateCluster(ctx, op); err != nil {
+		return false, err
+	}
 	if p.Kubernetes == nil || p.Caller == nil || p.TrustDomain == "" {
 		return false, errors.New("readiness watcher is not configured")
 	}
@@ -173,25 +199,23 @@ func (p *ProvisionExecutor) ensureNodeIdentity(ctx context.Context, op api.Opera
 	if err != nil {
 		return nil, false, err
 	}
-	nodes, err := p.Kubernetes.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	proof, err := p.workerMembership(ctx, op, host)
 	if err != nil {
-		return nil, false, errors.New("Kubernetes node discovery failed")
+		return nil, false, err
 	}
-	var matches []*v1.Node
-	for i := range nodes.Items {
-		for _, address := range nodes.Items[i].Status.Addresses {
-			if address.Type == v1.NodeInternalIP && address.Address == ip {
-				matches = append(matches, &nodes.Items[i])
-			}
+	node, err := p.Kubernetes.CoreV1().Nodes().Get(ctx, proof.NodeName, metav1.GetOptions{})
+	if err != nil || string(node.UID) != proof.NodeUID {
+		return nil, false, errors.New("worker Kubernetes node identity conflicts with authenticated membership")
+	}
+	matched := false
+	for _, address := range node.Status.Addresses {
+		if address.Type == v1.NodeInternalIP && address.Address == ip {
+			matched = true
 		}
 	}
-	if len(matches) == 0 {
-		return nil, false, nil
+	if !matched {
+		return nil, false, errors.New("worker private address conflicts with provider")
 	}
-	if len(matches) != 1 {
-		return nil, false, errors.New("worker private address maps to multiple Kubernetes nodes")
-	}
-	node := matches[0]
 	identity, err := p.verifiedWorker(ctx, op, host)
 	if err != nil {
 		return nil, false, err
