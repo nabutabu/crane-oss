@@ -479,6 +479,25 @@ func TestPostgresProvisioningHandoffIsFencedAndCompletesAtReadiness(t *testing.T
 	}
 }
 
+func TestPostgresProvisioningTargetRejectsRevokedMembership(t *testing.T) {
+	db := database(t)
+	s := NewStore(db)
+	ctx := context.Background()
+	mustExec(t, db, `INSERT INTO host(id,role,zone,imageid,state,health,createdat,provider,providerid,protected)
+ VALUES('bootstrap/spire','spire','zone','ami-spire','CONVERGING','unknown',clock_timestamp(),'aws','i-spire',true)`)
+	if _, err := s.SetTarget(ctx, request("revoked-runtime", 0, 1)); err != nil {
+		t.Fatal(err)
+	}
+	op, err := s.ClaimDominator(ctx, "zone", "provision", "spiffe://test.internal/dominator/zone", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustExec(t, db, `UPDATE cluster_zones SET access_state='revoked' WHERE cluster_id='cluster' AND zone_id='zone'`)
+	if err := s.LoadProvisioningTarget(ctx, &op); !errors.Is(err, ErrInactive) {
+		t.Fatalf("revoked membership: %v", err)
+	}
+}
+
 func TestPostgresProvisionLeasePreservesLaunchedPhaseAcrossReleaseAndRecovery(t *testing.T) {
 	db := database(t)
 	s := NewStore(db)

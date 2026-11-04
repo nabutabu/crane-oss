@@ -586,19 +586,24 @@ func (s *Store) LoadProvisioningTarget(ctx context.Context, op *api.Operation) e
 	op.Scheduling = template.Scheduling
 	op.TemplateRevision = template.TemplateRevision
 	op.CapacityClass = template.CapacityClass
-	err := s.DB.QueryRowContext(ctx, `SELECT g.cluster_id,g.node_pool_id,z.provider,z.account_id,z.region,z.provider_zone_id,
+	err := s.DB.QueryRowContext(ctx, `SELECT g.cluster_id,g.node_pool_id,z.provider,z.account_id,z.region,z.provider_zone_id,z.kubernetes_region,z.kubernetes_zone,
  c.api_server_endpoint,c.ca_cert_hash,
  COALESCE((SELECT h.providerid FROM host h WHERE h.protected AND h.crane_zone IS NULL
    AND h.zone=z.id AND h.role='spire' ORDER BY h.createdat LIMIT 1),'')
- FROM node_groups g JOIN zones z ON z.id=g.zone_id JOIN clusters c ON c.id=g.cluster_id
- WHERE g.id=$1 AND g.zone_id=$2 AND c.lifecycle_state='ready' AND z.lifecycle_state='ready' AND z.enabled`, op.NodeGroupID, op.ZoneID).
-		Scan(&op.ClusterID, &op.NodePoolID, &op.Provider, &op.AccountID, &op.Region, &op.ProviderZoneID,
+	 FROM node_groups g JOIN zones z ON z.id=g.zone_id JOIN clusters c ON c.id=g.cluster_id
+ JOIN cluster_zones m ON m.cluster_id=g.cluster_id AND m.zone_id=g.zone_id
+ WHERE g.id=$1 AND g.zone_id=$2 AND c.lifecycle_state='ready' AND z.lifecycle_state='ready' AND z.enabled
+ AND m.lifecycle_state='ready' AND m.access_state='approved'`, op.NodeGroupID, op.ZoneID).
+		Scan(&op.ClusterID, &op.NodePoolID, &op.Provider, &op.AccountID, &op.Region, &op.ProviderZoneID, &op.KubernetesRegion, &op.KubernetesZone,
 			&op.APIServerEndpoint, &op.CACertHash, &op.SpireInstanceID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrInactive
 	}
 	if err == nil && op.SpireInstanceID == "" {
 		return errors.New("zone SPIRE host is unavailable")
+	}
+	if err == nil && op.Scheduling.Zone != "" && (op.Scheduling.Region != op.KubernetesRegion || op.Scheduling.Zone != op.KubernetesZone) {
+		return ErrInvalid
 	}
 	return err
 }

@@ -183,6 +183,7 @@ type Operation struct {
 	// the operation's immutable request parameters.
 	ClusterID, APIServerEndpoint, CACertHash    string
 	Provider, AccountID, Region, ProviderZoneID string
+	KubernetesRegion, KubernetesZone            string
 	CapacityClass, TemplateRevision             string
 	LaunchParameters                            json.RawMessage
 	Scheduling                                  SchedulingTemplate

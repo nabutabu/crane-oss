@@ -63,6 +63,9 @@ func (c *ProvisionController) RunOnce(ctx context.Context) error {
 		recordProvisionMetrics(ctx, started, "target_unavailable")
 		return err
 	}
+	span.SetAttributes(attribute.String("cluster_id", op.ClusterID), attribute.String("node_group_id", op.NodeGroupID),
+		attribute.String("kubernetes_region", op.KubernetesRegion), attribute.String("kubernetes_zone", op.KubernetesZone))
+	span.AddEvent("approved provisioning topology loaded")
 	err = c.withLease(ctx, op, d, func(stepCtx context.Context) error {
 		return c.advance(stepCtx, op)
 	})
