@@ -657,7 +657,10 @@ func ensureIAM(ctx context.Context, aws AWSClient, cfg bootstrapConfig, infra In
 				map[string]any{"Effect": "Allow", "Action": "ec2:TerminateInstances", "Resource": "arn:aws:ec2:" + cfg.AWS.Region + ":" + cfg.AWS.AccountID + ":instance/*", "Condition": map[string]any{"Null": map[string]string{"ec2:ResourceTag/CraneBootstrap": "true"}}},
 				map[string]any{"Effect": "Allow", "Action": "iam:PassRole", "Resource": "arn:aws:iam::" + cfg.AWS.AccountID + ":role/" + cfg.Name + "-worker", "Condition": map[string]any{"StringEquals": map[string]string{"iam:PassedToService": "ec2.amazonaws.com"}}},
 				map[string]any{"Effect": "Allow", "Action": []string{"ssm:DescribeInstanceInformation", "ssm:GetCommandInvocation"}, "Resource": "*"},
-				map[string]any{"Effect": "Allow", "Action": "ssm:SendCommand", "Resource": []string{"arn:aws:ssm:" + cfg.AWS.Region + "::document/AWS-RunShellScript", "arn:aws:ec2:" + cfg.AWS.Region + ":" + cfg.AWS.AccountID + ":instance/*"}, "Condition": map[string]any{"StringEquals": map[string]string{"ssm:resourceTag/CraneBootstrap": cfg.Name}}})
+				// AWS-owned documents do not carry deployment tags. Authorize the
+				// exact document separately from deployment-owned target instances.
+				map[string]any{"Effect": "Allow", "Action": "ssm:SendCommand", "Resource": "arn:aws:ssm:" + cfg.AWS.Region + "::document/AWS-RunShellScript"},
+				map[string]any{"Effect": "Allow", "Action": "ssm:SendCommand", "Resource": "arn:aws:ec2:" + cfg.AWS.Region + ":" + cfg.AWS.AccountID + ":instance/*", "Condition": map[string]any{"StringEquals": map[string]string{"ssm:resourceTag/CraneBootstrap": cfg.Name}}})
 		}
 		policyJSON, _ := json.Marshal(map[string]any{"Version": "2012-10-17", "Statement": statements})
 		if err = aws.Call(ctx, "iam", "put-role-policy", map[string]any{"RoleName": name, "PolicyName": "crane-runtime", "PolicyDocument": string(policyJSON)}, nil); err != nil {

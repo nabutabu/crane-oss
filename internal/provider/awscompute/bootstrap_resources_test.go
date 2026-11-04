@@ -273,6 +273,33 @@ func TestInfrastructureFirstRunAndRetry(t *testing.T) {
 	if !strings.Contains(policies[cfg.Name+"-platform"], cfg.Name+"-worker") || !strings.Contains(policies[cfg.Name+"-platform"], "ssm:SendCommand") {
 		t.Fatal("platform role cannot launch and configure workers")
 	}
+	var platformPolicy struct {
+		Statement []struct {
+			Action    any
+			Resource  any
+			Condition map[string]map[string]string
+		}
+	}
+	if err := json.Unmarshal([]byte(policies[cfg.Name+"-platform"]), &platformPolicy); err != nil {
+		t.Fatal(err)
+	}
+	documentAllowed, targetsRestricted := false, false
+	for _, statement := range platformPolicy.Statement {
+		if statement.Action != "ssm:SendCommand" {
+			continue
+		}
+		switch statement.Resource {
+		case "arn:aws:ssm:" + cfg.AWS.Region + "::document/AWS-RunShellScript":
+			documentAllowed = len(statement.Condition) == 0
+		case "arn:aws:ec2:" + cfg.AWS.Region + ":" + cfg.AWS.AccountID + ":instance/*":
+			targetsRestricted = statement.Condition["StringEquals"]["ssm:resourceTag/CraneBootstrap"] == cfg.Name
+		default:
+			t.Fatalf("unexpected SSM command permission: %#v", statement)
+		}
+	}
+	if !documentAllowed || !targetsRestricted {
+		t.Fatal("SSM requires an unconditioned exact document and deployment-tagged target instances")
+	}
 	if !strings.Contains(policies[cfg.Name+"-worker"], bundleParameterARN(cfg)) || strings.Contains(policies[cfg.Name+"-worker"], "secretsmanager:GetSecretValue") {
 		t.Fatal("worker role does not have the expected least-privilege bundle access")
 	}
