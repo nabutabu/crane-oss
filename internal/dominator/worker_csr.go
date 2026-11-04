@@ -47,10 +47,16 @@ func (p *ProvisionExecutor) approveWorkerCSRs(ctx context.Context, op api.Operat
 			return nil
 		case <-ticker.C:
 			if err := p.Store.CheckProvisionLease(ctx, op); err != nil {
+				if ctx.Err() != nil {
+					return nil
+				}
 				return err
 			}
 			requests, err := p.Kubernetes.CertificatesV1().CertificateSigningRequests().List(ctx, metav1.ListOptions{})
 			if err != nil {
+				if ctx.Err() != nil {
+					return nil
+				}
 				return errors.New("cannot inspect worker certificate requests")
 			}
 			for i := range requests.Items {
@@ -66,6 +72,9 @@ func (p *ProvisionExecutor) approveWorkerCSRs(ctx context.Context, op api.Operat
 				}
 				csr.Status.Conditions = []certificates.CertificateSigningRequestCondition{{Type: certificates.CertificateApproved, Status: core.ConditionTrue, Reason: "CraneWorkerJoin", Message: "Private host join contract verified", LastUpdateTime: metav1.Now()}}
 				if _, err = p.Kubernetes.CertificatesV1().CertificateSigningRequests().UpdateApproval(ctx, csr.Name, csr, metav1.UpdateOptions{}); err != nil {
+					if ctx.Err() != nil {
+						return nil
+					}
 					return errors.New("cannot approve worker certificate request")
 				}
 				trace.SpanFromContext(ctx).AddEvent("worker certificate request approved")

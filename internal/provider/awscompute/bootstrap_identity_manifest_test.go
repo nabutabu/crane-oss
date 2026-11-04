@@ -145,3 +145,18 @@ func TestPlatformWorkloadIdentityManifests(t *testing.T) {
 		t.Fatal("workloads must deploy after Kubernetes attestor activation")
 	}
 }
+
+func TestZoneDominatorKeepsClusterIdentityAndZoneScopedBinding(t *testing.T) {
+	for _, zone := range []string{"zone-a", "zone-b"} {
+		script, err := renderTemplate("zone-dominator.sh.tmpl", scriptData{Config: testConfig(), Infra: testInfra(), Region: "us-west-2", TrustDomain: "synthetic.test", ZoneID: zone, ClusterID: "shared", Host: bootstrapAgentHost{PrivateIP: "10.0.0.8"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(script, `name: CRANE_CLUSTER_ID, value: "shared"`) || !strings.Contains(script, "kind: RoleBinding\nmetadata: {name: crane-dominator-provisioner-"+zone+"}") {
+			t.Fatal("zone deployment loses cluster identity or overwrites another zone binding")
+		}
+		if !strings.Contains(script, `resourceNames: ["kubernetes.io/kube-apiserver-client-kubelet"]`) || !strings.Contains(script, `resourceNames: ["crane-cluster-identity"]`) {
+			t.Fatal("zone deployment lacks constrained signer or cluster marker permissions")
+		}
+	}
+}

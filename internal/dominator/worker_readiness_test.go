@@ -66,3 +66,14 @@ func TestCiliumRequiresOwnedReadyPodOnTheExpectedNode(t *testing.T) {
 		t.Fatal("forged Cilium pod accepted")
 	}
 }
+
+func TestNodeReadyRejectsUnknownNetwork(t *testing.T) {
+	node := &core.Node{Status: core.NodeStatus{Conditions: []core.NodeCondition{{Type: core.NodeReady, Status: core.ConditionTrue}, {Type: core.NodeNetworkUnavailable, Status: core.ConditionUnknown}}}}
+	if nodeReady(node) {
+		t.Fatal("unknown network condition admitted")
+	}
+	node.Status.Conditions[1].Status = core.ConditionFalse
+	if !nodeReady(node) {
+		t.Fatal("healthy network condition rejected")
+	}
+}

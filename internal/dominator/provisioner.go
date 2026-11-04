@@ -347,7 +347,7 @@ func nodeReady(node *v1.Node) bool {
 		case v1.NodeReady:
 			ready = condition.Status == v1.ConditionTrue
 		case v1.NodeNetworkUnavailable:
-			networkUnavailable = condition.Status == v1.ConditionTrue
+			networkUnavailable = condition.Status != v1.ConditionFalse
 		}
 	}
 	return ready && !networkUnavailable
@@ -355,10 +355,19 @@ func nodeReady(node *v1.Node) bool {
 
 func ciliumReady(ctx context.Context, client kubernetes.Interface, nodeName string) bool {
 	pods, err := client.CoreV1().Pods("kube-system").List(ctx, metav1.ListOptions{LabelSelector: labels.Set{"k8s-app": "cilium"}.AsSelector().String(), FieldSelector: "spec.nodeName=" + nodeName})
-	if err != nil || len(pods.Items) != 1 {
+	if err != nil {
 		return false
 	}
-	pod := pods.Items[0]
+	matches := make([]v1.Pod, 0, 1)
+	for _, candidate := range pods.Items {
+		if candidate.Spec.NodeName == nodeName {
+			matches = append(matches, candidate)
+		}
+	}
+	if len(matches) != 1 {
+		return false
+	}
+	pod := matches[0]
 	ds, err := client.AppsV1().DaemonSets("kube-system").Get(ctx, "cilium", metav1.GetOptions{})
 	if err != nil || ds.UID == "" {
 		return false

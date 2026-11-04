@@ -160,9 +160,9 @@ It provisions control-plane hosts, coordinates `kubeadm init`, records the API e
 ## 7. Placement
 
 - **Node group topology:** logical pool → cluster-scoped group for one (zone, capacity class). Group identity is part of the capacity contract, and its `ClusterID` must match the calling autoscaler.
-- **Pod placement:** standard `topologySpreadConstraints`, `podAntiAffinity`, `nodeAffinity`/`nodeSelector`, taints/tolerations, and storage topology apply within one zone cluster. Cross-zone application availability requires a separate multi-cluster deployment and traffic-management layer and is outside the first milestone.
-- **Zone failure:** mark the cluster/zone unavailable for new provisioning, do not auto-terminate healthy nodes on transient discovery failure, and surface a degraded condition. A different zone cluster cannot satisfy Pods pending in the failed cluster.
-- **Cluster placement:** zone selection applies when creating a new cluster or when a future multi-cluster placement layer chooses a workload cluster. It is not repeated during a node scale-up request.
+- **Pod placement:** standard `topologySpreadConstraints`, `podAntiAffinity`, `nodeAffinity`/`nodeSelector`, taints/tolerations, and storage topology apply across approved zones in the same cluster. Worker registration and advertised templates share canonical topology; see [ADR-015](decisions/adr-015-multi-zone-worker-contract.md). Workload placement across separate clusters remains outside this contract.
+- **Zone failure:** mark the cluster/zone unavailable for new provisioning, do not auto-terminate healthy nodes on transient discovery failure, and surface a degraded condition. Another approved zone in the same cluster may supply capacity through its own group; a separate cluster cannot satisfy those pending Pods.
+- **Cluster placement:** the group fixes both the destination ClusterID and zone for a node scale-up request. Each zone Dominator validates its configured cluster identity and approved membership.
 
 ## 8. Scale-up flow
 

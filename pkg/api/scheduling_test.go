@@ -7,7 +7,7 @@ func TestSchedulingRejectsForgedAndInvalidLabels(t *testing.T) {
 	if err := ValidateScheduling(base, "general"); err != nil {
 		t.Fatal(err)
 	}
-	for _, labels := range []map[string]string{{"topology.kubernetes.io/zone": "forged"}, {"bad key": "value"}, {"platform.crane.io/owner": "forged"}, {"workload": "invalid/value"}} {
+	for _, labels := range []map[string]string{{"topology.kubernetes.io/zone": "forged"}, {"bad key": "value"}, {"platform.crane.io/owner": "forged"}, {"node-role.kubernetes.io/control-plane": "forged"}, {"workload": "invalid/value"}} {
 		in := base
 		in.Labels = labels
 		if ValidateScheduling(in, "general") == nil {

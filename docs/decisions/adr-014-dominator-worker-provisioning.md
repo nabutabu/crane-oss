@@ -29,8 +29,8 @@ authority.
 - Dominator reconciles the exact AWS-IID-parented Subd SPIRE entry, configures
   Subd over SSM, supplies a short-lived Kubernetes bootstrap token over the
   pinned Subd SPIFFE mTLS identity, and removes the token after the join call.
-- Dominator binds the Kubernetes Node to the catalog host by private address,
-  verifies provider identity and scheduling metadata, applies expected state,
+- Dominator binds the Kubernetes Node to the catalog host using verified provider
+  facts and a fresh, signed kubelet identity proof, validates scheduling metadata, applies expected state,
   and waits for Node, Cilium, and Subd readiness before marking the host READY
   and completing the operation.
 - The operation, host, and fence are included in traces. Stage events identify
@@ -59,3 +59,5 @@ capacity ownership and lifecycle transitions stay provider-neutral. A
 transient failure leaves the operation retryable and its capacity reservation
 held. Capacity is considered ready only after Kubernetes and Subd report the
 same converged host; reducing a target does not itself release credits.
+
+[ADR-015](adr-015-multi-zone-worker-contract.md) specifies the multi-zone join contract and recoverable fenced readiness handoff.

@@ -32,7 +32,9 @@ func ValidateScheduling(t SchedulingTemplate, pool string) error {
 		if expected, ok := canonical[k]; ok && v != expected {
 			return invalid
 		}
-		if _, ok := canonical[k]; !ok && (strings.HasPrefix(k, "platform.crane.io/") || strings.Contains(k, "node-restriction.kubernetes.io/")) {
+		namespace, _, qualified := strings.Cut(k, "/")
+		reserved := qualified && (namespace == "kubernetes.io" || strings.HasSuffix(namespace, ".kubernetes.io") || namespace == "k8s.io" || strings.HasSuffix(namespace, ".k8s.io"))
+		if _, ok := canonical[k]; !ok && (reserved || strings.HasPrefix(k, "platform.crane.io/")) {
 			return invalid
 		}
 	}

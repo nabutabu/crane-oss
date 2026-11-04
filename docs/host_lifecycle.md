@@ -4,20 +4,24 @@
 
 | State | Description |
 |-------|-------------|
-| **Provisioning** | Host is being created and initialized |
+| **Requested / Provisioning** | Capacity is reserved and the provider launch is in progress |
+| **Booting / Registering** | The host is starting and joining its approved cluster |
+| **Converging** | Identity, topology, expected state and network health are being validated |
 | **Ready** | Host is operational and available |
 | **Draining** | Host is being prepared for termination |
-| **Terminated** | Host has been shut down |
+| **Terminating / Terminated** | Provider termination is in progress or confirmed |
 | **Unhealthy** | Host has health issues |
 
 ## State Transitions
 
 ```
-PROVISIONING → READY → DRAINING → TERMINATED
-                     ↓
-                 UNHEALTHY
-                     ↓
-                 DRAINING
+REQUESTED → PROVISIONING → BOOTING → REGISTERING → CONVERGING → READY
+                                                               ↓
+                                                            DRAINING
+                                                               ↓
+                                                          TERMINATING
+                                                               ↓
+                                                           TERMINATED
 ```
 
 ## Draining Explained
@@ -115,3 +119,13 @@ HostCatalog (desired state)
 EvaluateEscalation
 **Why Reconciler goes through all hosts:** Ensures no host drifts from its intended state over time.
 This should be replaced by subd
+## Multi-zone worker admission
+
+A capacity worker remains quarantined through REGISTERING and CONVERGING.
+Dominator verifies provider ownership, cluster membership, signed kubelet
+identity and the durable Node UID; compares labels and taints with the pinned
+template; and requires exact expected state plus Node/network/Cilium health.
+Release intent is committed before quarantine removal. A bounded fenced handoff
+then removes only that taint and commits READY with operation success. Unknown
+outcomes remain recoverable under the same host/operation without releasing
+capacity. See [ADR-015](decisions/adr-015-multi-zone-worker-contract.md).
