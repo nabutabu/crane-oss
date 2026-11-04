@@ -103,9 +103,11 @@ Kubernetes workload requests.
 
 Zone creation accepts `kubernetes_region` and `kubernetes_zone` as stable
 Kubernetes topology labels alongside provider-native `region` and
-`provider_zone_id`. Omitted labels default to the native references. Zone labels
+`provider_zone_id`. Omitted labels default to the native references. Region labels identify one provider/account/region; zone labels
 must be unique, and an exact retry preserves the original mapping. AWS labels
 must equal AWS-native placement names because the AWS storage driver uses them.
 Two accounts that reuse the same AWS zone name cannot both be admitted into
 one Crane database without a provider-supported topology translation. Node
 group scheduling regions and zones must match the stored zone mapping.
+
+Provider-native topology is checked through the provider capability on administration requests. Unsupported providers, unknown native zones, account mismatches, and unsupported CSI aliases are rejected. Kubernetes scheduling metadata uses the same label builder in discovery templates and worker registration.

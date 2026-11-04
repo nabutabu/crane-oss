@@ -1,5 +1,10 @@
 -- Canonical first-go schema for a new Crane database. Keep every statement
 -- safe to repeat; schema evolution is intentionally outside this baseline.
+CREATE TABLE IF NOT EXISTS topology_regions (
+ provider text NOT NULL, account_id text NOT NULL, region text NOT NULL,
+ kubernetes_region text NOT NULL UNIQUE,
+ PRIMARY KEY(provider,account_id,region)
+);
 CREATE TABLE IF NOT EXISTS zones (
  id text PRIMARY KEY, provider text NOT NULL, account_id text NOT NULL,
  region text NOT NULL, provider_zone_id text NOT NULL,
@@ -8,6 +13,18 @@ CREATE TABLE IF NOT EXISTS zones (
  CHECK(kubernetes_region <> '' AND kubernetes_zone <> ''),
  UNIQUE(provider, account_id, region, provider_zone_id), UNIQUE(id, provider_zone_id), UNIQUE(id,provider,region)
 );
+-- Serialize region mapping creation across all zone writers, including retries.
+CREATE OR REPLACE FUNCTION crane_zone_region() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+ INSERT INTO topology_regions(provider,account_id,region,kubernetes_region)
+ VALUES(NEW.provider,NEW.account_id,NEW.region,NEW.kubernetes_region)
+ ON CONFLICT(provider,account_id,region) DO UPDATE SET region=EXCLUDED.region
+ WHERE topology_regions.kubernetes_region=EXCLUDED.kubernetes_region;
+ IF NOT FOUND THEN RAISE EXCEPTION 'conflicting canonical region' USING ERRCODE='23505'; END IF;
+ RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS zone_canonical_region ON zones;
+CREATE TRIGGER zone_canonical_region BEFORE INSERT OR UPDATE ON zones FOR EACH ROW EXECUTE FUNCTION crane_zone_region();
 CREATE TABLE IF NOT EXISTS clusters (
  id text PRIMARY KEY,
  api_server_endpoint text NOT NULL DEFAULT '', ca_cert_hash text NOT NULL DEFAULT '',

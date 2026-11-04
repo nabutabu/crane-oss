@@ -34,7 +34,7 @@ func InitializeSchema(ctx context.Context, db *sql.DB) error {
 func CheckSchema(ctx context.Context, db *sql.DB) error {
 	required := []string{
 		"zone_dominators", "host_state_requests",
-		"zones", "clusters", "cluster_zones", "node_pools", "node_groups",
+		"topology_regions", "zones", "clusters", "cluster_zones", "node_pools", "node_groups",
 		"capacity_requests", "host", "operations", "infrastructure_reservations",
 		"zone_bootstrap_operations", "node_removal_operations", "actions",
 		"host_problems", "host_health_trends",

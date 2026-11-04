@@ -31,6 +31,7 @@ import (
 	"github.com/nabutabu/crane-oss/internal/hostrpc"
 	"github.com/nabutabu/crane-oss/internal/logging"
 	"github.com/nabutabu/crane-oss/internal/provider/awscompute"
+	"github.com/nabutabu/crane-oss/internal/provider/registry"
 	"github.com/nabutabu/crane-oss/internal/telemetry"
 	"github.com/nabutabu/crane-oss/internal/version"
 	"github.com/nabutabu/crane-oss/pkg/api"
@@ -232,6 +233,7 @@ func run() (runErr error) {
 		return err
 	}
 	capacityAPI := capacity.NewAPI(capacity.NewStore(db), intconfig.GetEnv("CRANE_ADMIN_TOKEN", ""), principals)
+	capacityAPI.ValidateTopology = registry.ValidateTopology
 	mux.Handle("/v1/", capacityAPI.Handler())
 
 	server := &http.Server{Addr: ":43060", Handler: telemetryProvider.HTTPHandler(mux, logger.Logger), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: api.OperationTimeout + time.Minute}

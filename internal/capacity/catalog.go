@@ -12,6 +12,7 @@ import (
 	"github.com/nabutabu/crane-oss/pkg/api"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
+	"k8s.io/apimachinery/pkg/util/validation"
 )
 
 type topologyWriter interface {
@@ -55,8 +56,7 @@ func createZone(ctx context.Context, db topologyWriter, z api.ZoneInput, lifecyc
 	if z.KubernetesZone == "" {
 		z.KubernetesZone = z.ProviderZoneID
 	}
-	if z.Provider == "aws" && (z.KubernetesRegion != z.Region || z.KubernetesZone != z.ProviderZoneID) {
-		// AWS CSI and cloud-provider topology use the native placement labels.
+	if len(validation.IsValidLabelValue(z.KubernetesRegion)) != 0 || len(validation.IsValidLabelValue(z.KubernetesZone)) != 0 {
 		return ErrInvalid
 	}
 	return immutableInsert(ctx, db, `INSERT INTO zones(id,provider,account_id,region,provider_zone_id,kubernetes_region,kubernetes_zone,lifecycle_state)
