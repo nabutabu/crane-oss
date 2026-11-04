@@ -17,7 +17,7 @@ type joinHost struct {
 func (h *joinHost) JoinCluster(context.Context, api.ClusterJoinRequest) error { h.calls++; return nil }
 
 func workerJoinFixture() api.ClusterJoinRequest {
-	return api.ClusterJoinRequest{OperationID: "12345678-1234-1234-1234-123456789012", Fence: 2, APIServerEndpoint: "https://10.0.0.1:6443", CACertHash: "sha256:" + strings.Repeat("a", 64), Token: "abcdef.0123456789abcdef", Registration: api.WorkerRegistration{HostID: "catalog/host", NodeName: api.WorkerNodeName("catalog/host"), ClusterID: "cluster", NodeGroupID: "aws-production-us-west-2-a-general", NodePoolID: "shared", TemplateRevision: "v1", ProviderID: "aws:///us-west-2a/i-synthetic", Scheduling: api.SchedulingTemplate{InstanceType: "m7i.xlarge", Architecture: "amd64", Region: "us-west-2", Zone: "us-west-2a", Taints: []api.SchedulingTaint{{Key: "workload", Value: "batch", Effect: "NoSchedule"}}}}}
+	return api.ClusterJoinRequest{OperationID: "12345678-1234-1234-1234-123456789012", Fence: 2, APIServerEndpoint: "https://10.0.0.1:6443", CACertHash: "sha256:" + strings.Repeat("a", 64), Token: "aaaaaa." + strings.Repeat("a", 16), Registration: api.WorkerRegistration{HostID: "catalog/host", NodeName: api.WorkerNodeName("catalog/host"), ClusterID: "cluster", NodeGroupID: "aws-production-us-west-2-a-general", NodePoolID: "shared", TemplateRevision: "v1", ProviderID: "aws:///us-west-2a/i-synthetic", Scheduling: api.SchedulingTemplate{InstanceType: "m7i.xlarge", Architecture: "amd64", Region: "us-west-2", Zone: "us-west-2a", Taints: []api.SchedulingTaint{{Key: "workload", Value: "batch", Effect: "NoSchedule"}}}}}
 }
 
 func TestJoinContractReplayConflictAndRestart(t *testing.T) {
@@ -31,13 +31,13 @@ func TestJoinContractReplayConflictAndRestart(t *testing.T) {
 	if call(in) != 200 {
 		t.Fatal("initial join failed")
 	}
-	in.Token = "fedcba.0123456789abcdef"
+	in.Token = "bbbbbb." + strings.Repeat("b", 16)
 	in.Fence++
 	if call(in) != 200 {
 		t.Fatal("rotated credential retry rejected")
 	}
 	journal, err := os.ReadFile(server.joinPath)
-	if err != nil || strings.Contains(string(journal), in.Token) || strings.Contains(string(journal), "abcdef.0123456789abcdef") {
+	if err != nil || strings.Contains(string(journal), in.Token) || strings.Contains(string(journal), "aaaaaa."+strings.Repeat("a", 16)) {
 		t.Fatal("join journal contains credentials")
 	}
 	conflict := in
