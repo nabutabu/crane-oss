@@ -59,7 +59,7 @@ func operationDatabase(t *testing.T) *sql.DB {
 	if err := capacity.CheckSchema(context.Background(), db); err != nil {
 		t.Fatal(err)
 	}
-	_, err = db.Exec(`INSERT INTO zones(id,provider,account_id,region,provider_zone_id) VALUES('zone','provider','account','region','az');
+	_, err = db.Exec(`INSERT INTO zones(id,provider,account_id,region,provider_zone_id,kubernetes_region,kubernetes_zone) VALUES('zone','provider','account','region','az','region','az');
 INSERT INTO host(id,zone,state,providerid,subd_endpoint,protected) VALUES('deployment/bootstrap/platform','zone','READY','provider-host','https://127.0.0.1:44001',true);
 INSERT INTO zone_dominators(zone_id,endpoint,identity) VALUES('zone','https://127.0.0.1:44000','spiffe://test.internal/dominator/zone')`)
 	if err != nil {

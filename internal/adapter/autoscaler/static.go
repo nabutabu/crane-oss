@@ -3,6 +3,7 @@ package autoscaler
 import (
 	"context"
 	"errors"
+	"github.com/nabutabu/crane-oss/pkg/api"
 )
 
 // StaticNodeGroup represents a minimal node group for prototype validation.
@@ -73,20 +74,11 @@ func (p *StaticProvider) NodeGroupForNode(ctx context.Context, nodeID string) (*
 func (p *StaticProvider) Template(ctx context.Context, groupID string) (*NodeTemplate, error) {
 	for _, g := range p.Groups {
 		if g.ID == groupID {
-			labels := map[string]string{
-				"kubernetes.io/os":                 "linux",
-				"kubernetes.io/arch":               g.Architecture,
-				"topology.kubernetes.io/region":    g.Region,
-				"topology.kubernetes.io/zone":      g.Zone,
-				"platform.crane.io/node-pool":      g.Pool,
-				"node.kubernetes.io/instance-type": g.InstanceType,
+			architecture := g.Architecture
+			if architecture == "" {
+				architecture = "amd64"
 			}
-			if labels["kubernetes.io/arch"] == "" {
-				labels["kubernetes.io/arch"] = "amd64"
-			}
-			for k, v := range g.Labels {
-				labels[k] = v
-			}
+			labels := api.SchedulingLabels(api.SchedulingTemplate{Architecture: architecture, Region: g.Region, Zone: g.Zone, InstanceType: g.InstanceType, Labels: g.Labels}, g.Pool)
 			return &NodeTemplate{
 				Zone:     g.Zone,
 				Region:   g.Region,

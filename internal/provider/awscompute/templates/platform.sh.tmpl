@@ -227,6 +227,10 @@ subjects:
     apiGroup: rbac.authorization.k8s.io
     name: "crane-subd:$NODE_NAME"
 YAML
+CLUSTER_ID="$(python3 -c 'import json; print(json.load(open("/etc/crane/first-zone.rendered.json"))["cluster"]["id"])')"
+kubectl -n kube-system create configmap crane-cluster-identity --from-literal="cluster_id=$CLUSTER_ID" --dry-run=client -o yaml | kubectl apply -f -
+kubectl -n kube-system patch configmap crane-cluster-identity --type merge -p '{"immutable":true}'
+kubectl create clusterrolebinding crane-worker-bootstrap --clusterrole=system:node-bootstrapper --group=system:bootstrappers:crane --dry-run=client -o yaml | kubectl apply -f -
 kubectl apply -f - <<YAML
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -238,6 +242,13 @@ rules:
 - apiGroups: [""]
   resources: ["pods"]
   verbs: ["list"]
+- apiGroups: ["apps"]
+  resources: ["daemonsets"]
+  verbs: ["get"]
+- apiGroups: [""]
+  resources: ["configmaps"]
+  resourceNames: ["crane-cluster-identity"]
+  verbs: ["get"]
 YAML
 kubectl apply -f - <<YAML
 apiVersion: rbac.authorization.k8s.io/v1
@@ -256,7 +267,17 @@ metadata: {name: crane-dominator-provisioner}
 rules:
 - apiGroups: [""]
   resources: ["nodes"]
-  verbs: ["list", "update"]
+  verbs: ["get", "list", "update"]
+- apiGroups: ["certificates.k8s.io"]
+  resources: ["certificatesigningrequests"]
+  verbs: ["get", "list"]
+- apiGroups: ["certificates.k8s.io"]
+  resources: ["certificatesigningrequests/approval"]
+  verbs: ["update"]
+- apiGroups: ["certificates.k8s.io"]
+  resources: ["signers"]
+  resourceNames: ["kubernetes.io/kube-apiserver-client-kubelet"]
+  verbs: ["approve"]
 YAML
 kubectl apply -f - <<YAML
 apiVersion: rbac.authorization.k8s.io/v1
@@ -355,6 +376,7 @@ values = {
     'DB_SSLROOTCERT': '/etc/crane/rds-ca.pem',
     'SPIFFE_TRUST_DOMAIN': '[[ .TrustDomain ]]',
     'CRANE_ZONE_ID': json.load(open('/etc/crane/first-zone.rendered.json'))['zone']['id'],
+    'CRANE_CLUSTER_ID': json.load(open('/etc/crane/first-zone.rendered.json'))['cluster']['id'],
 }
 manifest = {
     'apiVersion': 'v1',

@@ -43,8 +43,15 @@ type Provider interface {
 }
 
 type RuntimeHost struct {
-	ProviderID string
-	PrivateIP  string
+	KubernetesProviderID string
+	ProviderID           string
+	PrivateIP            string
+}
+
+// RuntimeIdentity contains facts obtained from the provider, never from Node labels.
+type RuntimeIdentity struct {
+	PrivateIP            string
+	KubernetesProviderID string
 }
 
 // RuntimeProvisioner is a provider capability used by the zone-owned
@@ -52,6 +59,7 @@ type RuntimeHost struct {
 // lifecycle and readiness remain under Dominator and capacity ownership.
 type RuntimeProvisioner interface {
 	LaunchWorker(context.Context, api.Operation) (RuntimeHost, error)
+	VerifyWorker(context.Context, api.Operation, string) (RuntimeIdentity, error)
 	ReconcileSubdRegistration(context.Context, api.Operation, string) error
 	ConfigureSubd(context.Context, api.Operation, string, string) error
 }

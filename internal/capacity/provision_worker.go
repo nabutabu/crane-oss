@@ -17,8 +17,9 @@ import (
 )
 
 type ProvisionResult struct {
-	ProviderID string
-	PrivateIP  string
+	KubernetesProviderID string
+	ProviderID           string
+	PrivateIP            string
 }
 
 // ProvisionExecutor contains provider-specific work while the capacity store
@@ -27,6 +28,7 @@ type ProvisionExecutor interface {
 	Launch(context.Context, api.Operation) (ProvisionResult, error)
 	EnrollAndJoin(context.Context, api.Operation, api.Host) error
 	Ready(context.Context, api.Operation, api.Host) (bool, error)
+	Release(context.Context, api.Operation, api.Host) error
 }
 
 type ProvisionController struct {
@@ -63,6 +65,9 @@ func (c *ProvisionController) RunOnce(ctx context.Context) error {
 		recordProvisionMetrics(ctx, started, "target_unavailable")
 		return err
 	}
+	span.SetAttributes(attribute.String("cluster_id", op.ClusterID), attribute.String("node_group_id", op.NodeGroupID),
+		attribute.String("kubernetes_region", op.KubernetesRegion), attribute.String("kubernetes_zone", op.KubernetesZone))
+	span.AddEvent("approved provisioning topology loaded")
 	err = c.withLease(ctx, op, d, func(stepCtx context.Context) error {
 		return c.advance(stepCtx, op)
 	})
@@ -108,7 +113,7 @@ func (c *ProvisionController) advance(ctx context.Context, op api.Operation) err
 		if err != nil {
 			return c.retryable(ctx, op, "provider_launch", err)
 		}
-		if err := c.Store.RecordLaunchWithAddress(ctx, op, result.ProviderID, result.PrivateIP); err != nil {
+		if err := c.Store.RecordLaunchWithAddress(ctx, op, result.ProviderID, result.PrivateIP, result.KubernetesProviderID); err != nil {
 			return err
 		}
 		return c.Store.ReleaseProvisionLease(ctx, op)
@@ -139,10 +144,15 @@ func (c *ProvisionController) advance(ctx context.Context, op api.Operation) err
 			trace.SpanFromContext(ctx).AddEvent("waiting for host readiness gates")
 			return c.Store.ReleaseProvisionLease(ctx, op)
 		}
-		if err := c.Store.SetProvisionState(ctx, op, api.HostConverging, api.HostReady); err != nil {
+		if err := c.Store.PrepareProvisionRelease(ctx, op, host.DesiredStateVersion); err != nil {
 			return err
 		}
-		return c.Store.CompleteProvision(ctx, op)
+		if err := c.Store.FinalizeProvision(ctx, op, host.DesiredStateVersion, func(releaseCtx context.Context) error { return c.Executor.Release(releaseCtx, op, host) }); err != nil {
+			return c.retryable(ctx, op, "readiness_handoff", err)
+		}
+		trace.SpanFromContext(ctx).AddEvent("worker readiness handoff committed")
+		slog.InfoContext(ctx, "worker readiness handoff committed", "operation_id", op.ID, "host_id", host.ID, "cluster_id", op.ClusterID, "zone_id", op.ZoneID, "fence", op.Fence)
+		return nil
 	case api.HostReady:
 		return c.Store.CompleteProvision(ctx, op)
 	default:

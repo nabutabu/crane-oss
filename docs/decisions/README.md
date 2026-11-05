@@ -13,3 +13,6 @@ Architecture decisions:
 - [ADR-009: Vendor-agnostic control plane and bootstrap](adr-009-vendor-agnostic-architecture.md) (accepted)
 - [ADR-012: Blocking Kubernetes operations through expected state](adr-012-blocking-kubernetes-operations.md) (accepted)
 - [ADR-013: Kubernetes attestation for control-plane workloads](adr-013-kubernetes-workload-attestation.md) (accepted)
+
+- [ADR-014: Dominator-driven worker provisioning](adr-014-dominator-worker-provisioning.md) (accepted)
+- [ADR-015: Multi-zone worker topology, identity and readiness](adr-015-multi-zone-worker-contract.md) (accepted)

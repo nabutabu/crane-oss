@@ -112,8 +112,19 @@ func run() (runErr error) {
 	if err != nil {
 		return fmt.Errorf("create Dominator Kubernetes client: %w", err)
 	}
+	clusterID := config.GetEnv("CRANE_CLUSTER_ID", "")
+	if clusterID == "" {
+		return fmt.Errorf("CRANE_CLUSTER_ID is required")
+	}
+	clusterCA := kubeConfig.CAData
+	if len(clusterCA) == 0 {
+		clusterCA, err = os.ReadFile(kubeConfig.CAFile)
+		if err != nil {
+			return fmt.Errorf("cannot load Kubernetes cluster trust root")
+		}
+	}
 	provisioner := &dominator.ProvisionExecutor{Store: capacity.NewStore(db), Provider: awsRuntime,
-		Kubernetes: kubernetesClient, Caller: hostrpc.Client{Source: source}, Resolver: resolver, TrustDomain: trustDomain}
+		Kubernetes: kubernetesClient, Caller: hostrpc.Client{Source: source}, Resolver: resolver, TrustDomain: trustDomain, ClusterID: clusterID, ClusterCA: clusterCA}
 	provisionController := &capacity.ProvisionController{Store: capacity.NewStore(db), Executor: provisioner,
 		ZoneID: zoneID, Identity: svid.ID.String()}
 	workerDone := make(chan struct{})

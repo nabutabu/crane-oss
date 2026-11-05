@@ -31,7 +31,7 @@ func TestAutoscalerDiscoveryClusterScopeAndDisabledHost(t *testing.T) {
 	if err != nil || len(d.Groups) != 2 || d.Groups[0].ID != "aws-test-us-west-2-a-general" || d.Groups[1].ID != g.ID || d.Groups[1].Scheduling.Zone != "us-west-2b" {
 		t.Fatalf("discovery: %#v %v", d, err)
 	}
-	mustExec(t, db, `INSERT INTO host(id,zone,crane_zone,node_group_id,node_pool_id,state,provider,providerid) VALUES('host-b','other-zone','other-zone',$1,'pool','READY','aws','i-123')`, g.ID)
+	mustExec(t, db, `INSERT INTO host(id,zone,crane_zone,node_group_id,node_pool_id,state,provider,providerid,kubernetes_provider_id) VALUES('host-b','other-zone','other-zone',$1,'pool','READY','aws','i-123','aws:///us-west-2b/i-123')`, g.ID)
 	mustExec(t, db, `UPDATE cluster_zones SET access_state='revoked' WHERE zone_id='other-zone'`)
 	d, err = s.AutoscalerDiscovery(ctx, "cluster")
 	if err != nil || len(d.Groups) != 2 || d.Groups[1].LaunchReady || len(d.Groups[1].Nodes) != 1 || d.Groups[1].Nodes[0].ProviderID != "aws:///us-west-2b/i-123" {

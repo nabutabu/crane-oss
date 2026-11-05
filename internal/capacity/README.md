@@ -98,3 +98,24 @@ This baseline targets a fresh deployment and empty database, with no migration
 or data conversion workflow. Infrastructure reservations measure pending and
 allocated machines; final-phase team accounting will separately measure declared
 Kubernetes workload requests.
+
+# Canonical Kubernetes topology
+
+Zone creation accepts `kubernetes_region` and `kubernetes_zone` as stable
+Kubernetes topology labels alongside provider-native `region` and
+`provider_zone_id`. Omitted labels default to the native references. Region labels identify one provider/account/region; zone labels
+must be unique, and an exact retry preserves the original mapping. AWS labels
+must equal AWS-native placement names because the AWS storage driver uses them.
+Two accounts that reuse the same AWS zone name cannot both be admitted into
+one Crane database without a provider-supported topology translation. Node
+group scheduling regions and zones must match the stored zone mapping.
+
+Provider-native topology is checked through the provider capability on administration requests. Unsupported providers, unknown native zones, account mismatches, and unsupported CSI aliases are rejected. Kubernetes scheduling metadata uses the same label builder in discovery templates and worker registration.
+
+Worker readiness persists the provider-authenticated Node UID and immutable
+registration fingerprint. Initial expected state is pinned on first delivery.
+A committed release intent allows a retry to recognize quarantine removal
+whose response or database completion was lost. The bounded Kubernetes release
+runs while the active operation, host and membership are locked; READY and
+operation success then commit together. Template taints and operator cordons
+are preserved. A direct CONVERGING-to-READY store transition is rejected.

@@ -5,33 +5,13 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"strings"
 
 	"github.com/nabutabu/crane-oss/pkg/api"
 )
 
 func validateScheduling(t api.SchedulingTemplate, pool string) error {
-	if t.InstanceType == "" || t.Region == "" || t.Zone == "" ||
-		(t.Architecture != "amd64" && t.Architecture != "arm64") || pool == "" {
+	if api.ValidateScheduling(t, pool) != nil {
 		return ErrInvalid
-	}
-	canonical := map[string]string{
-		"kubernetes.io/os": "linux", "kubernetes.io/arch": t.Architecture,
-		"topology.kubernetes.io/region": t.Region, "topology.kubernetes.io/zone": t.Zone,
-		"platform.crane.io/node-pool": pool, "node.kubernetes.io/instance-type": t.InstanceType,
-	}
-	for k, v := range t.Labels {
-		if strings.TrimSpace(k) == "" || v == "" {
-			return ErrInvalid
-		}
-		if expected, ok := canonical[k]; ok && expected != v {
-			return ErrInvalid
-		}
-	}
-	for _, taint := range t.Taints {
-		if taint.Key == "" || (taint.Effect != "NoSchedule" && taint.Effect != "NoExecute" && taint.Effect != "PreferNoSchedule") {
-			return ErrInvalid
-		}
 	}
 	return nil
 }
@@ -51,9 +31,9 @@ func (s *Store) UpdateNodeGroupScheduling(ctx context.Context, id, expected, rev
 		return err
 	}
 	defer tx.Rollback()
-	var pool, current string
+	var pool, current, region, zone string
 	var same bool
-	err = tx.QueryRowContext(ctx, `SELECT node_pool_id,template_revision,(scheduling=$2::jsonb AND launch_parameters=$3::jsonb) FROM node_groups WHERE id=$1 FOR UPDATE`, id, data, []byte(launch)).Scan(&pool, &current, &same)
+	err = tx.QueryRowContext(ctx, `SELECT g.node_pool_id,g.template_revision,(g.scheduling=$2::jsonb AND g.launch_parameters=$3::jsonb),z.kubernetes_region,z.kubernetes_zone FROM node_groups g JOIN zones z ON z.id=g.zone_id WHERE g.id=$1 FOR UPDATE OF g`, id, data, []byte(launch)).Scan(&pool, &current, &same, &region, &zone)
 	if errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
@@ -62,6 +42,9 @@ func (s *Store) UpdateNodeGroupScheduling(ctx context.Context, id, expected, rev
 	}
 	if err = validateScheduling(t, pool); err != nil {
 		return err
+	}
+	if t.Region != region || t.Zone != zone {
+		return ErrInvalid
 	}
 	if current == revision {
 		if !same {

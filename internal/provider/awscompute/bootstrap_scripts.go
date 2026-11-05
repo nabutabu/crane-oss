@@ -49,6 +49,7 @@ type scriptData struct {
 	SpireAddress                        string
 	PlatformInstanceID                  string
 	ZoneID                              string
+	ClusterID                           string
 	JoinEndpoint, JoinToken, JoinCAHash string
 	NodePrivateIP                       string
 }

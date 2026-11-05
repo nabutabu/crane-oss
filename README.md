@@ -236,3 +236,15 @@ People from PlatformCon and PlatformEngineering.org
 - [Ajay Chakramath](https://www.linkedin.com/in/chankramath/) and Aviator [Platform Engineering is not a Tool](https://youtu.be/RfR82PdARRE?si=mhsse0R2TJpPw5sr)
 - [CNCF](https://www.cncf.io/)
 - [Nicki Watt](https://youtu.be/tPWwXnU_an4?si=EfhQkLyxmooxEDso)
+
+### Multi-zone worker registration
+
+One Kubernetes cluster can accept workers from multiple approved Crane zones
+using zone-local node groups and a shared pool. Each Dominator requires
+`CRANE_CLUSTER_ID` in addition to `CRANE_ZONE_ID`; bootstrap wires the cluster
+identity marker, trust root and restricted join permissions. This contract
+requires a fresh schema and matching prepared images.
+
+See [the multi-zone worker decision](docs/decisions/adr-015-multi-zone-worker-contract.md)
+and [manual two-AZ acceptance](docs/multi-zone-worker-acceptance.md), including
+the logs, traces and mixed workload manifests used to validate a deployment.

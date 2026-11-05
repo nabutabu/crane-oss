@@ -71,7 +71,7 @@ fi
 	if err = s.ensureSubd(ctx, spire, agent, zone.ID, infra); err != nil {
 		return api.BootstrapStepResult{}, err
 	}
-	script, err := renderTemplate("zone-dominator.sh.tmpl", scriptData{Config: s.cfg, Infra: infra, Region: s.cfg.AWS.Region, TrustDomain: s.cfg.SPIRE.TrustDomain, ZoneID: zone.ID, Host: bootstrapAgentHost{PrivateIP: control.PrivateIP}})
+	script, err := renderTemplate("zone-dominator.sh.tmpl", scriptData{Config: s.cfg, Infra: infra, Region: s.cfg.AWS.Region, TrustDomain: s.cfg.SPIRE.TrustDomain, ZoneID: zone.ID, ClusterID: clusterID, Host: bootstrapAgentHost{PrivateIP: control.PrivateIP}})
 	if err != nil {
 		return api.BootstrapStepResult{}, err
 	}

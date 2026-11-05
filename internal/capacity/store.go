@@ -500,9 +500,17 @@ func (s *Store) RecordLaunch(ctx context.Context, op api.Operation, providerID s
 	return s.RecordLaunchWithAddress(ctx, op, providerID, "")
 }
 
-func (s *Store) RecordLaunchWithAddress(ctx context.Context, op api.Operation, providerID, privateIP string) error {
+func (s *Store) RecordLaunchWithAddress(ctx context.Context, op api.Operation, providerID, privateIP string, nodeProviderIDs ...string) error {
 	if op.Kind != "provision" || providerID == "" {
 		return errors.New("invalid provider result")
+	}
+
+	nodeProviderID := ""
+	if len(nodeProviderIDs) > 1 {
+		return ErrInvalid
+	}
+	if len(nodeProviderIDs) == 1 {
+		nodeProviderID = nodeProviderIDs[0]
 	}
 
 	tx, err := s.DB.BeginTx(ctx, nil)
@@ -535,13 +543,14 @@ func (s *Store) RecordLaunchWithAddress(ctx context.Context, op api.Operation, p
 	result, err := tx.ExecContext(
 		ctx,
 		`UPDATE host SET providerid=CASE WHEN providerid IS NULL OR providerid='' OR providerid=$2 THEN $2 ELSE providerid END,
+             kubernetes_provider_id=CASE WHEN $4='' THEN kubernetes_provider_id ELSE $4 END,
              endpoint=CASE WHEN $3='' THEN endpoint ELSE $3 END,
              subd_endpoint=CASE WHEN $3='' THEN subd_endpoint ELSE $3 END,
              provider=z.provider,state=CASE WHEN state IN ('PROVISIONING','BOOTING') THEN 'BOOTING' ELSE state END,
              updatedat=clock_timestamp()
 		 FROM zones z
-		 WHERE host.id=$1 AND z.id=host.crane_zone AND (host.providerid IS NULL OR host.providerid='' OR host.providerid=$2)`,
-		op.HostID, providerID, endpoint,
+		 WHERE host.id=$1 AND z.id=host.crane_zone AND (host.providerid IS NULL OR host.providerid='' OR host.providerid=$2) AND (host.kubernetes_provider_id='' OR $4='' OR host.kubernetes_provider_id=$4)`,
+		op.HostID, providerID, endpoint, nodeProviderID,
 	)
 	if err != nil {
 		return err
@@ -586,19 +595,24 @@ func (s *Store) LoadProvisioningTarget(ctx context.Context, op *api.Operation) e
 	op.Scheduling = template.Scheduling
 	op.TemplateRevision = template.TemplateRevision
 	op.CapacityClass = template.CapacityClass
-	err := s.DB.QueryRowContext(ctx, `SELECT g.cluster_id,g.node_pool_id,z.provider,z.account_id,z.region,z.provider_zone_id,
+	err := s.DB.QueryRowContext(ctx, `SELECT g.cluster_id,g.node_pool_id,z.provider,z.account_id,z.region,z.provider_zone_id,z.kubernetes_region,z.kubernetes_zone,
  c.api_server_endpoint,c.ca_cert_hash,
  COALESCE((SELECT h.providerid FROM host h WHERE h.protected AND h.crane_zone IS NULL
    AND h.zone=z.id AND h.role='spire' ORDER BY h.createdat LIMIT 1),'')
- FROM node_groups g JOIN zones z ON z.id=g.zone_id JOIN clusters c ON c.id=g.cluster_id
- WHERE g.id=$1 AND g.zone_id=$2 AND c.lifecycle_state='ready' AND z.lifecycle_state='ready' AND z.enabled`, op.NodeGroupID, op.ZoneID).
-		Scan(&op.ClusterID, &op.NodePoolID, &op.Provider, &op.AccountID, &op.Region, &op.ProviderZoneID,
+	 FROM node_groups g JOIN zones z ON z.id=g.zone_id JOIN clusters c ON c.id=g.cluster_id
+ JOIN cluster_zones m ON m.cluster_id=g.cluster_id AND m.zone_id=g.zone_id
+ WHERE g.id=$1 AND g.zone_id=$2 AND c.lifecycle_state='ready' AND z.lifecycle_state='ready' AND z.enabled
+ AND m.lifecycle_state='ready' AND m.access_state='approved'`, op.NodeGroupID, op.ZoneID).
+		Scan(&op.ClusterID, &op.NodePoolID, &op.Provider, &op.AccountID, &op.Region, &op.ProviderZoneID, &op.KubernetesRegion, &op.KubernetesZone,
 			&op.APIServerEndpoint, &op.CACertHash, &op.SpireInstanceID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrInactive
 	}
 	if err == nil && op.SpireInstanceID == "" {
 		return errors.New("zone SPIRE host is unavailable")
+	}
+	if err == nil && op.Scheduling.Zone != "" && (op.Scheduling.Region != op.KubernetesRegion || op.Scheduling.Zone != op.KubernetesZone) {
+		return ErrInvalid
 	}
 	return err
 }
@@ -620,7 +634,6 @@ func (s *Store) SetProvisionState(ctx context.Context, op api.Operation, expecte
 		api.HostRequested:   api.HostProvisioning,
 		api.HostBooting:     api.HostRegistering,
 		api.HostRegistering: api.HostConverging,
-		api.HostConverging:  api.HostReady,
 	}
 	if op.Kind != "provision" || allowed[expected] != next {
 		return ErrInvalid
@@ -638,7 +651,7 @@ func (s *Store) CompleteProvision(ctx context.Context, op api.Operation) error {
  updated_at=clock_timestamp() WHERE o.id=$1 AND o.kind='provision' AND o.host_id=$4
  AND o.lease_owner=$2 AND o.fence=$3 AND o.lease_until>clock_timestamp() AND o.state='launching'
  AND EXISTS(SELECT 1 FROM host h WHERE h.id=o.host_id AND h.state='READY'
-   AND h.providerid IS NOT NULL AND h.providerid<>'')`, op.ID, op.LeaseOwner, op.Fence, op.HostID)
+   AND h.providerid IS NOT NULL AND h.providerid<>'' AND EXISTS(SELECT 1 FROM worker_provisioning_state b WHERE b.host_id=h.id AND b.operation_id=o.id AND b.release_started))`, op.ID, op.LeaseOwner, op.Fence, op.HostID)
 	return fencedResult(r, err)
 }
 

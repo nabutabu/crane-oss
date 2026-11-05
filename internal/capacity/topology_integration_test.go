@@ -18,13 +18,48 @@ func testGroup(zone api.ZoneInput, suffix string) api.NodeGroupInput {
 		TemplateRevision: "template-1", PerNode: api.Resources{VCPU: 4, MemoryMiB: 8192}, LaunchParameters: []byte(`{"image_id":"ami-pinned"}`)}
 }
 
+func TestPostgresCanonicalZoneLabels(t *testing.T) {
+	db := database(t)
+	s := NewStore(db)
+	ctx := context.Background()
+	zone := api.ZoneInput{ID: "label-zone", Provider: "aws", AccountID: "account", Region: "us-west-2", ProviderZoneID: "us-west-2c", KubernetesRegion: "us-west-2", KubernetesZone: "us-west-2c"}
+	if err := s.CreateZone(ctx, zone); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateZone(ctx, zone); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	conflict := zone
+	conflict.ID, conflict.AccountID = "other-zone", "other-account"
+	if err := s.CreateZone(ctx, conflict); !errors.Is(err, ErrConflict) {
+		t.Fatalf("label collision: %v", err)
+	}
+	conflict = zone
+	conflict.KubernetesZone = "invented-zone"
+	if err := s.CreateZone(ctx, conflict); !errors.Is(err, ErrConflict) {
+		t.Fatalf("immutable label: %v", err)
+	}
+	if err := s.CreateClusterZone(ctx, api.ClusterZoneInput{ClusterID: "cluster", ZoneID: zone.ID}); err != nil {
+		t.Fatal(err)
+	}
+	g := testGroup(zone, "general")
+	g.Scheduling = api.SchedulingTemplate{InstanceType: "m7i.xlarge", Architecture: "amd64", Region: "us-west-2", Zone: "us-west-2b"}
+	if err := s.CreateNodeGroup(ctx, g); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("mismatched template: %v", err)
+	}
+	g.Scheduling.Zone = "us-west-2c"
+	if err := s.CreateNodeGroup(ctx, g); err != nil {
+		t.Fatalf("matching template: %v", err)
+	}
+}
+
 func TestPostgresMultiZoneMembership(t *testing.T) {
 	db := database(t)
 	s := NewStore(db)
 	ctx := context.Background()
 	zones := []api.ZoneInput{
 		{ID: "zone-b", Provider: "aws", AccountID: "other-account", Region: "us-east-1", ProviderZoneID: "us-east-1b"},
-		{ID: "zone-c", Provider: "fixture-provider", AccountID: "third-account", Region: "other-region", ProviderZoneID: "opaque/native/placement"},
+		{ID: "zone-c", Provider: "fixture-provider", AccountID: "third-account", Region: "other-region", ProviderZoneID: "opaque/native/placement", KubernetesZone: "other-zone-label"},
 	}
 	for _, z := range zones {
 		if err := s.CreateZone(ctx, z); err != nil {

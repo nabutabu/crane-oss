@@ -5,14 +5,19 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/nabutabu/crane-oss/pkg/api"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+	"k8s.io/apimachinery/pkg/util/validation"
 )
 
 type topologyWriter interface {
 	ExecContext(context.Context, string, ...any) (sql.Result, error)
+	QueryRowContext(context.Context, string, ...any) *sql.Row
 }
 
 // immutableInsert accepts an exact retry, but never changes an existing identity.
@@ -45,11 +50,20 @@ func createZone(ctx context.Context, db topologyWriter, z api.ZoneInput, lifecyc
 	if z.ID == "" || z.Provider == "" || z.AccountID == "" || z.Region == "" || z.ProviderZoneID == "" {
 		return ErrInvalid
 	}
-	return immutableInsert(ctx, db, `INSERT INTO zones(id,provider,account_id,region,provider_zone_id,lifecycle_state)
- VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(id) DO UPDATE SET id=EXCLUDED.id
- WHERE (zones.provider,zones.account_id,zones.region,zones.provider_zone_id)=
- (EXCLUDED.provider,EXCLUDED.account_id,EXCLUDED.region,EXCLUDED.provider_zone_id)`,
-		z.ID, z.Provider, z.AccountID, z.Region, z.ProviderZoneID, lifecycle)
+	if z.KubernetesRegion == "" {
+		z.KubernetesRegion = z.Region
+	}
+	if z.KubernetesZone == "" {
+		z.KubernetesZone = z.ProviderZoneID
+	}
+	if len(validation.IsValidLabelValue(z.KubernetesRegion)) != 0 || len(validation.IsValidLabelValue(z.KubernetesZone)) != 0 {
+		return ErrInvalid
+	}
+	return immutableInsert(ctx, db, `INSERT INTO zones(id,provider,account_id,region,provider_zone_id,kubernetes_region,kubernetes_zone,lifecycle_state)
+ VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(id) DO UPDATE SET id=EXCLUDED.id
+ WHERE (zones.provider,zones.account_id,zones.region,zones.provider_zone_id,zones.kubernetes_region,zones.kubernetes_zone)=
+ (EXCLUDED.provider,EXCLUDED.account_id,EXCLUDED.region,EXCLUDED.provider_zone_id,EXCLUDED.kubernetes_region,EXCLUDED.kubernetes_zone)`,
+		z.ID, z.Provider, z.AccountID, z.Region, z.ProviderZoneID, z.KubernetesRegion, z.KubernetesZone, lifecycle)
 }
 
 func createCluster(ctx context.Context, db topologyWriter, c api.ClusterInput, lifecycle string, seed bool) error {
@@ -88,6 +102,10 @@ func createGroup(ctx context.Context, db topologyWriter, g api.NodeGroupInput) e
 	if g.Scheduling.InstanceType != "" || g.Scheduling.Region != "" || g.Scheduling.Zone != "" || g.Scheduling.Architecture != "" || len(g.Scheduling.Labels) > 0 || len(g.Scheduling.Taints) > 0 {
 		if err := validateScheduling(g.Scheduling, g.NodePoolID); err != nil {
 			return err
+		}
+		var region, zone string
+		if err := db.QueryRowContext(ctx, `SELECT kubernetes_region,kubernetes_zone FROM zones WHERE id=$1`, g.ZoneID).Scan(&region, &zone); err != nil || g.Scheduling.Region != region || g.Scheduling.Zone != zone {
+			return ErrInvalid
 		}
 	}
 	return immutableInsert(ctx, db, `INSERT INTO node_groups(id,cluster_id,zone_id,node_pool_id,capacity_class,provider_zone_id,min_nodes,max_nodes,template_revision,vcpu,memory_mib,launch_parameters,naming_provider,development_stage,naming_region,naming_az,naming_group,scheduling)
@@ -207,7 +225,12 @@ func seedFirstZoneTx(ctx context.Context, tx *sql.Tx, in api.FirstZoneInput, rea
 }
 
 func (s *Store) CreateZone(ctx context.Context, z api.ZoneInput) error {
-	return createZone(ctx, s.DB, z, "ready")
+	err := createZone(ctx, s.DB, z, "ready")
+	if err == nil {
+		slog.InfoContext(ctx, "capacity zone topology accepted", "zone_id", z.ID, "provider", z.Provider)
+		trace.SpanFromContext(ctx).AddEvent("zone topology accepted", trace.WithAttributes(attribute.String("zone_id", z.ID)))
+	}
+	return err
 }
 func (s *Store) CreateCluster(ctx context.Context, c api.ClusterInput) error {
 	return createCluster(ctx, s.DB, c, "ready", false)

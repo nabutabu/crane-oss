@@ -44,7 +44,7 @@ func TestBootstrapCatalogSeedRerunAndConflict(t *testing.T) {
 	if err := capacity.InitializeSchema(context.Background(), db); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`INSERT INTO zones(id,provider,account_id,region,provider_zone_id) VALUES('zone','aws','account','region','az')`); err != nil {
+	if _, err := db.Exec(`INSERT INTO zones(id,provider,account_id,region,provider_zone_id,kubernetes_region,kubernetes_zone) VALUES('zone','aws','account','region','az','region','az')`); err != nil {
 		t.Fatal(err)
 	}
 	script, err := RenderSeedHostsScript(testConfig(), testInfra(), testAgentHosts())

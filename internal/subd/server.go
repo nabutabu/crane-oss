@@ -104,6 +104,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/state", s.current)
 	mux.HandleFunc("PUT /v1/expected-state", s.update)
 	mux.HandleFunc("PUT /v1/cluster-join", s.clusterJoin)
+	mux.HandleFunc("POST /v1/cluster-membership", s.clusterMembership)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// go-spiffe verifies chains in VerifyPeerCertificate, so VerifiedChains
 		// is intentionally empty. Serve always installs that verification hook.

@@ -33,8 +33,8 @@ func InitializeSchema(ctx context.Context, db *sql.DB) error {
 // Services call this at startup and never alter the database schema.
 func CheckSchema(ctx context.Context, db *sql.DB) error {
 	required := []string{
-		"zone_dominators", "host_state_requests",
-		"zones", "clusters", "cluster_zones", "node_pools", "node_groups",
+		"zone_dominators", "host_state_requests", "worker_provisioning_state",
+		"topology_regions", "zones", "clusters", "cluster_zones", "node_pools", "node_groups",
 		"capacity_requests", "host", "operations", "infrastructure_reservations",
 		"zone_bootstrap_operations", "node_removal_operations", "actions",
 		"host_problems", "host_health_trends",
@@ -53,16 +53,17 @@ func CheckSchema(ctx context.Context, db *sql.DB) error {
 		return fmt.Errorf("Crane schema is not initialized (missing tables: %s); run crane-bootstrap", strings.Join(missing, ", "))
 	}
 	var columns int
-	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='host' AND column_name IN ('protected','subd_endpoint')`).Scan(&columns); err != nil {
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='host' AND column_name IN ('protected','subd_endpoint','kubernetes_provider_id')`).Scan(&columns); err != nil {
 		return fmt.Errorf("check host schema readiness: %w", err)
 	}
-	if columns != 2 {
+	if columns != 3 {
 		return fmt.Errorf("Crane host schema is incompatible; initialize a fresh database with crane-bootstrap")
 	}
 	var compatible bool
 	if err := db.QueryRowContext(ctx, `SELECT
  (SELECT count(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='cluster_zones' AND column_name IN ('cluster_id','zone_id','lifecycle_state','access_state'))=4
  AND (SELECT count(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='node_groups' AND column_name IN ('naming_provider','development_stage','naming_region','naming_az','naming_group','scheduling'))=6
+ AND (SELECT count(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='zones' AND column_name IN ('kubernetes_region','kubernetes_zone'))=2
  AND NOT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND ((table_name='clusters' AND column_name='zone_id') OR (table_name='node_pools' AND column_name='team_id')))
  AND EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='node_groups'::regclass AND confrelid='cluster_zones'::regclass AND contype='f' AND cardinality(conkey)=2)`).Scan(&compatible); err != nil {
 		return fmt.Errorf("check topology schema readiness: %w", err)

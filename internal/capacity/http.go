@@ -29,7 +29,9 @@ func authenticatedAdapterCluster(ctx context.Context) string {
 // topology mutations require the admin bearer token. Each adapter credential
 // is bound to one configured cluster; the header must match that binding.
 type API struct {
-	store             *Store
+	store *Store
+	// ValidateTopology is wired by the service composition root.
+	ValidateTopology  func(context.Context, api.ZoneInput) error
 	adminToken        string
 	adapterPrincipals map[string]string
 }
@@ -137,6 +139,10 @@ func (a *API) createZone(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &in) {
 		return
 	}
+	if a.ValidateTopology != nil && a.ValidateTopology(r.Context(), in) != nil {
+		capacityError(w, ErrInvalid)
+		return
+	}
 	if err := a.store.CreateZone(r.Context(), in); err != nil {
 		capacityError(w, err)
 		return
@@ -206,6 +212,10 @@ func (a *API) seedFirstZone(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &in) {
 		return
 	}
+	if a.ValidateTopology != nil && a.ValidateTopology(r.Context(), in.Zone) != nil {
+		capacityError(w, ErrInvalid)
+		return
+	}
 	if err := a.store.SeedFirstZone(r.Context(), in); err != nil {
 		capacityError(w, err)
 		return
@@ -254,6 +264,24 @@ func (a *API) createBootstrap(w http.ResponseWriter, r *http.Request) {
 	var in api.BootstrapRequest
 	if !decodeJSON(w, r, &in) {
 		return
+	}
+	if a.ValidateTopology != nil {
+		var intent struct {
+			Zone      api.ZoneInput      `json:"zone"`
+			FirstZone api.FirstZoneInput `json:"first_zone"`
+		}
+		if json.Unmarshal(in.Parameters, &intent) != nil {
+			capacityError(w, ErrInvalid)
+			return
+		}
+		zone := intent.Zone
+		if in.Kind == "create_cluster" {
+			zone = intent.FirstZone.Zone
+		}
+		if a.ValidateTopology(r.Context(), zone) != nil {
+			capacityError(w, ErrInvalid)
+			return
+		}
 	}
 	id, err := a.store.CreateBootstrap(r.Context(), in)
 	if err != nil {

@@ -13,10 +13,12 @@ type ExpectedHostState struct {
 }
 
 type ClusterJoinRequest struct {
-	OperationID       string `json:"operation_id"`
-	APIServerEndpoint string `json:"api_server_endpoint"`
-	Token             string `json:"token"`
-	CACertHash        string `json:"ca_cert_hash"`
+	Registration      WorkerRegistration `json:"registration"`
+	Fence             int64              `json:"fence"`
+	OperationID       string             `json:"operation_id"`
+	APIServerEndpoint string             `json:"api_server_endpoint"`
+	Token             string             `json:"token"`
+	CACertHash        string             `json:"ca_cert_hash"`
 }
 
 type ClusterJoinResult struct {

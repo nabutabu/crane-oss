@@ -14,10 +14,10 @@ import (
 func TestPostgresHostListingPlacementAndProviderFilters(t *testing.T) {
 	db := database(t)
 	mustExec(t, db, `
-INSERT INTO zones(id,provider,account_id,region,provider_zone_id) VALUES
- ('east','aws','account','us-east-1','us-east-1a'),
- ('west-second','aws','another-account','us-west-2','us-west-2b'),
- ('another-provider','other','account','us-west-2','zone-a');
+INSERT INTO zones(id,provider,account_id,region,provider_zone_id,kubernetes_region,kubernetes_zone) VALUES
+ ('east','aws','account','us-east-1','us-east-1a','us-east-1','us-east-1a'),
+ ('west-second','aws','another-account','us-west-2','us-west-2b','second-us-west-2','us-west-2b'),
+ ('another-provider','other','account','us-west-2','zone-a','other-us-west-2','zone-a');
 INSERT INTO host(id,zone,state,provider,providerid,protected,secretarn) VALUES
  ('a/bootstrap','zone','READY','aws','platform-id',true,'synthetic-hidden-reference'),
  ('c/terminated','zone','TERMINATED','aws','terminated-id',false,NULL),
