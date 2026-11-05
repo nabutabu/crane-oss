@@ -15,10 +15,7 @@ func (s *operationSession) EnsureDominator(ctx context.Context, op api.Operation
 	if err != nil {
 		return api.BootstrapStepResult{}, err
 	}
-	role, err := s.controlPlaneRole(clusterID)
-	if err != nil {
-		return api.BootstrapStepResult{}, err
-	}
+	role := "cluster-" + clusterID
 	control, err := s.operationHost(ctx, role)
 	if err != nil {
 		return api.BootstrapStepResult{}, err
@@ -62,12 +59,6 @@ fi
 		return api.BootstrapStepResult{}, err
 	}
 	agent := control
-	if op.Kind == "attach_zone" {
-		agent, err = s.operationHost(ctx, "zone-"+zone.ID)
-		if err != nil {
-			return api.BootstrapStepResult{}, err
-		}
-	}
 	if err = s.ensureSubd(ctx, spire, agent, zone.ID, infra); err != nil {
 		return api.BootstrapStepResult{}, err
 	}
@@ -124,21 +115,12 @@ func (s *operationSession) Validate(ctx context.Context, op api.Operation) (bool
 	if err != nil {
 		return false, err
 	}
-	role, err := s.controlPlaneRole(clusterID)
-	if err != nil {
-		return false, err
-	}
+	role := "cluster-" + clusterID
 	control, err := s.operationHost(ctx, role)
 	if err != nil {
 		return false, err
 	}
 	node := control
-	if op.Kind == "attach_zone" {
-		node, err = s.operationHost(ctx, "zone-"+zone.ID)
-		if err != nil {
-			return false, err
-		}
-	}
 	probe, err := renderTemplate("zone-validate.sh.tmpl", scriptData{Config: s.cfg, TrustDomain: s.cfg.SPIRE.TrustDomain, ZoneID: zone.ID, NodePrivateIP: node.PrivateIP, Host: bootstrapAgentHost{PrivateIP: control.PrivateIP}})
 	if err != nil {
 		return false, err

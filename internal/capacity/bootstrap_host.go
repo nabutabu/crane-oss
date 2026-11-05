@@ -15,6 +15,9 @@ var providerInstanceID = regexp.MustCompile(`^[A-Za-z0-9._:/-]{1,200}$`)
 // infrastructure step. The record is deliberately outside node groups, so
 // capacity admission cannot provision or terminate it as worker capacity.
 func (s *Store) RecordBootstrapHost(ctx context.Context, op api.Operation, result api.BootstrapStepResult) error {
+	if op.Kind != "create_cluster" {
+		return ErrForbidden
+	}
 	if result.ProviderHostID == "" || !providerInstanceID.MatchString(result.ProviderHostID) {
 		return ErrInvalid
 	}
@@ -23,9 +26,6 @@ func (s *Store) RecordBootstrapHost(ctx context.Context, op api.Operation, resul
 		return ErrInvalid
 	}
 	role := "cluster-control-plane"
-	if op.Kind == "attach_zone" {
-		role = "zone-dominator-host"
-	}
 	hostID := "bootstrap/" + op.ID
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {

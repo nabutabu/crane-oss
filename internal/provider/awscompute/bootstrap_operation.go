@@ -43,19 +43,17 @@ func NewOperationSession(shared bootstrap.Config) (bootstrap.OperationSession, e
 }
 
 func (s *operationSession) target(op api.Operation) (api.ZoneInput, string, error) {
+	if op.Kind != "create_cluster" {
+		return api.ZoneInput{}, "", fmt.Errorf("bootstrap operation only supports create_cluster")
+	}
 	var intent struct {
-		FirstZone  api.FirstZoneInput   `json:"first_zone"`
-		Zone       api.ZoneInput        `json:"zone"`
-		Membership api.ClusterZoneInput `json:"membership"`
+		FirstZone api.FirstZoneInput `json:"first_zone"`
 	}
 	if err := json.Unmarshal(op.Parameters, &intent); err != nil {
 		return api.ZoneInput{}, "", fmt.Errorf("invalid operation intent")
 	}
-	zone, clusterID := intent.Zone, intent.Membership.ClusterID
-	if op.Kind == "create_cluster" {
-		zone, clusterID = intent.FirstZone.Zone, intent.FirstZone.Cluster.ID
-	}
-	if (op.Kind != "create_cluster" && op.Kind != "attach_zone") || zone.ID != op.ZoneID ||
+	zone, clusterID := intent.FirstZone.Zone, intent.FirstZone.Cluster.ID
+	if zone.ID != op.ZoneID ||
 		zone.Provider != "aws" || zone.AccountID != s.cfg.AWS.AccountID || zone.Region != s.cfg.AWS.Region ||
 		clusterID == "" || !regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`).MatchString(clusterID) || !regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`).MatchString(zone.ID) {
 		return api.ZoneInput{}, "", fmt.Errorf("operation target does not match the pinned AWS deployment")
@@ -63,9 +61,9 @@ func (s *operationSession) target(op api.Operation) (api.ZoneInput, string, erro
 	return zone, clusterID, nil
 }
 
-// EnsureInfrastructure reuses the deployment VPC and platform instance
-// profile. A missing VPC is a hard failure, never a reason to build another
-// layer-zero authority during zone attachment.
+// EnsureInfrastructure creates a protected host for an additional cluster using
+// the existing deployment VPC and platform profile. A missing VPC is a hard
+// failure, never a reason to build another layer-zero authority.
 func (s *operationSession) EnsureInfrastructure(ctx context.Context, op api.Operation) (api.BootstrapStepResult, error) {
 	zone, clusterID, err := s.target(op)
 	if err != nil {
@@ -132,10 +130,7 @@ func (s *operationSession) EnsureInfrastructure(ctx context.Context, op api.Oper
 	hostInfra := infra
 	hostInfra.PublicSubnetIDs = []string{infra.PublicSubnetIDs[index]}
 	hostInfra.PlatformProfile = profileName
-	role := "zone-" + zone.ID
-	if op.Kind == "create_cluster" {
-		role = "cluster-" + clusterID
-	}
+	role := "cluster-" + clusterID
 	h, err := ensureHost(ctx, s.client, s.cfg, hostInfra, role, s.cfg.Platform.AMIID, s.cfg.Platform.InstanceType, s.cfg.Platform.StorageGiB, profileName, infra.PlatformSecurityGroupID)
 	if err != nil {
 		return api.BootstrapStepResult{}, err

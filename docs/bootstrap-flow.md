@@ -8,7 +8,7 @@ There are two related workflows:
 
 1. The initial deployment bootstrap, which creates the shared layer-zero
    services and the first Kubernetes cluster.
-2. The durable `create_cluster` and `attach_zone` workflow, which is submitted
+2. The durable `create_cluster` workflow, which is submitted
    to `crane-api` after layer zero is ready and executed by a bootstrap worker.
 
 The second workflow reuses the first deployment's VPC, RDS instance, Crane API,
@@ -129,62 +129,19 @@ cluster, zone, and membership ready, approve access, persist `result.json`, and
 report the private Crane API endpoint. Observability status is reported
 separately from core zone readiness.
 
-## Durable `create_cluster` and `attach_zone`
+## Durable `create_cluster`
 
-After the initial deployment is ready, an administrator submits either operation
-to Crane API:
+After initial deployment, an administrator submits `create_cluster` to
+`POST /v1/bootstrap` with `CRANE_ADMIN_TOKEN`. Read its durable state through
+`GET /v1/bootstrap/{operation-id}` using the same admin authentication.
 
-```http
-POST /v1/bootstrap
-Authorization: Bearer <CRANE_ADMIN_TOKEN>
-```
+The API validates immutable request, cluster and zone IDs plus public
+configuration or opaque references. It rejects credentials and join tokens,
+serializes submissions for a cluster, and commits pending topology with the
+operation. Exact request retries return the original operation; changed intent
+or conflicting active work is rejected.
 
-The operation status is read with:
-
-```http
-GET /v1/bootstrap/{operation-id}
-Authorization: Bearer <CRANE_ADMIN_TOKEN>
-```
-
-The admin bearer token is used for both endpoints. The adapter token is not used
-for bootstrap; adapter credentials are reserved for capacity admission and are
-bound to a specific cluster identity.
-
-### 1. Validate and serialize the request
-
-The API accepts only `create_cluster` and `attach_zone`. Every request requires
-an immutable request ID, cluster ID, zone ID, and JSON parameters containing
-public configuration or opaque references.
-
-Parameters are rejected if they contain password, secret, token, credential, or
-private-key fields. Join tokens and credentials are never supplied by the
-operator.
-
-PostgreSQL advisory locking serializes operations for the same cluster. This
-prevents concurrent requests from racing topology creation or zone attachment.
-
-### 2. Apply idempotency and conflict checks
-
-Replaying the same request ID with the same kind, cluster, zone, and parameters
-returns the existing operation ID. Reusing that request ID with different intent
-returns a replay mismatch.
-
-An operation is rejected if another unfinished operation already targets the
-same cluster/zone combination.
-
-### 3. Seed pending topology and create the operation
-
-`create_cluster` seeds a new initializing cluster, its first initializing zone,
-membership, node pool, and node group. `attach_zone` requires the target cluster
-to already be ready and seeds the new initializing zone, membership, pool, and
-group.
-
-The topology seed and operation rows are committed in one transaction. The
-operation starts in phase `Requested` and its intent is immutable.
-
-### 4. The worker claims the operation
-
-The provider-neutral worker runs as:
+Run the provider-neutral worker:
 
 ```sh
 crane-bootstrap -worker \
@@ -192,118 +149,14 @@ crane-bootstrap -worker \
   -bootstrap-config bootstrap.json
 ```
 
-It verifies schema readiness, selects the configured provider through the
-provider registry, polls PostgreSQL, and claims work with an owner, lease
-expiration, and fence value.
+The worker verifies schema readiness, selects a provider through the registry,
+and claims cluster-creation work with an owner, lease expiration, and fence.
+It renews leases during remote steps. Expired leases can be reclaimed after a
+restart, and stale owners cannot commit durable results.
 
-The worker renews the lease while a remote provider step is running. If it
-crashes, an expired lease can be reclaimed by another worker. A stale worker
-cannot commit a result after losing its fence.
-
-### 5. Load trusted cluster discovery
-
-Before executing a phase, the worker loads the cluster relationship from the
-database. For `attach_zone`, the existing private Kubernetes API endpoint and
-CA hash come from the trusted cluster catalog, not from request parameters.
-
-### 6. Provision protected infrastructure
-
-The AWS infrastructure phase verifies the AWS account, discovers exactly one
-deployment-owned VPC, reuses shared security groups, Secrets Manager, RDS, IAM,
-and instance profiles, and selects the requested availability zone.
-
-For `create_cluster`, it creates or discovers one protected host tagged
-`cluster-<cluster-id>`. For `attach_zone`, it creates or discovers one protected
-host tagged `zone-<zone-id>`.
-
-The host must use the pinned platform AMI, configured instance type, and a
-private address. The host is recorded as protected bootstrap infrastructure,
-not as ordinary worker capacity.
-
-### 7. Initialize a new cluster control plane (`create_cluster` only)
-
-The worker runs kubeadm initialization on the new cluster host if needed,
-discovers the private Kubernetes API endpoint, and computes the CA discovery
-hash. Only the private endpoint, CA hash, host identity, private IP, and image
-ID are returned to the durable controller.
-
-The controller validates the endpoint before persisting it to the cluster
-catalog. Join credentials are not persisted.
-
-### 8. Install networking or join the existing cluster
-
-For `create_cluster`, the worker installs the pinned Cilium chart on the new
-cluster and waits for Cilium and node readiness.
-
-For `attach_zone`, the worker:
-
-1. Finds the trusted existing control-plane host.
-2. Runs `kubeadm token create --ttl 10m --print-join-command` there.
-3. Parses the command instead of executing arbitrary returned shell text.
-4. Requires the endpoint to match the trusted API endpoint.
-5. Requires the token to match kubeadm's expected format.
-6. Requires the CA hash to match the trusted catalog hash.
-7. Runs the validated `kubeadm join` command on the new zone host.
-8. Waits for kubelet and the joined node to become active.
-
-The short-lived join token exists only during this provider step. It is not in
-the API request, operation parameters, or durable discovery result.
-
-### 9. Register zone-specific identity and install Subd
-
-The worker reconciles a Dominator SPIFFE identity:
+Its phase sequence remains:
 
 ```text
-spiffe://<trust-domain>/dominator/<zone-id>
-```
-
-It is bound to the exact `crane-system/dominator-<zone-id>` service account.
-It also registers a Subd identity for the protected host and installs Subd on:
-
-- The new cluster's protected control-plane host for `create_cluster`.
-- The new zone host for `attach_zone`.
-
-### 10. Deploy the zone Dominator
-
-Each zone gets a separate Kubernetes Deployment, service account, SPIFFE
-identity, private Service, and database route.
-
-The Dominator pod is pinned to the protected control-plane node. For an attached
-zone, the new zone host joins the existing cluster, while that zone's Dominator
-runs on the existing cluster's protected control-plane host.
-
-Each Dominator uses a private Kubernetes Service named
-`dominator-<zone-id>`. This avoids host-network port collisions when multiple
-zone Dominators share one control-plane host. The provider records the Service's
-private ClusterIP as the zone route on port `44000`.
-
-### 11. Persist trusted results
-
-After infrastructure, the controller records the protected provider host.
-
-After control-plane initialization, it records private Kubernetes discovery.
-
-After Dominator installation, it records the private Dominator endpoint and
-expected SPIFFE identity in `zone_dominators`.
-
-Database validation rejects public endpoints, wrong ports, non-HTTPS URLs, and
-identity paths that do not exactly match the operation's zone.
-
-### 12. Validate the zone and finalize the handoff
-
-The final validation checks the node, Cilium, Kubernetes readiness, zone-specific
-Dominator rollout, private Service address, and private SPIFFE-mTLS probe.
-
-The operation can transition to `Ready` only after the trusted provider reports a
-successful validation. The final transaction marks the operation succeeded,
-marks the zone and membership ready, approves access, and clears the lease.
-
-## Phase sequences
-
-The durable state machine is:
-
-```text
-create_cluster:
 Requested
   -> InfrastructureProvisioning
   -> ControlPlaneInitializing
@@ -311,31 +164,40 @@ Requested
   -> DominatorInstalling
   -> Validating
   -> Ready
-
-attach_zone:
-Requested
-  -> InfrastructureProvisioning
-  -> NetworkInstalling
-  -> DominatorInstalling
-  -> Validating
-  -> Ready
 ```
 
-`attach_zone` has no control-plane initialization phase because it joins an
-existing cluster. Neither operation is allowed to become ready without the
-validation handoff.
+The AWS executor verifies the pinned account and deployment-owned VPC,
+reconciles a protected host tagged `cluster-<cluster-id>` using the configured
+platform AMI and instance profile, and records it outside ordinary worker
+capacity. It initializes kubeadm, persists private API discovery and the CA
+hash, and installs Cilium. It registers the cluster's zone-specific Dominator
+and Subd identities and installs those services. The Dominator runs on that
+cluster's protected control-plane host behind its private Service. The final
+validation checks the node, networking and authenticated Dominator before the
+transaction activates the cluster and membership.
 
-## Ownership boundaries
+AWS-specific operations, remote scripts, ownership checks and identity setup
+remain in the provider implementation. Shared capacity/bootstrap packages own
+intent, leases, phase ordering and durable handoff. Ordinary worker
+provisioning remains owned by the registered zone Dominator.
 
-- `crane-api` owns authentication, idempotency, topology, durable intent, and
-  status reporting.
-- The generic bootstrap package owns phase ordering, provider-neutral contracts,
-  leases, and fences.
-- The AWS provider owns AWS APIs, SSM execution, kubeadm, Cilium, Kubernetes
-  manifests, SPIRE entry creation, and AWS-specific validation.
-- PostgreSQL owns the durable operation and topology state.
-- Dominator owns zone execution and desired host state.
-- Subd owns host-local enforcement and heartbeat reporting.
+## Removed legacy zone attachment
 
-The generic workflow does not contain AWS branches. AWS is the currently
-registered provider implementation behind the provider-neutral contract.
+`attach_zone` is temporarily unavailable. Admin-authenticated submissions return
+HTTP 503 with `{"code":"attachment_unavailable"}` before provider validation or
+database writes. Historical operation status remains readable, but neither the
+bootstrap worker nor its provider executor can execute an attachment.
+
+The removed path created a protected host in the new zone, joined that host to
+the existing cluster, installed Subd, and then deployed a zone Dominator on the
+existing control-plane host. Removal does not delete any existing cloud
+resources or modify older deployments. Schema fields that allow historical
+attachment status are retained.
+
+[Issue #100](https://github.com/nabutabu/crane-oss/issues/100) defines the planned
+replacement. Crane API will prepare zone networking and an empty group,
+reconcile the zone's Dominator in its hosting cluster, then mark membership
+ready with zero hosts. Requesting a worker will be a separate capacity call,
+executed by that Dominator through the existing worker provisioning and
+readiness contract. The replacement controller, API Kubernetes permissions,
+network reconciliation, and shared SPIRE reference changes are future work.

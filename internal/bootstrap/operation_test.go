@@ -37,7 +37,6 @@ func TestOperationExecutorDispatch(t *testing.T) {
 		want   []string
 	}{
 		{"create_cluster", []api.ZoneBootstrapPhase{api.ZoneInfrastructureProvisioning, api.ZoneControlPlaneInitializing, api.ZoneNetworkInstalling, api.ZoneDominatorInstalling}, []string{"infrastructure", "control-plane", "network", "dominator", "validate"}},
-		{"attach_zone", []api.ZoneBootstrapPhase{api.ZoneInfrastructureProvisioning, api.ZoneNetworkInstalling, api.ZoneDominatorInstalling}, []string{"infrastructure", "network", "dominator", "validate"}},
 	} {
 		fake := &operationSessionFake{}
 		exec := OperationExecutor{Session: fake}
@@ -58,5 +57,22 @@ func TestOperationExecutorDispatch(t *testing.T) {
 				t.Fatalf("%s: %v", tc.kind, fake.calls)
 			}
 		}
+	}
+}
+
+func TestOperationExecutorRejectsAttachmentBeforeSideEffects(t *testing.T) {
+	fake := &operationSessionFake{}
+	executor := OperationExecutor{Session: fake}
+	op := api.Operation{Kind: "attach_zone"}
+	for _, phase := range []api.ZoneBootstrapPhase{api.ZoneInfrastructureProvisioning, api.ZoneNetworkInstalling, api.ZoneDominatorInstalling, api.ZoneValidating} {
+		if _, err := executor.Step(context.Background(), op, phase); err == nil {
+			t.Fatalf("attachment phase %s accepted", phase)
+		}
+	}
+	if _, err := executor.Validated(context.Background(), op); err == nil {
+		t.Fatal("attachment validation accepted")
+	}
+	if len(fake.calls) != 0 {
+		t.Fatalf("unexpected side effects: %v", fake.calls)
 	}
 }

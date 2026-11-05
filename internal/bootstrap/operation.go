@@ -23,6 +23,9 @@ type OperationSession interface {
 type OperationExecutor struct{ Session OperationSession }
 
 func (e OperationExecutor) Step(ctx context.Context, op api.Operation, phase api.ZoneBootstrapPhase) (api.BootstrapStepResult, error) {
+	if op.Kind != "create_cluster" {
+		return api.BootstrapStepResult{}, fmt.Errorf("bootstrap executor only supports create_cluster")
+	}
 	if e.Session == nil {
 		return api.BootstrapStepResult{}, fmt.Errorf("bootstrap operation session is not configured")
 	}
@@ -30,9 +33,6 @@ func (e OperationExecutor) Step(ctx context.Context, op api.Operation, phase api
 	case api.ZoneInfrastructureProvisioning:
 		return e.Session.EnsureInfrastructure(ctx, op)
 	case api.ZoneControlPlaneInitializing:
-		if op.Kind != "create_cluster" {
-			return api.BootstrapStepResult{}, fmt.Errorf("control plane initialization requires create_cluster")
-		}
 		return e.Session.InitializeControlPlane(ctx, op)
 	case api.ZoneNetworkInstalling:
 		return api.BootstrapStepResult{}, e.Session.EnsureNetwork(ctx, op)
@@ -46,6 +46,9 @@ func (e OperationExecutor) Step(ctx context.Context, op api.Operation, phase api
 }
 
 func (e OperationExecutor) Validated(ctx context.Context, op api.Operation) (bool, error) {
+	if op.Kind != "create_cluster" {
+		return false, fmt.Errorf("bootstrap executor only supports create_cluster")
+	}
 	if e.Session == nil {
 		return false, fmt.Errorf("bootstrap operation session is not configured")
 	}

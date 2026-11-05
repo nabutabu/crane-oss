@@ -265,6 +265,10 @@ func (a *API) createBootstrap(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &in) {
 		return
 	}
+	if in.Kind == "attach_zone" {
+		capacityError(w, ErrAttachmentUnavailable)
+		return
+	}
 	if a.ValidateTopology != nil {
 		var intent struct {
 			Zone      api.ZoneInput      `json:"zone"`
@@ -368,6 +372,8 @@ func (a *API) removeNodes(w http.ResponseWriter, r *http.Request) {
 func capacityError(w http.ResponseWriter, err error) {
 	code, httpStatus := "internal", http.StatusInternalServerError
 	switch {
+	case errors.Is(err, ErrAttachmentUnavailable):
+		code, httpStatus = "attachment_unavailable", http.StatusServiceUnavailable
 	case errors.Is(err, sql.ErrNoRows):
 		code, httpStatus = "not_found", http.StatusNotFound
 	case errors.Is(err, ErrForbidden):

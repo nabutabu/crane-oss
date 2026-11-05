@@ -1,11 +1,16 @@
 package capacity
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/nabutabu/crane-oss/pkg/api"
 )
 
 func TestSafeBootstrapParameters(t *testing.T) {
@@ -48,5 +53,35 @@ func TestBootstrapStatusRequiresAdmin(t *testing.T) {
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestAttachmentUnavailableBeforeTopologyOrDatabase(t *testing.T) {
+	store := &Store{}
+	if _, err := store.CreateBootstrap(context.Background(), api.BootstrapRequest{Kind: "attach_zone"}); !errors.Is(err, ErrAttachmentUnavailable) {
+		t.Fatalf("unexpected admission result: %v", err)
+	}
+	if _, err := store.Claim(context.Background(), "zone", "attach_zone", "worker", time.Minute); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("unexpected claim result: %v", err)
+	}
+	route := NewAPI(store, "admin-test", nil)
+	route.ValidateTopology = func(context.Context, api.ZoneInput) error {
+		t.Fatal("unavailable attachment reached provider validation")
+		return nil
+	}
+	request := func(token string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/v1/bootstrap", strings.NewReader(`{"kind":"attach_zone","request_id":"request","cluster_id":"cluster","zone_id":"zone","parameters":{}}`))
+		if token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+		result := httptest.NewRecorder()
+		route.Handler().ServeHTTP(result, req)
+		return result
+	}
+	if got := request(""); got.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated status %d", got.Code)
+	}
+	if got := request("admin-test"); got.Code != http.StatusServiceUnavailable || !strings.Contains(got.Body.String(), `"code":"attachment_unavailable"`) {
+		t.Fatalf("response %d %s", got.Code, got.Body.String())
 	}
 }
