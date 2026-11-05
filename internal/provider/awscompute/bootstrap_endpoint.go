@@ -158,7 +158,7 @@ func registerSpireTarget(ctx context.Context, aws AWSClient, infra Infrastructur
 	return aws.Call(ctx, "elbv2", "register-targets", map[string]any{"TargetGroupArn": infra.SpireTargetGroupARN, "Targets": []map[string]any{{"Id": instance, "Port": 8081}}}, nil)
 }
 
-func validateGoldenImage(ctx context.Context, aws AWSClient, cfg bootstrapConfig, infra Infrastructure, ami string) error {
+func goldenImageSpireAddress(ctx context.Context, aws AWSClient, cfg bootstrapConfig, ami, expectedAddress string) (string, error) {
 	var out struct {
 		Images []struct {
 			State, Architecture string
@@ -166,19 +166,31 @@ func validateGoldenImage(ctx context.Context, aws AWSClient, cfg bootstrapConfig
 		}
 	}
 	if err := aws.Call(ctx, "ec2", "describe-images", map[string]any{"ImageIds": []string{ami}}, &out); err != nil {
-		return err
+		return "", err
 	}
 	if len(out.Images) != 1 || out.Images[0].State != "available" || out.Images[0].Architecture != "x86_64" {
-		return fmt.Errorf("bootstrap requires an available amd64 golden AMI")
+		return "", fmt.Errorf("bootstrap requires an available amd64 golden AMI")
 	}
 	tags := map[string]string{}
 	for _, t := range out.Images[0].Tags {
 		tags[t.Key] = t.Value
 	}
-	for k, v := range map[string]string{"CraneImage": "v2", "SpireServerAddress": infra.SpireAddress, "SpireTrustDomain": cfg.SPIRE.TrustDomain, "SpireBundleParameter": bundleParameter(cfg), "SpireVersion": cfg.SPIRE.Version, "KubernetesVersion": cfg.Platform.KubernetesVersion, "AWSRegion": cfg.AWS.Region} {
+	address := strings.TrimSpace(tags["SpireServerAddress"])
+	if address == "" {
+		return "", fmt.Errorf("golden AMI metadata SpireServerAddress is missing")
+	}
+	if expectedAddress != "" && address != expectedAddress {
+		return "", fmt.Errorf("golden AMI metadata SpireServerAddress does not match deployment; rebuild with the prepared endpoint/configuration")
+	}
+	for k, v := range map[string]string{"CraneImage": "v2", "SpireTrustDomain": cfg.SPIRE.TrustDomain, "SpireBundleParameter": bundleParameter(cfg), "SpireVersion": cfg.SPIRE.Version, "KubernetesVersion": cfg.Platform.KubernetesVersion, "AWSRegion": cfg.AWS.Region} {
 		if strings.TrimSpace(tags[k]) != v {
-			return fmt.Errorf("golden AMI metadata %s does not match deployment; rebuild with the prepared endpoint/configuration", k)
+			return "", fmt.Errorf("golden AMI metadata %s does not match deployment; rebuild with the prepared endpoint/configuration", k)
 		}
 	}
-	return nil
+	return address, nil
+}
+
+func validateGoldenImage(ctx context.Context, aws AWSClient, cfg bootstrapConfig, infra Infrastructure, ami string) error {
+	_, err := goldenImageSpireAddress(ctx, aws, cfg, ami, infra.SpireAddress)
+	return err
 }

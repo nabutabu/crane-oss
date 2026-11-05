@@ -115,6 +115,57 @@ func TestGoldenImageMustMatchEndpointAndIdentity(t *testing.T) {
 	}
 }
 
+func TestAttachedZoneRecoversSpireEndpointFromPinnedImage(t *testing.T) {
+	cfg, infra := testConfig(), testInfra()
+	tags := []tag{
+		{"CraneImage", "v2"},
+		{"AWSRegion", cfg.AWS.Region},
+		{"SpireServerAddress", infra.SpireAddress},
+		{"SpireTrustDomain", cfg.SPIRE.TrustDomain},
+		{"SpireBundleParameter", bundleParameter(cfg)},
+		{"SpireVersion", cfg.SPIRE.Version},
+		{"KubernetesVersion", cfg.Platform.KubernetesVersion},
+	}
+	for _, tc := range []struct {
+		name, key, value string
+		wantError        bool
+	}{
+		{name: "valid"},
+		{name: "missing endpoint", key: "SpireServerAddress", value: "", wantError: true},
+		{name: "other deployment bundle", key: "SpireBundleParameter", value: "/crane/other/spire-bundle", wantError: true},
+		{name: "other trust domain", key: "SpireTrustDomain", value: "other.internal", wantError: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			imageTags := append([]tag(nil), tags...)
+			for i := range imageTags {
+				if imageTags[i].Key == tc.key {
+					imageTags[i].Value = tc.value
+				}
+			}
+			aws := &fakeAWS{call: func(service, operation string, input any) (any, error) {
+				if service != "ec2" || operation != "describe-images" {
+					t.Fatalf("unexpected AWS call %s:%s", service, operation)
+				}
+				return map[string]any{"Images": []any{map[string]any{"State": "available", "Architecture": "x86_64", "Tags": imageTags}}}, nil
+			}}
+			address, err := goldenImageSpireAddress(context.Background(), aws, cfg, "ami-pinned", "")
+			if tc.wantError {
+				if err == nil {
+					t.Fatal("accepted incompatible image metadata")
+				}
+				return
+			}
+			if err != nil || address != infra.SpireAddress {
+				t.Fatalf("address %q, error %v", address, err)
+			}
+			script, err := renderTemplate("subd.sh.tmpl", scriptData{SpireAddress: address})
+			if err != nil || !strings.Contains(script, `server_address = "`+address+`"`) {
+				t.Fatalf("Subd script lost pinned SPIRE address: %v", err)
+			}
+		})
+	}
+}
+
 func TestEndpointNamesAreBoundedAndDistinct(t *testing.T) {
 	a, b := endpointName(strings.Repeat("a", 29)+"b"), endpointName(strings.Repeat("a", 29)+"c")
 	if a == b || len(a) > 32 || len(b) > 32 {

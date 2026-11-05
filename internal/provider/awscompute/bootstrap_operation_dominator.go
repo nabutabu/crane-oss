@@ -61,6 +61,12 @@ fi
 	if err != nil {
 		return api.BootstrapStepResult{}, err
 	}
+	// The attached host's AMI already carries the deployment's stable private
+	// SPIRE endpoint. The network reconciliation above does not populate it.
+	infra.SpireAddress, err = goldenImageSpireAddress(ctx, s.client, s.cfg, s.cfg.Platform.AMIID, "")
+	if err != nil {
+		return api.BootstrapStepResult{}, err
+	}
 	agent := control
 	if op.Kind == "attach_zone" {
 		agent, err = s.operationHost(ctx, "zone-"+zone.ID)
