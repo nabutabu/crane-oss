@@ -38,7 +38,7 @@ func run(parent context.Context, args []string, out io.Writer) error {
 	dryRun := flags.Bool("dry-run", false, "validate local configuration and print phases without provider calls")
 	jsonOutput := flags.Bool("json", false, "emit JSON events only on stdout")
 	pending := flags.Bool("pending", false, "seed first zone in initializing state until validated")
-	worker := flags.Bool("worker", false, "run the durable CreateCluster/AttachZone worker")
+	worker := flags.Bool("worker", false, "run the durable CreateCluster worker (zone attachment is unavailable)")
 	workerInterval := flags.Duration("worker-interval", 5*time.Second, "poll interval for the durable bootstrap worker")
 	timeout := flags.Duration("operation-timeout", 90*time.Minute, "maximum duration of this invocation")
 	if err := flags.Parse(args); err != nil {

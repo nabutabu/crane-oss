@@ -14,7 +14,7 @@ func TestSetDominatorRouteRejectsPublicOrWrongIdentityBeforeDatabase(t *testing.
 		{DominatorEndpoint: "https://8.8.8.8:44000", DominatorIdentity: "spiffe://crane.internal/dominator/zone-b"},
 		{DominatorEndpoint: "https://10.80.1.20:44000", DominatorIdentity: "spiffe://crane.internal/dominator/zone-c"},
 	} {
-		if err := store.SetDominatorRoute(context.Background(), api.Operation{ID: "op", ZoneID: "zone-b"}, result); err != ErrInvalid {
+		if err := store.SetDominatorRoute(context.Background(), api.Operation{ID: "op", Kind: "create_cluster", ZoneID: "zone-b"}, result); err != ErrInvalid {
 			t.Fatalf("expected invalid route, got %v", err)
 		}
 	}

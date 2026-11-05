@@ -6,13 +6,24 @@ bootstrap and capacity workflows to prepare and scale the deployment. Keep
 credentials in your existing private configuration; do not paste tokens,
 kubeconfigs or provider responses into test reports.
 
+## Attachment prerequisite is currently unavailable
+
+The host-creating `attach_zone` workflow has been removed. Submissions return
+HTTP 503 with code `attachment_unavailable`; the two-zone AWS preparation step
+below cannot currently be completed through the supported bootstrap workflow.
+[Issue #100](https://github.com/nabutabu/crane-oss/issues/100) tracks its
+replacement. The procedure below describes the worker acceptance to perform
+once attachment is restored. Existing two-zone controller tests and worker
+security/readiness checks remain in place; they do not establish a live AWS
+acceptance pass.
+
 ## Prepare one cluster and two zones
 
 1. Build prepared images and use matching Crane/Subd releases containing the
    worker contract. Initialize a fresh Crane schema with `crane-bootstrap`.
    Follow [AWS bootstrap](aws-bootstrap.md) for the deployment prerequisites.
 2. Create the first cluster and attach a second AZ to that same cluster through
-   the existing bootstrap workflow. Both memberships must be ready/approved,
+   the replacement attachment workflow after issue #100 lands. Both memberships must be ready/approved,
    both zones available, and each zone must have its registered Dominator.
 3. Confirm every Dominator has the same `CRANE_CLUSTER_ID` and can read the
    immutable `kube-system/crane-cluster-identity` ConfigMap. The marker must

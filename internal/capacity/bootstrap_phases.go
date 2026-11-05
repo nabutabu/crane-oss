@@ -3,15 +3,12 @@ package capacity
 import "github.com/nabutabu/crane-oss/pkg/api"
 
 // bootstrapNext is the durable phase graph for each layer-zero operation.
-// A zone attachment joins an existing cluster, so it has no cluster or SPIRE
-// initialization phases.
+// Zone attachment is disabled until the API-managed replacement is implemented.
 func bootstrapNext(kind string, phase api.ZoneBootstrapPhase) (api.ZoneBootstrapPhase, bool) {
 	var sequence []api.ZoneBootstrapPhase
 	switch kind {
 	case "create_cluster":
 		sequence = []api.ZoneBootstrapPhase{api.ZoneRequested, api.ZoneInfrastructureProvisioning, api.ZoneControlPlaneInitializing, api.ZoneNetworkInstalling, api.ZoneDominatorInstalling, api.ZoneValidating, api.ZoneReady}
-	case "attach_zone":
-		sequence = []api.ZoneBootstrapPhase{api.ZoneRequested, api.ZoneInfrastructureProvisioning, api.ZoneNetworkInstalling, api.ZoneDominatorInstalling, api.ZoneValidating, api.ZoneReady}
 	default:
 		return "", false
 	}

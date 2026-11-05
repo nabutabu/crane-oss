@@ -17,15 +17,16 @@ import (
 )
 
 var (
-	ErrInvalid        = errors.New("invalid capacity request")
-	ErrConflict       = errors.New("target revision conflict")
-	ErrReplayMismatch = errors.New("request ID reused with different parameters")
-	ErrForbidden      = errors.New("node group does not belong to authenticated cluster")
-	ErrInactive       = errors.New("node group, pool, cluster or zone inactive")
-	ErrLimit          = errors.New("capacity limit exceeded")
-	ErrTemplate       = errors.New("template revision mismatch")
-	ErrFulfilled      = errors.New("target decrease would remove registered capacity")
-	ErrFenced         = errors.New("operation lease expired or controller fenced")
+	ErrInvalid               = errors.New("invalid capacity request")
+	ErrAttachmentUnavailable = errors.New("zone attachment is unavailable pending its replacement")
+	ErrConflict              = errors.New("target revision conflict")
+	ErrReplayMismatch        = errors.New("request ID reused with different parameters")
+	ErrForbidden             = errors.New("node group does not belong to authenticated cluster")
+	ErrInactive              = errors.New("node group, pool, cluster or zone inactive")
+	ErrLimit                 = errors.New("capacity limit exceeded")
+	ErrTemplate              = errors.New("template revision mismatch")
+	ErrFulfilled             = errors.New("target decrease would remove registered capacity")
+	ErrFenced                = errors.New("operation lease expired or controller fenced")
 )
 
 type Store struct{ DB *sql.DB }
@@ -373,7 +374,7 @@ func (s *Store) Target(ctx context.Context, clusterID, groupID string) (api.Capa
 // Claim is reserved for provider-neutral zone bootstrap, before a zone
 // Dominator exists. Cluster work must use ClaimDominator.
 func (s *Store) Claim(ctx context.Context, zoneID, kind, owner string, duration time.Duration) (api.Operation, error) {
-	if kind != "create_cluster" && kind != "attach_zone" {
+	if kind != "create_cluster" {
 		return api.Operation{}, ErrForbidden
 	}
 	return s.claim(ctx, zoneID, kind, owner, duration, false)

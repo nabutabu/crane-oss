@@ -12,8 +12,8 @@ import (
 func TestOperationTargetBindsToPinnedDeployment(t *testing.T) {
 	s := &operationSession{cfg: bootstrapConfig{Name: "deployment", AWS: AWSConfig{Region: "us-west-2", AccountID: "account"}}}
 	zone := api.ZoneInput{ID: "zone-b", Provider: "aws", AccountID: "account", Region: "us-west-2", ProviderZoneID: "us-west-2b"}
-	parameters, _ := json.Marshal(map[string]any{"zone": zone, "membership": api.ClusterZoneInput{ClusterID: "cluster", ZoneID: zone.ID}})
-	op := api.Operation{Kind: "attach_zone", ZoneID: zone.ID, Parameters: parameters}
+	parameters, _ := json.Marshal(map[string]any{"first_zone": api.FirstZoneInput{Zone: zone, Cluster: api.ClusterInput{ID: "cluster"}}})
+	op := api.Operation{Kind: "create_cluster", ZoneID: zone.ID, Parameters: parameters}
 	if _, _, err := s.target(op); err != nil {
 		t.Fatal(err)
 	}
@@ -28,7 +28,7 @@ func TestOperationTargetBindsToPinnedDeployment(t *testing.T) {
 	} {
 		z := zone
 		tc.change(&z)
-		p, _ := json.Marshal(map[string]any{"zone": z, "membership": api.ClusterZoneInput{ClusterID: "cluster", ZoneID: z.ID}})
+		p, _ := json.Marshal(map[string]any{"first_zone": api.FirstZoneInput{Zone: z, Cluster: api.ClusterInput{ID: "cluster"}}})
 		op.Parameters = p
 		if _, _, err := s.target(op); err == nil {
 			t.Fatalf("accepted %s mismatch", tc.name)
@@ -124,11 +124,32 @@ func TestOperationDoesNotCreateAnotherDeploymentVPC(t *testing.T) {
 	}}
 	s.client = client
 	zone := api.ZoneInput{ID: "zone-b", Provider: "aws", AccountID: "account", Region: "us-west-2", ProviderZoneID: "us-west-2b"}
-	parameters, _ := json.Marshal(map[string]any{"zone": zone, "membership": api.ClusterZoneInput{ClusterID: "cluster", ZoneID: zone.ID}})
-	if _, err := s.EnsureInfrastructure(context.Background(), api.Operation{Kind: "attach_zone", ZoneID: zone.ID, Parameters: parameters}); err == nil {
+	parameters, _ := json.Marshal(map[string]any{"first_zone": api.FirstZoneInput{Zone: zone, Cluster: api.ClusterInput{ID: "cluster"}}})
+	if _, err := s.EnsureInfrastructure(context.Background(), api.Operation{Kind: "create_cluster", ZoneID: zone.ID, Parameters: parameters}); err == nil {
 		t.Fatal("missing deployment VPC accepted")
 	}
 	if len(client.calls) != 2 {
 		t.Fatalf("unexpected calls %v", client.calls)
+	}
+}
+
+func TestAttachmentProviderStepsRejectBeforeAWS(t *testing.T) {
+	session := &operationSession{}
+	// No client: any attempt to use AWS would panic instead of passing.
+	op := api.Operation{Kind: "attach_zone"}
+	if _, err := session.EnsureInfrastructure(context.Background(), op); err == nil {
+		t.Fatal("attachment infrastructure accepted")
+	}
+	if _, err := session.InitializeControlPlane(context.Background(), op); err == nil {
+		t.Fatal("attachment control plane accepted")
+	}
+	if err := session.EnsureNetwork(context.Background(), op); err == nil {
+		t.Fatal("attachment network accepted")
+	}
+	if _, err := session.EnsureDominator(context.Background(), op); err == nil {
+		t.Fatal("attachment Dominator accepted")
+	}
+	if _, err := session.Validate(context.Background(), op); err == nil {
+		t.Fatal("attachment validation accepted")
 	}
 }

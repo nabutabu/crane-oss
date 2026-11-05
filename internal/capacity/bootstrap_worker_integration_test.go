@@ -2,6 +2,7 @@ package capacity
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"testing"
@@ -21,6 +22,8 @@ func (f *bootstrapWorkerFake) Step(_ context.Context, op api.Operation, phase ap
 	switch phase {
 	case api.ZoneInfrastructureProvisioning:
 		return api.BootstrapStepResult{ProviderHostID: "i-0123456789abcdef0", HostPrivateIP: "10.80.1.20", ImageID: "ami-pinned"}, nil
+	case api.ZoneControlPlaneInitializing:
+		return api.BootstrapStepResult{APIServerEndpoint: "https://10.80.1.20:6443", CACertHash: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}, nil
 	case api.ZoneDominatorInstalling:
 		return api.BootstrapStepResult{DominatorEndpoint: "https://10.96.0.42:44000", DominatorIdentity: "spiffe://crane.internal/dominator/worker-zone"}, nil
 	default:
@@ -60,24 +63,26 @@ func TestPostgresBootstrapWorkerAdvancesAndRestarts(t *testing.T) {
 	if err := group.NormalizeID(); err != nil {
 		t.Fatal(err)
 	}
-	params, err := json.Marshal(map[string]any{"zone": zone, "membership": api.ClusterZoneInput{ClusterID: "cluster", ZoneID: zone.ID}, "pool": api.NodePoolInput{ID: "pool", Limits: api.Resources{VCPU: 32, MemoryMiB: 65536, Nodes: 8}}, "group": group})
+	group.ClusterID, group.NodePoolID = "worker-cluster", "worker-pool"
+	first := api.FirstZoneInput{Zone: zone, Cluster: api.ClusterInput{ID: "worker-cluster", KubeadmVersion: "v1.35.0", KubeletVersion: "v1.35.0", ContainerRuntime: "containerd", CNI: "cilium"}, Membership: api.ClusterZoneInput{ClusterID: "worker-cluster", ZoneID: zone.ID}, Pool: api.NodePoolInput{ID: "worker-pool", Limits: api.Resources{VCPU: 32, MemoryMiB: 65536, Nodes: 8}}, Group: group}
+	params, err := json.Marshal(map[string]any{"first_zone": first})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.CreateBootstrap(ctx, api.BootstrapRequest{Kind: "attach_zone", RequestID: "worker-request", ClusterID: "cluster", ZoneID: zone.ID, Parameters: params}); err != nil {
+	if _, err := s.CreateBootstrap(ctx, api.BootstrapRequest{Kind: "create_cluster", RequestID: "worker-request", ClusterID: "worker-cluster", ZoneID: zone.ID, Parameters: params}); err != nil {
 		t.Fatal(err)
 	}
 	fake := &bootstrapWorkerFake{}
-	for range 5 {
+	for range 6 {
 		controller := BootstrapController{Store: s, Executor: fake, Lease: time.Minute}
 		if err := controller.RunOnce(ctx, zone.ID, "worker"); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if len(fake.phases) != 4 || fake.phases[0] != api.ZoneInfrastructureProvisioning || fake.phases[3] != api.ZoneValidating {
+	if len(fake.phases) != 5 || fake.phases[0] != api.ZoneInfrastructureProvisioning || fake.phases[4] != api.ZoneValidating {
 		t.Fatalf("phases %v", fake.phases)
 	}
-	if fake.target.ClusterID != "cluster" || fake.target.APIServerEndpoint != "https://10.80.0.10:6443" {
+	if fake.target.ClusterID != "worker-cluster" || fake.target.APIServerEndpoint != "https://10.80.1.20:6443" {
 		t.Fatalf("untrusted cluster target: %s %s", fake.target.ClusterID, fake.target.APIServerEndpoint)
 	}
 	var endpoint, identity string
@@ -98,7 +103,7 @@ func TestPostgresBootstrapWorkerRetriesFailedStep(t *testing.T) {
 	if _, err := db.ExecContext(ctx, `UPDATE clusters SET api_server_endpoint='https://10.80.0.10:6443',ca_cert_hash='sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' WHERE id='cluster'`); err != nil {
 		t.Fatal(err)
 	}
-	_, err := db.ExecContext(ctx, `INSERT INTO operations(id,kind,zone_id,provider_token,parameters) VALUES('retry-op','attach_zone','zone','stable-token','{}');
+	_, err := db.ExecContext(ctx, `INSERT INTO operations(id,kind,zone_id,provider_token,parameters) VALUES('retry-op','create_cluster','zone','stable-token','{}');
  INSERT INTO zone_bootstrap_operations(operation_id,zone_id,cluster_id,request_id) VALUES('retry-op','zone','cluster','retry-request')`)
 	if err != nil {
 		t.Fatal(err)
@@ -128,5 +133,36 @@ func TestPostgresBootstrapWorkerRetriesFailedStep(t *testing.T) {
 	}
 	if fence != 2 {
 		t.Fatalf("retry fence=%d", fence)
+	}
+}
+
+// Historical attachment operations must remain untouched, even if already queued.
+func TestPostgresBootstrapWorkerIgnoresLegacyAttachments(t *testing.T) {
+	db := database(t)
+	ctx := context.Background()
+	_, err := db.ExecContext(ctx, `INSERT INTO operations(id,kind,zone_id,provider_token,parameters) VALUES('legacy-attach','attach_zone','zone','legacy-token','{}');
+ INSERT INTO zone_bootstrap_operations(operation_id,zone_id,cluster_id,request_id) VALUES('legacy-attach','zone','cluster','legacy-request')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := NewStore(db)
+	if _, err := store.NextBootstrapZone(ctx); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("legacy attachment selected: %v", err)
+	}
+	fake := &bootstrapWorkerFake{}
+	controller := BootstrapController{Store: store, Executor: fake}
+	if err := controller.RunOnce(ctx, "zone", "worker"); err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.phases) != 0 {
+		t.Fatal("legacy attachment executed")
+	}
+	var state, phase string
+	var fence int64
+	if err := db.QueryRowContext(ctx, `SELECT o.state,b.phase,o.fence FROM operations o JOIN zone_bootstrap_operations b ON b.operation_id=o.id WHERE o.id='legacy-attach'`).Scan(&state, &phase, &fence); err != nil {
+		t.Fatal(err)
+	}
+	if state != "pending" || phase != "Requested" || fence != 0 {
+		t.Fatalf("legacy operation changed: %s %s %d", state, phase, fence)
 	}
 }

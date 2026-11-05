@@ -12,6 +12,9 @@ import (
 // SetDominatorRoute records the private, zone-scoped route only after the
 // provider has successfully installed the matching workload identity.
 func (s *Store) SetDominatorRoute(ctx context.Context, op api.Operation, result api.BootstrapStepResult) error {
+	if op.Kind != "create_cluster" {
+		return ErrForbidden
+	}
 	u, err := url.Parse(result.DominatorEndpoint)
 	if err != nil || u.Scheme != "https" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || u.Port() != "44000" {
 		return ErrInvalid
@@ -31,7 +34,7 @@ func (s *Store) SetDominatorRoute(ctx context.Context, op api.Operation, result 
 	}
 	r, err := s.DB.ExecContext(ctx, `INSERT INTO zone_dominators(zone_id,endpoint,identity)
 SELECT b.zone_id,$4,$5 FROM zone_bootstrap_operations b JOIN operations o ON o.id=b.operation_id
-WHERE o.id=$1 AND o.kind IN ('create_cluster','attach_zone') AND o.lease_owner=$2 AND o.fence=$3
+WHERE o.id=$1 AND o.kind='create_cluster' AND o.lease_owner=$2 AND o.fence=$3
 AND o.lease_until>clock_timestamp() AND o.state IN ('leased','launching') AND b.phase='NetworkInstalling'
 ON CONFLICT(zone_id) DO UPDATE SET endpoint=EXCLUDED.endpoint,identity=EXCLUDED.identity
 WHERE zone_dominators.endpoint=EXCLUDED.endpoint AND zone_dominators.identity=EXCLUDED.identity`, op.ID, op.LeaseOwner, op.Fence, result.DominatorEndpoint, result.DominatorIdentity)

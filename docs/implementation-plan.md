@@ -2,6 +2,13 @@
 
 **Status:** Draft | **Language:** Go | **Target:** AWS EC2 (first milestone)
 
+Current attachment status: the host-creating `attach_zone` implementation has
+been removed and submissions return HTTP 503 (`attachment_unavailable`).
+[Issue #100](https://github.com/nabutabu/crane-oss/issues/100) specifies the
+API-managed, zero-host replacement. Attachment statements elsewhere in this
+design document are planned behavior, not currently executable workflows.
+
+
 ## 1. Executive summary
 
 Crane is the infrastructure control plane underneath Kubernetes—not a second developer-facing platform. Developers deploy workloads using standard Kubernetes resources. The Kubernetes scheduler and Cluster Autoscaler determine when additional capacity is needed. For node autoscaling, Crane API validates the autoscaler-selected, cluster-scoped node group and atomically reserves credits; it never redirects a request to another cluster or zone. A layer-zero Zone Bootstrap Controller creates new zone clusters, Dominator executes zone-scoped host lifecycle operations, Subd enforces host-local state, and the Host Catalog provides durable cross-zone inventory. Observability is treated as a horizontal requirement.
