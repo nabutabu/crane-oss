@@ -21,7 +21,7 @@ func (f *bootstrapWorkerFake) Step(_ context.Context, op api.Operation, phase ap
 	f.target = op
 	switch phase {
 	case api.ZoneInfrastructureProvisioning:
-		return api.BootstrapStepResult{ProviderHostID: "i-0123456789abcdef0", HostPrivateIP: "10.80.1.20", ImageID: "ami-pinned"}, nil
+		return api.BootstrapStepResult{DeploymentID: "shared-deployment", ProviderHostID: "i-0123456789abcdef0", HostPrivateIP: "10.80.1.20", ImageID: "ami-pinned"}, nil
 	case api.ZoneControlPlaneInitializing:
 		return api.BootstrapStepResult{APIServerEndpoint: "https://10.80.1.20:6443", CACertHash: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}, nil
 	case api.ZoneDominatorInstalling:
@@ -55,6 +55,13 @@ func TestPostgresBootstrapWorkerAdvancesAndRestarts(t *testing.T) {
 	db := database(t)
 	s := NewStore(db)
 	ctx := context.Background()
+	if _, err := db.ExecContext(ctx, `INSERT INTO host(id,zone,role,state,provider,providerid,protected) VALUES
+ ('shared-spire','zone','spire','READY','aws','i-shared-spire',true),
+ ('shared-platform','zone','platform','READY','aws','i-shared-platform',true);
+ INSERT INTO deployment_runtime(cluster_id,deployment_id,provider,account_id,region,vpc_id,spire_host_id,platform_host_id,dominator_image,runtime_secret_name,trust_domain,pod_cidr)
+ VALUES('cluster','shared-deployment','aws','account','us-west-2','vpc-owned','shared-spire','shared-platform','dominator:pin','crane-runtime','crane.internal','10.244.0.0/16')`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := db.ExecContext(ctx, `UPDATE clusters SET api_server_endpoint='https://10.80.0.10:6443',ca_cert_hash='sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' WHERE id='cluster'`); err != nil {
 		t.Fatal(err)
 	}
@@ -85,12 +92,33 @@ func TestPostgresBootstrapWorkerAdvancesAndRestarts(t *testing.T) {
 	if fake.target.ClusterID != "worker-cluster" || fake.target.APIServerEndpoint != "https://10.80.1.20:6443" {
 		t.Fatalf("untrusted cluster target: %s %s", fake.target.ClusterID, fake.target.APIServerEndpoint)
 	}
+	runtime, err := s.LoadDeploymentRuntime(ctx, "worker-cluster")
+	if err != nil || runtime.SpireHostID != "shared-spire" || runtime.PlatformHostID != "bootstrap/"+fake.target.ID {
+		t.Fatalf("additional cluster runtime %+v: %v", runtime, err)
+	}
+	hosts, err := s.LoadDeploymentHosts(ctx, runtime)
+	if err != nil || hosts.SpireInstanceID != "i-shared-spire" || hosts.PlatformInstanceID != "i-0123456789abcdef0" {
+		t.Fatalf("additional cluster protected hosts %+v: %v", hosts, err)
+	}
 	var endpoint, identity string
 	if err := db.QueryRowContext(ctx, `SELECT endpoint,identity FROM zone_dominators WHERE zone_id=$1`, zone.ID).Scan(&endpoint, &identity); err != nil {
 		t.Fatal(err)
 	}
 	if endpoint != "https://10.96.0.42:44000" || identity != "spiffe://crane.internal/dominator/worker-zone" {
 		t.Fatalf("unexpected Dominator route %s %s", endpoint, identity)
+	}
+	if _, err := s.SetTarget(ctx, api.CapacityRequest{ClusterID: "worker-cluster", NodeGroupID: group.ID, RequestID: "worker-capacity", ExpectedTargetRevision: 0, DesiredTarget: 1, TemplateRevision: group.TemplateRevision}); err != nil {
+		t.Fatal(err)
+	}
+	provision, err := s.ClaimDominator(ctx, zone.ID, "provision", identity, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.LoadProvisioningTarget(ctx, &provision); err != nil {
+		t.Fatal(err)
+	}
+	if provision.ClusterID != "worker-cluster" || provision.SpireInstanceID != "i-shared-spire" {
+		t.Fatalf("additional cluster provisioning target %+v", provision)
 	}
 	if _, err := s.NextBootstrapZone(ctx); err == nil {
 		t.Fatal("completed operation remains runnable")

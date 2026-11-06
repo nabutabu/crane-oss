@@ -8,8 +8,9 @@ import (
 	"github.com/nabutabu/crane-oss/pkg/api"
 )
 
-// DeploymentRuntime holds non-secret, deployment-wide references trusted by
-// attachment and worker provisioning. It is never derived from an attach request.
+// DeploymentRuntime holds non-secret deployment references trusted by attachment
+// and worker provisioning, including the control-plane host for this cluster.
+// It is never derived from an attach request.
 type DeploymentRuntime struct {
 	ClusterID, DeploymentID, Provider, AccountID, Region, VPCID    string
 	SpireHostID, PlatformHostID, DominatorImage, RuntimeSecretName string
@@ -62,4 +63,40 @@ func (s *Store) LoadDeploymentRuntime(ctx context.Context, clusterID string) (De
 		return out, ErrInactive
 	}
 	return out, err
+}
+
+// CopyDeploymentRuntime binds an additional cluster to the deployment's shared
+// AWS/SPIRE authority and its own protected Kubernetes control-plane host.
+// The fenced bootstrap step may safely retry after a lost response.
+func (s *Store) CopyDeploymentRuntime(ctx context.Context, op api.Operation, deploymentID string) error {
+	if op.Kind != "create_cluster" || op.ID == "" || op.ClusterID == "" || deploymentID == "" {
+		return ErrInvalid
+	}
+	r, err := s.DB.ExecContext(ctx, `INSERT INTO deployment_runtime
+ (cluster_id,deployment_id,provider,account_id,region,vpc_id,spire_host_id,platform_host_id,dominator_image,runtime_secret_name,trust_domain,pod_cidr)
+ SELECT b.cluster_id,d.deployment_id,d.provider,d.account_id,d.region,d.vpc_id,
+ d.spire_host_id,h.id,d.dominator_image,d.runtime_secret_name,d.trust_domain,d.pod_cidr
+ FROM zone_bootstrap_operations b JOIN operations o ON o.id=b.operation_id
+ JOIN deployment_runtime d ON d.deployment_id=$4 AND d.cluster_id<>b.cluster_id
+ JOIN clusters source_cluster ON source_cluster.id=d.cluster_id AND source_cluster.lifecycle_state='ready'
+ JOIN host h ON h.id='bootstrap/'||o.id AND h.zone=b.zone_id AND h.role='cluster-control-plane'
+   AND h.provider=d.provider AND h.protected AND h.providerid IS NOT NULL AND h.providerid<>''
+ JOIN zones z ON z.id=b.zone_id AND z.provider=d.provider AND z.account_id=d.account_id AND z.region=d.region
+ WHERE o.id=$1 AND o.kind='create_cluster' AND o.lease_owner=$2 AND o.fence=$3
+ AND o.lease_until>clock_timestamp() AND o.state IN ('leased','launching') AND b.phase='Requested'
+ ORDER BY d.cluster_id LIMIT 1
+ ON CONFLICT(cluster_id) DO UPDATE SET cluster_id=EXCLUDED.cluster_id
+ WHERE deployment_runtime.deployment_id=EXCLUDED.deployment_id
+ AND deployment_runtime.provider=EXCLUDED.provider
+ AND deployment_runtime.account_id=EXCLUDED.account_id
+ AND deployment_runtime.region=EXCLUDED.region
+ AND deployment_runtime.vpc_id=EXCLUDED.vpc_id
+ AND deployment_runtime.spire_host_id=EXCLUDED.spire_host_id
+ AND deployment_runtime.platform_host_id=EXCLUDED.platform_host_id
+ AND deployment_runtime.dominator_image=EXCLUDED.dominator_image
+ AND deployment_runtime.runtime_secret_name=EXCLUDED.runtime_secret_name
+ AND deployment_runtime.trust_domain=EXCLUDED.trust_domain
+ AND deployment_runtime.pod_cidr=EXCLUDED.pod_cidr`,
+		op.ID, op.LeaseOwner, op.Fence, deploymentID)
+	return fencedResult(r, err)
 }

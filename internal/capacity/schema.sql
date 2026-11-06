@@ -102,7 +102,7 @@ CREATE TABLE IF NOT EXISTS zone_dominators (
 -- non-secret runtime references, populated by first-zone bootstrap.
 CREATE TABLE IF NOT EXISTS deployment_runtime (
  cluster_id text PRIMARY KEY REFERENCES clusters(id),
- deployment_id text NOT NULL UNIQUE,
+ deployment_id text NOT NULL,
  provider text NOT NULL,
  account_id text NOT NULL,
  region text NOT NULL,
@@ -116,6 +116,10 @@ CREATE TABLE IF NOT EXISTS deployment_runtime (
  CHECK(deployment_id<>'' AND account_id<>'' AND region<>'' AND vpc_id<>''
    AND dominator_image<>'' AND runtime_secret_name<>'' AND trust_domain<>'' AND pod_cidr<>'')
 );
+-- A deployment may host several Kubernetes clusters with different protected
+-- control-plane hosts while sharing one VPC and SPIRE authority.
+ALTER TABLE deployment_runtime DROP CONSTRAINT IF EXISTS deployment_runtime_deployment_id_key;
+CREATE INDEX IF NOT EXISTS deployment_runtime_deployment_id ON deployment_runtime(deployment_id);
 -- Secret values are never stored here. Explicit retries resubmit their payload.
 CREATE TABLE IF NOT EXISTS host_state_requests (
  host_id text NOT NULL REFERENCES host(id), request_id text NOT NULL, fingerprint text NOT NULL,
