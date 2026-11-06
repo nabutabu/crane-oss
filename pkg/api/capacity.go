@@ -236,6 +236,7 @@ type BootstrapRequest struct {
 // AttachmentIntent is the immutable operator request for adding an empty zone.
 // ProviderConfig contains non-secret placement data interpreted by the provider.
 type AttachmentIntent struct {
+	SourceGroupID  string           `json:"source_group_id"`
 	Zone           ZoneInput        `json:"zone"`
 	Membership     ClusterZoneInput `json:"membership"`
 	Pool           NodePoolInput    `json:"pool"`
@@ -247,13 +248,16 @@ type AttachmentIntent struct {
 // returned by a provider step. It must never carry join credentials or private
 // key material.
 type BootstrapStepResult struct {
-	APIServerEndpoint string `json:"api_server_endpoint,omitempty"`
-	CACertHash        string `json:"ca_cert_hash,omitempty"`
-	ProviderHostID    string `json:"provider_host_id,omitempty"`
-	HostPrivateIP     string `json:"host_private_ip,omitempty"`
-	ImageID           string `json:"image_id,omitempty"`
-	DominatorEndpoint string `json:"dominator_endpoint,omitempty"`
-	DominatorIdentity string `json:"dominator_identity,omitempty"`
+	APIServerEndpoint string             `json:"api_server_endpoint,omitempty"`
+	CACertHash        string             `json:"ca_cert_hash,omitempty"`
+	ProviderHostID    string             `json:"provider_host_id,omitempty"`
+	HostPrivateIP     string             `json:"host_private_ip,omitempty"`
+	ImageID           string             `json:"image_id,omitempty"`
+	DominatorEndpoint string             `json:"dominator_endpoint,omitempty"`
+	DominatorIdentity string             `json:"dominator_identity,omitempty"`
+	LaunchParameters  json.RawMessage    `json:"launch_parameters,omitempty"`
+	TemplateRevision  string             `json:"template_revision,omitempty"`
+	Scheduling        SchedulingTemplate `json:"scheduling,omitempty"`
 }
 
 type NodeRemovalOperation struct {

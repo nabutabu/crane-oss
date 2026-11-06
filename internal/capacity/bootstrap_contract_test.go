@@ -63,7 +63,7 @@ func TestAttachmentUnavailableBeforeTopologyOrDatabase(t *testing.T) {
 	if _, err := store.CreateBootstrap(context.Background(), api.BootstrapRequest{Kind: "attach_zone"}); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("unexpected admission result: %v", err)
 	}
-	if _, err := store.Claim(context.Background(), "zone", "attach_zone", "worker", time.Minute); !errors.Is(err, ErrForbidden) {
+	if _, err := store.Claim(context.Background(), "zone", "unsupported", "worker", time.Minute); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("unexpected claim result: %v", err)
 	}
 	route := NewAPI(store, "admin-test", nil)

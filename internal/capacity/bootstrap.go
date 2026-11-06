@@ -26,6 +26,14 @@ type BootstrapController struct {
 // RunOnce advances at most one phase. Re-running after a crash claims the same
 // immutable operation and resumes from the persisted phase.
 func (c *BootstrapController) RunOnce(ctx context.Context, zoneID, owner string) error {
+	return c.runOnce(ctx, zoneID, owner, "create_cluster")
+}
+
+func (c *BootstrapController) RunAttachmentOnce(ctx context.Context, zoneID, owner string) error {
+	return c.runOnce(ctx, zoneID, owner, "attach_zone")
+}
+
+func (c *BootstrapController) runOnce(ctx context.Context, zoneID, owner, kind string) error {
 	if c.Store == nil || c.Executor == nil || owner == "" {
 		return fmt.Errorf("bootstrap controller is not configured")
 	}
@@ -35,7 +43,7 @@ func (c *BootstrapController) RunOnce(ctx context.Context, zoneID, owner string)
 	}
 	var op api.Operation
 	var err error
-	op, err = c.Store.Claim(ctx, zoneID, "create_cluster", owner, d)
+	op, err = c.Store.Claim(ctx, zoneID, kind, owner, d)
 	if err == sql.ErrNoRows {
 		return nil
 	}
@@ -77,12 +85,21 @@ func (c *BootstrapController) RunOnce(ctx context.Context, zoneID, owner string)
 		return err
 	}
 	if n == api.ZoneControlPlaneInitializing {
+		if op.Kind != "create_cluster" {
+			return ErrInvalid
+		}
 		if err := c.Store.SetClusterDiscovery(ctx, op, result); err != nil {
 			return err
 		}
 	} else if n == api.ZoneInfrastructureProvisioning {
-		if err := c.Store.RecordBootstrapHost(ctx, op, result); err != nil {
-			return err
+		if op.Kind == "attach_zone" {
+			if err := c.Store.PinAttachmentTemplate(ctx, op, result); err != nil {
+				return err
+			}
+		} else {
+			if err := c.Store.RecordBootstrapHost(ctx, op, result); err != nil {
+				return err
+			}
 		}
 	} else if n == api.ZoneDominatorInstalling {
 		if err := c.Store.SetDominatorRoute(ctx, op, result); err != nil {
