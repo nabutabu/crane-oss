@@ -149,9 +149,18 @@ func TestPostgresBootstrapWorkerIgnoresLegacyAttachments(t *testing.T) {
 	if _, err := store.NextBootstrapZone(ctx); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("legacy attachment selected: %v", err)
 	}
+	if _, err := store.NextAttachmentZone(ctx); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("legacy attachment selected by API controller: %v", err)
+	}
+	if _, err := store.Claim(ctx, "zone", "attach_zone", "api-controller", time.Minute); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("legacy attachment was claimable: %v", err)
+	}
 	fake := &bootstrapWorkerFake{}
 	controller := BootstrapController{Store: store, Executor: fake}
 	if err := controller.RunOnce(ctx, "zone", "worker"); err != nil {
+		t.Fatal(err)
+	}
+	if err := controller.RunAttachmentOnce(ctx, "zone", "api-controller"); err != nil {
 		t.Fatal(err)
 	}
 	if len(fake.phases) != 0 {
