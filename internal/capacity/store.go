@@ -374,7 +374,7 @@ func (s *Store) Target(ctx context.Context, clusterID, groupID string) (api.Capa
 // Claim is reserved for provider-neutral zone bootstrap, before a zone
 // Dominator exists. Cluster work must use ClaimDominator.
 func (s *Store) Claim(ctx context.Context, zoneID, kind, owner string, duration time.Duration) (api.Operation, error) {
-	if kind != "create_cluster" {
+	if kind != "create_cluster" && kind != "attach_zone" {
 		return api.Operation{}, ErrForbidden
 	}
 	return s.claim(ctx, zoneID, kind, owner, duration, false)

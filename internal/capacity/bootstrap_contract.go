@@ -132,7 +132,20 @@ func seedAttachmentTx(ctx context.Context, tx *sql.Tx, in api.AttachmentIntent) 
 	}
 	if in.Zone.Provider != provider || in.Zone.AccountID != accountID || in.Zone.Region != region ||
 		in.Group.ProviderZoneID != in.Zone.ProviderZoneID || in.Group.Naming.Provider != provider ||
-		in.Group.Naming.Region != region || in.Group.NormalizeID() != nil {
+		in.Group.Naming.Region != region || in.Group.NormalizeID() != nil || in.SourceGroupID == "" {
+		return ErrInvalid
+	}
+	var sourceReady bool
+	err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM node_groups g
+ JOIN zones z ON z.id=g.zone_id JOIN cluster_zones m ON m.zone_id=g.zone_id AND m.cluster_id=g.cluster_id
+ WHERE g.id=$1 AND g.cluster_id=$2 AND g.lifecycle_state='active' AND g.launch_parameters!='{}'::jsonb
+ AND g.capacity_class=$3 AND g.vcpu=$4 AND g.memory_mib=$5 AND z.lifecycle_state='ready'
+ AND m.lifecycle_state='ready' AND m.access_state='approved')`,
+		in.SourceGroupID, in.Membership.ClusterID, in.Group.CapacityClass, in.Group.PerNode.VCPU, in.Group.PerNode.MemoryMiB).Scan(&sourceReady)
+	if err != nil {
+		return err
+	}
+	if !sourceReady {
 		return ErrInvalid
 	}
 	if err := createZone(ctx, tx, in.Zone, "initializing"); err != nil {
@@ -146,9 +159,10 @@ func seedAttachmentTx(ctx context.Context, tx *sql.Tx, in api.AttachmentIntent) 
 		return err
 	}
 	// The provider resolves the complete launch template before activation.
-	if len(in.Group.LaunchParameters) == 0 {
-		in.Group.LaunchParameters = json.RawMessage(`{}`)
+	if len(in.Group.LaunchParameters) != 0 && string(in.Group.LaunchParameters) != "{}" {
+		return ErrInvalid
 	}
+	in.Group.LaunchParameters = json.RawMessage(`{}`)
 	if err := createGroup(ctx, tx, in.Group); err != nil {
 		return err
 	}

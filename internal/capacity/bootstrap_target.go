@@ -10,7 +10,7 @@ import (
 // LoadBootstrapTarget reads cluster discovery through the operation's durable
 // relationship. Request parameters cannot override this trusted runtime data.
 func (s *Store) LoadBootstrapTarget(ctx context.Context, op *api.Operation) error {
-	if op == nil || op.Kind != "create_cluster" {
+	if op == nil || (op.Kind != "create_cluster" && op.Kind != "attach_zone") {
 		return ErrInvalid
 	}
 	err := s.DB.QueryRowContext(ctx, `SELECT c.id,c.api_server_endpoint,c.ca_cert_hash FROM zone_bootstrap_operations b
