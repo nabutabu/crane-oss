@@ -604,7 +604,8 @@ func (s *Store) LoadProvisioningTarget(ctx context.Context, op *api.Operation) e
  JOIN deployment_runtime d ON d.cluster_id=c.id AND d.provider=z.provider
    AND d.account_id=z.account_id AND d.region=z.region
  JOIN host h ON h.id=d.spire_host_id AND h.protected AND h.role='spire'
-   AND h.provider=d.provider AND h.zone IN (SELECT zone_id FROM cluster_zones WHERE cluster_id=c.id)
+   AND h.provider=d.provider
+ JOIN zones hz ON hz.id=h.zone AND hz.provider=d.provider AND hz.account_id=d.account_id AND hz.region=d.region
  JOIN cluster_zones m ON m.cluster_id=g.cluster_id AND m.zone_id=g.zone_id
  WHERE g.id=$1 AND g.zone_id=$2 AND c.lifecycle_state='ready' AND z.lifecycle_state='ready' AND z.enabled
  AND m.lifecycle_state='ready' AND m.access_state='approved'`, op.NodeGroupID, op.ZoneID).

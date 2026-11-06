@@ -248,6 +248,7 @@ type AttachmentIntent struct {
 // returned by a provider step. It must never carry join credentials or private
 // key material.
 type BootstrapStepResult struct {
+	DeploymentID      string             `json:"deployment_id,omitempty"`
 	APIServerEndpoint string             `json:"api_server_endpoint,omitempty"`
 	CACertHash        string             `json:"ca_cert_hash,omitempty"`
 	ProviderHostID    string             `json:"provider_host_id,omitempty"`

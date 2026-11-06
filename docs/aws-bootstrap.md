@@ -180,6 +180,9 @@ calls, and resumes after a restart.
 Kubernetes control plane and Cilium, then installs its first zone's Dominator
 and Subd. The deployment VPC, RDS instance, Crane API, and SPIRE authority are
 reused. Validation must pass before the new cluster and membership become ready.
+The worker records the new cluster's protected control-plane host alongside the
+deployment's shared VPC and SPIRE references. This lets later zone attachments
+use that cluster's own API server while provisioning workers through shared SPIRE.
 These workflows target fresh deployments using the current explicit schema.
 
 ## Attach an empty zone

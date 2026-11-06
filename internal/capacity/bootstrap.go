@@ -100,6 +100,11 @@ func (c *BootstrapController) runOnce(ctx context.Context, zoneID, owner, kind s
 			if err := c.Store.RecordBootstrapHost(ctx, op, result); err != nil {
 				return err
 			}
+			if result.DeploymentID != "" {
+				if err := c.Store.CopyDeploymentRuntime(ctx, op, result.DeploymentID); err != nil {
+					return err
+				}
+			}
 		}
 	} else if n == api.ZoneDominatorInstalling {
 		if err := c.Store.SetDominatorRoute(ctx, op, result); err != nil {
