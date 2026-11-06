@@ -182,22 +182,59 @@ and Subd. The deployment VPC, RDS instance, Crane API, and SPIRE authority are
 reused. Validation must pass before the new cluster and membership become ready.
 These workflows target fresh deployments using the current explicit schema.
 
-## Zone attachment is temporarily unavailable
+## Attach an empty zone
 
-The legacy `attach_zone` path that created a protected host and joined it to an
-existing cluster has been removed. An authenticated submission now returns
-HTTP 503 with `{"code":"attachment_unavailable"}` before topology or operation
-writes. The bootstrap worker cannot claim or execute queued attachment
-operations; historical status remains readable. This change does not delete
-existing resources or migrate old deployments.
+The in-cluster Crane API accepts an authenticated `attach_zone` request for an
+existing ready cluster. The first-zone bootstrap must have recorded the shared
+deployment authority. Choose unused public and private subnet CIDRs within its
+owned VPC, outside the Pod CIDR and all existing subnets. The request selects an
+active source node group with the same capacity class and per-node resources.
+It cannot supply an AMI, instance profile, security group, VPC, SPIRE authority,
+or runtime Secret. The new group starts with target and minimum zero.
 
-[Issue #100](https://github.com/nabutabu/crane-oss/issues/100) specifies the
-replacement: Crane API prepares zone networking and an empty group, deploys a
-zone-specific Dominator into the hosting cluster, and activates the zone with
-zero hosts. A separate capacity request will let that Dominator provision
-workers through the existing admission, SPIRE, Subd, and readiness workflow.
-That replacement is planned and is not implemented in this revision. Existing
-zone worker provisioning and its identity/readiness protections are retained.
+Example request body for `POST /v1/bootstrap` (replace IDs and CIDRs with this
+deployment's values):
+
+```json
+{
+  "kind": "attach_zone",
+  "request_id": "attach-us-west-2b-001",
+  "cluster_id": "crane-platform-cluster",
+  "zone_id": "crane-platform-zone-b",
+  "parameters": {
+    "source_group_id": "aws-production-us-west-2-a-general",
+    "zone": {"id": "crane-platform-zone-b", "provider": "aws", "account_id": "123456789012", "region": "us-west-2", "provider_zone_id": "us-west-2b"},
+    "membership": {"cluster_id": "crane-platform-cluster", "zone_id": "crane-platform-zone-b"},
+    "pool": {"id": "crane-platform-pool-b", "limits": {"vcpu": 32, "memory_mib": 65536, "nodes": 8}},
+    "group": {
+      "naming": {"provider": "aws", "development_stage": "production", "region": "us-west-2", "az": "b", "group": "general"},
+      "cluster_id": "crane-platform-cluster", "node_pool_id": "crane-platform-pool-b", "zone_id": "crane-platform-zone-b",
+      "capacity_class": "on-demand", "provider_zone_id": "us-west-2b",
+      "min_nodes": 0, "max_nodes": 8, "template_revision": "pending",
+      "per_node": {"vcpu": 2, "memory_mib": 4096}, "launch_parameters": {}
+    },
+    "provider_config": {"public_subnet_cidr": "10.80.2.0/24", "private_subnet_cidr": "10.80.18.0/24"}
+  }
+}
+```
+
+Use `Authorization: Bearer $CRANE_ADMIN_TOKEN`. The response contains an
+`operation_id`; poll `GET /v1/bootstrap/{id}` with the same admin credential.
+Exact retries with the same `request_id` return the existing operation. Crane
+API validates the AWS account and AZ and the existing cluster marker and CA,
+reuses the VPC and route tables, pins a zone-local worker template from the
+source group, registers the zone Dominator SPIFFE identity, and installs the
+zone's private Dominator Service. The zone, membership, and group become ready
+together only after its Deployment and identity-pinned mTLS health checks pass.
+
+No host is created during attachment. Once the operation reaches `Ready`, the
+Cluster Autoscaler adapter can discover the new group and submit a separate
+capacity target using its resolved template revision. The existing Dominator,
+SPIRE, Subd, and host-readiness workflow then provisions workers. Historical
+host-creating attachment operations remain unclaimable. Outside Kubernetes,
+submission returns HTTP 503 with `{"code":"attachment_unavailable"}`. This flow
+targets fresh deployments using the current explicit schema; it does not
+migrate or delete older resources.
 
 Packer uses the normal AWS credential chain, for example
 `AWS_PROFILE=crane-bootstrap`; the bootstrap AWS adapter uses the same chain.

@@ -7,7 +7,7 @@ they do not change the SPIFFE IDs used for authorization.
 | Workload | SPIFFE path | Workload selectors | Trusted parent |
 | --- | --- | --- | --- |
 | Crane API | `/crane-api` | `k8s:ns:crane-system`, `k8s:sa:crane-api` | Exact platform host AWS-IID agent |
-| Dominator | `/dominator/<zone-id>` | `k8s:ns:crane-system`, `k8s:sa:dominator` | Exact protected platform host AWS-IID agent for that zone |
+| Dominator | `/dominator/<zone-id>` | `k8s:ns:crane-system`, `k8s:sa:dominator` for the first zone or `k8s:sa:dominator-<zone-id>` for an attached zone | Exact protected platform host AWS-IID agent |
 | Subd | `/subd/<opaque-provider-host-id>` | `systemd:id:subd.service` | Exact corresponding host AWS-IID agent |
 | Read-only bootstrap probe | `/subd` | `unix:uid:10003` | Exact platform host AWS-IID agent |
 
@@ -23,12 +23,14 @@ Pod metadata prevents issuance of the two service identities. UID 10001 or
 10002 and Workload API socket access alone are insufficient. The runtime UIDs
 remain as process hardening.
 
-Crane API and Dominator run under their own service accounts with token
-automounting disabled and required platform-node affinity. Keep `crane-system`
+Crane API and Dominator run under their own service accounts on the protected
+platform node. Dominator uses its token for node provisioning. Crane API uses
+its token to read the immutable cluster marker and create/get zone-scoped
+Dominator resources and bindings to the bootstrap-prepared provisioner roles.
+It cannot create new roles or replace conflicting objects. Keep `crane-system`
 workload administration restricted to trusted cluster administrators and
 bootstrap. Granting another principal workload write access can let that
-principal run a Pod under either service account. The service accounts themselves
-receive no deployment or identity administration grants.
+principal run a Pod under either service account.
 
 The attestor has a dedicated client certificate authorized only to read the
 platform node's kubelet Pod metadata. Its root-only credentials and local

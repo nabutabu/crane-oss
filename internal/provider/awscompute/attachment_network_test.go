@@ -56,6 +56,9 @@ func TestEnsureAttachmentNetworkRetryAndOverlap(t *testing.T) {
 		{RouteTableId: aws.String("rtb-public"), Tags: attachmentTestTags("deploy", "deploy-public"), Routes: []types.Route{{DestinationCidrBlock: aws.String("0.0.0.0/0"), GatewayId: aws.String("igw-owned")}}},
 		{RouteTableId: aws.String("rtb-private"), Tags: attachmentTestTags("deploy", "deploy-private")},
 	}}
+	if err := validateAttachmentNetwork(context.Background(), client, deployment, zone, intent); err != nil || client.created != 0 {
+		t.Fatalf("read-only admission created resources: created=%d err=%v", client.created, err)
+	}
 	first, err := ensureAttachmentNetwork(context.Background(), client, deployment, zone, intent)
 	if err != nil || first.PublicSubnetID == "" || first.PrivateSubnetID == "" || client.created != 2 {
 		t.Fatalf("first reconcile: %+v, created=%d, err=%v", first, client.created, err)
@@ -66,6 +69,9 @@ func TestEnsureAttachmentNetworkRetryAndOverlap(t *testing.T) {
 	}
 	client.subnets = append(client.subnets, types.Subnet{CidrBlock: aws.String("10.0.6.0/23"), AvailabilityZone: aws.String("us-west-2b")})
 	intent.PrivateSubnetCIDR = "10.0.6.0/24"
+	if err := validateAttachmentNetwork(context.Background(), client, deployment, zone, intent); err == nil {
+		t.Fatal("read-only admission accepted overlapping foreign subnet")
+	}
 	if _, err := ensureAttachmentNetwork(context.Background(), client, deployment, zone, intent); err == nil {
 		t.Fatal("overlapping foreign subnet accepted")
 	}

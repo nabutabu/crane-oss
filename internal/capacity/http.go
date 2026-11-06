@@ -31,9 +31,11 @@ func authenticatedAdapterCluster(ctx context.Context) string {
 type API struct {
 	store *Store
 	// ValidateTopology is wired by the service composition root.
-	ValidateTopology  func(context.Context, api.ZoneInput) error
-	adminToken        string
-	adapterPrincipals map[string]string
+	ValidateTopology   func(context.Context, api.ZoneInput) error
+	ValidateAttachment func(context.Context, api.AttachmentIntent, DeploymentRuntime) error
+	AttachmentsEnabled bool
+	adminToken         string
+	adapterPrincipals  map[string]string
 }
 
 // NewAPI binds each configured bearer credential to one
@@ -266,7 +268,50 @@ func (a *API) createBootstrap(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if in.Kind == "attach_zone" {
-		capacityError(w, ErrAttachmentUnavailable)
+		if !a.AttachmentsEnabled || a.ValidateAttachment == nil {
+			capacityError(w, ErrAttachmentUnavailable)
+			return
+		}
+		if in.RequestID == "" || in.ClusterID == "" || in.ZoneID == "" || !safeBootstrapParameters(in.Parameters) {
+			capacityError(w, ErrInvalid)
+			return
+		}
+		var intent api.AttachmentIntent
+		decoder := json.NewDecoder(strings.NewReader(string(in.Parameters)))
+		decoder.DisallowUnknownFields()
+		if decoder.Decode(&intent) != nil || decoder.Decode(new(any)) != io.EOF ||
+			intent.Zone.ID != in.ZoneID || intent.Membership.ClusterID != in.ClusterID ||
+			intent.Membership.ZoneID != in.ZoneID || intent.Group.ClusterID != in.ClusterID ||
+			intent.Group.ZoneID != in.ZoneID || intent.SourceGroupID == "" {
+			capacityError(w, ErrInvalid)
+			return
+		}
+		if id, err := a.store.LookupBootstrapReplay(r.Context(), in); err != nil {
+			capacityError(w, err)
+			return
+		} else if id != "" {
+			writeJSON(w, map[string]string{"operation_id": id})
+			return
+		}
+		deployment, err := a.store.LoadDeploymentRuntime(r.Context(), in.ClusterID)
+		if err != nil {
+			capacityError(w, err)
+			return
+		}
+		if err := a.ValidateAttachment(r.Context(), intent, deployment); err != nil {
+			if errors.Is(err, ErrInvalid) {
+				capacityError(w, ErrInvalid)
+			} else {
+				capacityError(w, ErrAttachmentUnavailable)
+			}
+			return
+		}
+		id, err := a.store.CreateBootstrap(r.Context(), in)
+		if err != nil {
+			capacityError(w, err)
+			return
+		}
+		writeJSON(w, map[string]string{"operation_id": id})
 		return
 	}
 	if a.ValidateTopology != nil {

@@ -224,6 +224,7 @@ func run() (runErr error) {
 	defer identitySource.Close()
 
 	capacityStore := capacity.NewStore(db)
+	attachmentEnabled := false
 	if os.Getenv("KUBERNETES_SERVICE_HOST") != "" {
 		kubeConfig, err := rest.InClusterConfig()
 		if err != nil {
@@ -252,6 +253,7 @@ func run() (runErr error) {
 			defer background.Done()
 			_ = controller.RunAttachments(ctx, "crane-api-"+owner, 5*time.Second, logger.Logger)
 		}()
+		attachmentEnabled = true
 	}
 
 	mux := http.NewServeMux()
@@ -267,6 +269,8 @@ func run() (runErr error) {
 	}
 	capacityAPI := capacity.NewAPI(capacityStore, intconfig.GetEnv("CRANE_ADMIN_TOKEN", ""), principals)
 	capacityAPI.ValidateTopology = registry.ValidateTopology
+	capacityAPI.ValidateAttachment = registry.ValidateAttachment
+	capacityAPI.AttachmentsEnabled = attachmentEnabled
 	mux.Handle("/v1/", capacityAPI.Handler())
 
 	server := &http.Server{Addr: ":43060", Handler: telemetryProvider.HTTPHandler(mux, logger.Logger), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: api.OperationTimeout + time.Minute}
