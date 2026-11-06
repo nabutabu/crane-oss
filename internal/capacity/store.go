@@ -413,6 +413,7 @@ func (s *Store) claim(ctx context.Context, zoneID, kind, owner string, duration 
 		 WHERE id=(
 		   SELECT id FROM operations
 		   WHERE operations.zone_id=$1 AND operations.kind=$2
+		     AND (operations.kind!='attach_zone' OR COALESCE(operations.parameters->>'source_group_id','')<>'')
 		     AND (state='pending' OR (state IN ('leased','launching')
 		       AND (lease_until IS NULL OR lease_until<=clock_timestamp())))
 		     AND (NOT $5 OR EXISTS (

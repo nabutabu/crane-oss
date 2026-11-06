@@ -152,12 +152,21 @@ func ensureAttachmentDeployment(ctx context.Context, kube kubernetes.Interface, 
 		!reflect.DeepEqual(current.Spec.Template.Labels, desired.Spec.Template.Labels) ||
 		current.Spec.Template.Spec.ServiceAccountName != desired.Spec.Template.Spec.ServiceAccountName ||
 		current.Spec.Template.Spec.NodeName != desired.Spec.Template.Spec.NodeName ||
-		!reflect.DeepEqual(current.Spec.Template.Spec.Containers, desired.Spec.Template.Spec.Containers) ||
+		len(current.Spec.Template.Spec.Containers) != 1 || !sameAttachmentContainer(current.Spec.Template.Spec.Containers[0], desired.Spec.Template.Spec.Containers[0]) ||
 		!reflect.DeepEqual(current.Spec.Template.Spec.Volumes, desired.Spec.Template.Spec.Volumes) ||
 		!reflect.DeepEqual(current.Spec.Template.Spec.AutomountServiceAccountToken, desired.Spec.Template.Spec.AutomountServiceAccountToken) {
 		return errors.New("attachment Dominator Deployment conflicts with deployment")
 	}
 	return nil
+}
+
+func sameAttachmentContainer(current, desired core.Container) bool {
+	return current.Name == desired.Name && current.Image == desired.Image &&
+		reflect.DeepEqual(current.Command, desired.Command) &&
+		reflect.DeepEqual(current.Env, desired.Env) &&
+		reflect.DeepEqual(current.EnvFrom, desired.EnvFrom) &&
+		reflect.DeepEqual(current.Ports, desired.Ports) &&
+		reflect.DeepEqual(current.VolumeMounts, desired.VolumeMounts)
 }
 
 func ensureAttachmentService(ctx context.Context, kube kubernetes.Interface, desired *core.Service) error {

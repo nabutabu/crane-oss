@@ -36,6 +36,7 @@ func (s *Store) nextBootstrapZone(ctx context.Context, kind string) (string, err
 	var zoneID string
 	err := s.DB.QueryRowContext(ctx, `SELECT o.zone_id FROM operations o JOIN zone_bootstrap_operations b ON b.operation_id=o.id
  WHERE o.kind=$1 AND b.phase NOT IN ('Ready','Failed')
+ AND (o.kind!='attach_zone' OR COALESCE(o.parameters->>'source_group_id','')<>'')
  AND (o.state='pending' OR (o.state IN ('leased','launching') AND o.lease_until<=clock_timestamp()))
  ORDER BY o.created_at,o.id LIMIT 1`, kind).Scan(&zoneID)
 	return zoneID, err
