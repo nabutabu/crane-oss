@@ -40,6 +40,14 @@ func TestPostgresAttachmentRemainsEmptyUntilValidated(t *testing.T) {
  VALUES('cluster','deployment','aws','account','us-west-2','vpc-owned','spire-owned','platform-owned','dominator:pin','crane-runtime','crane.internal','10.244.0.0/16')`); err != nil {
 		t.Fatal(err)
 	}
+	runtime, err := store.LoadDeploymentRuntime(ctx, "cluster")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hosts, err := store.LoadDeploymentHosts(ctx, runtime)
+	if err != nil || hosts.SpireInstanceID != "i-spire" || hosts.PlatformInstanceID != "i-platform" {
+		t.Fatalf("shared hosts %+v: %v", hosts, err)
+	}
 	zone := api.ZoneInput{ID: "attached-zone", Provider: "aws", AccountID: "account", Region: "us-west-2", ProviderZoneID: "us-west-2b"}
 	group := api.NodeGroupInput{Naming: api.NodeGroupNaming{Provider: "aws", DevelopmentStage: "test", Region: "us-west-2", AZ: "b", Group: "general"}, ClusterID: "cluster", ZoneID: zone.ID, NodePoolID: "attached-pool", ProviderZoneID: zone.ProviderZoneID, CapacityClass: "general", MinNodes: 0, MaxNodes: 4, TemplateRevision: "pending", PerNode: api.Resources{VCPU: 4, MemoryMiB: 8192}, LaunchParameters: []byte(`{}`)}
 	if err := group.NormalizeID(); err != nil {

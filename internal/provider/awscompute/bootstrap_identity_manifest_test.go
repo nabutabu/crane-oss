@@ -44,7 +44,7 @@ func TestPlatformWorkloadIdentityManifests(t *testing.T) {
 				}
 				deployments++
 				pod := d.Spec.Template.Spec
-				if d.Namespace != "crane-system" || pod.ServiceAccountName != d.Name || pod.AutomountServiceAccountToken == nil || *pod.AutomountServiceAccountToken != (d.Name == "dominator") {
+				if d.Namespace != "crane-system" || pod.ServiceAccountName != d.Name || pod.AutomountServiceAccountToken == nil || !*pod.AutomountServiceAccountToken {
 					t.Fatal("incorrect workload service account")
 				}
 				want := &corev1.Affinity{NodeAffinity: &corev1.NodeAffinity{RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{NodeSelectorTerms: []corev1.NodeSelectorTerm{{MatchFields: []corev1.NodeSelectorRequirement{{Key: "metadata.name", Operator: corev1.NodeSelectorOpIn, Values: []string{"$NODE_NAME"}}}}}}}}
@@ -57,7 +57,7 @@ func TestPlatformWorkloadIdentityManifests(t *testing.T) {
 					t.Fatal(err)
 				}
 				accounts++
-				if sa.Namespace != "crane-system" || (sa.Name != "crane-api" && sa.Name != "dominator") || sa.AutomountServiceAccountToken == nil || *sa.AutomountServiceAccountToken {
+				if sa.Namespace != "crane-system" || (sa.Name != "crane-api" && sa.Name != "dominator") || sa.AutomountServiceAccountToken == nil || *sa.AutomountServiceAccountToken != (sa.Name == "crane-api") {
 					t.Fatal("incorrect service account policy")
 				}
 			case "Role":
@@ -158,5 +158,70 @@ func TestZoneDominatorKeepsClusterIdentityAndZoneScopedBinding(t *testing.T) {
 		if !strings.Contains(script, `resourceNames: ["kubernetes.io/kube-apiserver-client-kubelet"]`) || !strings.Contains(script, `resourceNames: ["crane-cluster-identity"]`) {
 			t.Fatal("zone deployment lacks constrained signer or cluster marker permissions")
 		}
+	}
+}
+
+func TestPlatformAttachmentPermissionsArePreparedAndBound(t *testing.T) {
+	script, err := RenderPlatformScript(testConfig(), testInfra(), testInfra().SpireAddress)
+	if err != nil {
+		t.Fatal(err)
+	}
+	objects := 0
+	for _, block := range regexp.MustCompile(`(?s)kubectl (?:-n [a-z-]+|--namespace [a-z-]+) apply -f - <<YAML\n(.*?)\nYAML`).FindAllStringSubmatch(script, -1) {
+		decoder := yaml.NewYAMLOrJSONDecoder(strings.NewReader(block[1]), 4096)
+		for {
+			var raw json.RawMessage
+			if err := decoder.Decode(&raw); err == io.EOF {
+				break
+			} else if err != nil {
+				t.Fatal(err)
+			}
+			var meta struct {
+				Kind     string
+				Metadata struct{ Name, Namespace string }
+			}
+			if err := json.Unmarshal(raw, &meta); err != nil {
+				t.Fatal(err)
+			}
+			if meta.Metadata.Name != "crane-api-attachment" {
+				continue
+			}
+			objects++
+			switch meta.Kind {
+			case "Role", "ClusterRole":
+				var role struct{ Rules []rbacv1.PolicyRule }
+				if err := json.Unmarshal(raw, &role); err != nil {
+					t.Fatal(err)
+				}
+				for _, rule := range role.Rules {
+					for _, verb := range rule.Verbs {
+						if verb != "get" && verb != "create" && verb != "list" && verb != "bind" {
+							t.Fatalf("unexpected attachment permission %s", verb)
+						}
+					}
+					if reflect.DeepEqual(rule.Resources, []string{"roles"}) || reflect.DeepEqual(rule.Resources, []string{"clusterroles"}) {
+						if !reflect.DeepEqual(rule.ResourceNames, []string{"crane-dominator-provisioner"}) || !reflect.DeepEqual(rule.Verbs, []string{"bind"}) {
+							t.Fatal("attachment can bind an unprepared provisioning role")
+						}
+					}
+				}
+			case "RoleBinding", "ClusterRoleBinding":
+				var binding struct {
+					Subjects []rbacv1.Subject
+					RoleRef  rbacv1.RoleRef
+				}
+				if err := json.Unmarshal(raw, &binding); err != nil {
+					t.Fatal(err)
+				}
+				if !reflect.DeepEqual(binding.Subjects, []rbacv1.Subject{{Kind: "ServiceAccount", Name: "crane-api", Namespace: "crane-system"}}) || binding.RoleRef.Name != "crane-api-attachment" {
+					t.Fatal("attachment permissions bound to the wrong identity")
+				}
+			default:
+				t.Fatalf("unexpected attachment RBAC kind %s", meta.Kind)
+			}
+		}
+	}
+	if objects != 6 {
+		t.Fatalf("expected three prepared attachment roles and bindings, got %d objects", objects)
 	}
 }

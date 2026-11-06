@@ -170,7 +170,7 @@ kind: ServiceAccount
 metadata:
   name: crane-api
   namespace: crane-system
-automountServiceAccountToken: false
+automountServiceAccountToken: true
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -288,6 +288,83 @@ subjects:
   name: dominator
   namespace: crane-system
 roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: crane-dominator-provisioner}
+YAML
+
+kubectl -n crane-system apply -f - <<YAML
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: crane-api-attachment, namespace: crane-system}
+rules:
+- apiGroups: [""]
+  resources: ["secrets"]
+  resourceNames: ["crane-runtime"]
+  verbs: ["get"]
+- apiGroups: [""]
+  resources: ["serviceaccounts", "services"]
+  verbs: ["get", "create"]
+- apiGroups: ["apps"]
+  resources: ["deployments"]
+  verbs: ["get", "create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: crane-api-attachment, namespace: crane-system}
+subjects:
+- kind: ServiceAccount
+  name: crane-api
+  namespace: crane-system
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: crane-api-attachment}
+YAML
+kubectl -n kube-system apply -f - <<YAML
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: crane-api-attachment, namespace: kube-system}
+rules:
+- apiGroups: [""]
+  resources: ["configmaps"]
+  resourceNames: ["crane-cluster-identity"]
+  verbs: ["get"]
+- apiGroups: ["rbac.authorization.k8s.io"]
+  resources: ["rolebindings"]
+  verbs: ["get", "create"]
+- apiGroups: ["rbac.authorization.k8s.io"]
+  resources: ["roles"]
+  resourceNames: ["crane-dominator-provisioner"]
+  verbs: ["bind"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: crane-api-attachment, namespace: kube-system}
+subjects:
+- kind: ServiceAccount
+  name: crane-api
+  namespace: crane-system
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: crane-api-attachment}
+YAML
+kubectl --namespace crane-system apply -f - <<YAML
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: {name: crane-api-attachment}
+rules:
+- apiGroups: [""]
+  resources: ["nodes"]
+  verbs: ["list"]
+- apiGroups: ["rbac.authorization.k8s.io"]
+  resources: ["clusterrolebindings"]
+  verbs: ["get", "create"]
+- apiGroups: ["rbac.authorization.k8s.io"]
+  resources: ["clusterroles"]
+  resourceNames: ["crane-dominator-provisioner"]
+  verbs: ["bind"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: crane-api-attachment}
+subjects:
+- kind: ServiceAccount
+  name: crane-api
+  namespace: crane-system
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: crane-api-attachment}
 YAML
 
 /usr/local/bin/crane-configure-spire-k8s "$NODE_NAME"
@@ -411,7 +488,7 @@ spec:
         app: crane-api
     spec:
       serviceAccountName: crane-api
-      automountServiceAccountToken: false
+      automountServiceAccountToken: true
       affinity:
         nodeAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
