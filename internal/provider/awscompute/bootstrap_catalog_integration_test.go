@@ -47,6 +47,13 @@ func TestBootstrapCatalogSeedRerunAndConflict(t *testing.T) {
 	if _, err := db.Exec(`INSERT INTO zones(id,provider,account_id,region,provider_zone_id,kubernetes_region,kubernetes_zone) VALUES('zone','aws','account','region','az','region','az')`); err != nil {
 		t.Fatal(err)
 	}
+	data, err := baseScriptData(testConfig(), testInfra())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO clusters(id,kubeadm_version,kubelet_version,container_runtime,cni) VALUES($1,'1.35.0','1.35.0','containerd','cilium')`, data.ClusterID); err != nil {
+		t.Fatal(err)
+	}
 	script, err := RenderSeedHostsScript(testConfig(), testInfra(), testAgentHosts())
 	if err != nil {
 		t.Fatal(err)
@@ -71,6 +78,10 @@ func TestBootstrapCatalogSeedRerunAndConflict(t *testing.T) {
 	var count int
 	if err := db.QueryRow(`SELECT count(*) FROM host WHERE protected AND node_group_id IS NULL AND health='unknown' AND lastseenheartbeat IS NULL`).Scan(&count); err != nil || count != 2 {
 		t.Fatal("seed did not converge", count, err)
+	}
+	var deploymentID, spireHostID string
+	if err := db.QueryRow(`SELECT deployment_id,spire_host_id FROM deployment_runtime WHERE cluster_id=$1`, data.ClusterID).Scan(&deploymentID, &spireHostID); err != nil || deploymentID != testConfig().Name || spireHostID != testConfig().Name+"/bootstrap/spire" {
+		t.Fatal("shared runtime references did not converge", err)
 	}
 	var endpoint, identity string
 	if err := db.QueryRow(`SELECT endpoint,identity FROM zone_dominators WHERE zone_id='zone'`).Scan(&endpoint, &identity); err != nil || endpoint != "https://"+testAgentHosts()[1].PrivateIP+":44000" || identity != "spiffe://crane.internal/dominator/crane-platform-zone" {
