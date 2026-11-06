@@ -1,6 +1,7 @@
 package capacity
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -24,10 +25,7 @@ type BootstrapStatus struct {
 // CreateBootstrap stores an operator's immutable, secret-free intent. The
 // topology is seeded as pending before the operation becomes visible.
 func (s *Store) CreateBootstrap(ctx context.Context, in api.BootstrapRequest) (string, error) {
-	if in.Kind == "attach_zone" {
-		return "", ErrAttachmentUnavailable
-	}
-	if in.Kind != "create_cluster" || in.RequestID == "" ||
+	if (in.Kind != "create_cluster" && in.Kind != "attach_zone") || in.RequestID == "" ||
 		in.ClusterID == "" || in.ZoneID == "" || !safeBootstrapParameters(in.Parameters) {
 		return "", ErrInvalid
 	}
@@ -67,14 +65,29 @@ func (s *Store) CreateBootstrap(ctx context.Context, in api.BootstrapRequest) (s
 	if active {
 		return "", ErrConflict
 	}
-	var intent struct {
-		FirstZone api.FirstZoneInput `json:"first_zone"`
-	}
-	if json.Unmarshal(in.Parameters, &intent) != nil || intent.FirstZone.Cluster.ID != in.ClusterID || intent.FirstZone.Zone.ID != in.ZoneID {
-		return "", ErrInvalid
-	}
-	if err := seedFirstZoneTx(ctx, tx, intent.FirstZone, false); err != nil {
-		return "", err
+	if in.Kind == "create_cluster" {
+		var intent struct {
+			FirstZone api.FirstZoneInput `json:"first_zone"`
+		}
+		if json.Unmarshal(in.Parameters, &intent) != nil || intent.FirstZone.Cluster.ID != in.ClusterID || intent.FirstZone.Zone.ID != in.ZoneID {
+			return "", ErrInvalid
+		}
+		if err := seedFirstZoneTx(ctx, tx, intent.FirstZone, false); err != nil {
+			return "", err
+		}
+	} else {
+		var intent api.AttachmentIntent
+		d := json.NewDecoder(bytes.NewReader(in.Parameters))
+		d.DisallowUnknownFields()
+		if d.Decode(&intent) != nil || intent.Zone.ID != in.ZoneID ||
+			intent.Membership.ClusterID != in.ClusterID || intent.Membership.ZoneID != in.ZoneID ||
+			intent.Group.ClusterID != in.ClusterID || intent.Group.ZoneID != in.ZoneID ||
+			intent.Group.NodePoolID != intent.Pool.ID || intent.Group.MinNodes != 0 {
+			return "", ErrInvalid
+		}
+		if err := seedAttachmentTx(ctx, tx, intent); err != nil {
+			return "", err
+		}
 	}
 
 	var valid bool
@@ -82,7 +95,7 @@ func (s *Store) CreateBootstrap(ctx context.Context, in api.BootstrapRequest) (s
 	if err != nil {
 		return "", err
 	}
-	if !valid {
+	if !valid && in.Kind == "create_cluster" {
 		return "", ErrInvalid
 	}
 
@@ -99,6 +112,50 @@ func (s *Store) CreateBootstrap(ctx context.Context, in api.BootstrapRequest) (s
 		return "", err
 	}
 	return id, nil
+}
+
+func seedAttachmentTx(ctx context.Context, tx *sql.Tx, in api.AttachmentIntent) error {
+	var providerConfig map[string]json.RawMessage
+	if json.Unmarshal(in.ProviderConfig, &providerConfig) != nil || providerConfig == nil {
+		return ErrInvalid
+	}
+	var provider, accountID, region string
+	err := tx.QueryRowContext(ctx, `SELECT d.provider,d.account_id,d.region
+ FROM clusters c JOIN deployment_runtime d ON d.cluster_id=c.id
+ WHERE c.id=$1 AND c.lifecycle_state='ready'`, in.Membership.ClusterID).
+		Scan(&provider, &accountID, &region)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrInvalid
+	}
+	if err != nil {
+		return err
+	}
+	if in.Zone.Provider != provider || in.Zone.AccountID != accountID || in.Zone.Region != region ||
+		in.Group.ProviderZoneID != in.Zone.ProviderZoneID || in.Group.Naming.Provider != provider ||
+		in.Group.Naming.Region != region || in.Group.NormalizeID() != nil {
+		return ErrInvalid
+	}
+	if err := createZone(ctx, tx, in.Zone, "initializing"); err != nil {
+		return err
+	}
+	in.Membership.LifecycleState, in.Membership.AccessState = "initializing", "pending"
+	if err := createMembership(ctx, tx, in.Membership, false); err != nil {
+		return err
+	}
+	if err := createPool(ctx, tx, in.Pool); err != nil {
+		return err
+	}
+	// The provider resolves the complete launch template before activation.
+	if len(in.Group.LaunchParameters) == 0 {
+		in.Group.LaunchParameters = json.RawMessage(`{}`)
+	}
+	if err := createGroup(ctx, tx, in.Group); err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `UPDATE node_groups SET lifecycle_state='initializing'
+ WHERE id=$1 AND cluster_id=$2 AND zone_id=$3 AND target_nodes=0 AND min_nodes=0`,
+		in.Group.ID, in.Membership.ClusterID, in.Zone.ID)
+	return err
 }
 
 func safeBootstrapParameters(raw json.RawMessage) bool {
