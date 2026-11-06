@@ -2,11 +2,11 @@
 
 **Status:** Draft | **Language:** Go | **Target:** AWS EC2 (first milestone)
 
-Current attachment status: the host-creating `attach_zone` implementation has
-been removed and submissions return HTTP 503 (`attachment_unavailable`).
-[Issue #100](https://github.com/nabutabu/crane-oss/issues/100) specifies the
-API-managed, zero-host replacement. Attachment statements elsewhere in this
-design document are planned behavior, not currently executable workflows.
+Current attachment status: new in-cluster deployments can submit API-managed
+`attach_zone` operations that prepare zone networking, a zero-host group, and a
+zone-scoped Dominator before atomic activation. The legacy host-creating path
+remains disabled. Outside Kubernetes the attach route returns HTTP 503.
+[Issue #100](https://github.com/nabutabu/crane-oss/issues/100) tracks this flow.
 
 
 ## 1. Executive summary

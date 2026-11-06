@@ -6,19 +6,21 @@ Status: Accepted
 
 Keep AWS-IID node attestation for the host SPIRE agent. Bind the existing
 `/crane-api` and zone-scoped `/dominator/<zone-id>` identities to `k8s:ns:crane-system` and the respective
-`k8s:sa:crane-api` or `k8s:sa:dominator` selector. Both selectors are required under
+`k8s:sa:crane-api`, first-zone `k8s:sa:dominator`, or attached-zone
+`k8s:sa:dominator-<zone-id>` selector. Both selectors are required under
 the exact platform host's AWS-IID parent. Unix UIDs remain process hardening,
 without authorizing either Kubernetes workload identity. Registration retries
 reuse exact matches and reject duplicates or conflicting policy.
 
-Both Deployments use dedicated service accounts, disable service-account token
-automounting, and require placement on the protected platform node. Bootstrap
-and cluster administrators retain deployment authority in `crane-system`.
-Neither workload receives Pod creation, deployment mutation, service-account
-token creation, impersonation, or RBAC administration grants. Anyone granted
-namespace workload write access must be trusted to obtain these identities;
-Kubernetes RBAC does not separately authorize selecting a service account.
-No additional admission controller is introduced.
+Both Deployments use dedicated service accounts and require placement on the
+protected platform node. Dominator mounts its service-account token for worker
+provisioning. Crane API mounts its token for API-managed zone attachment; its
+preinstalled RBAC allows create/get of zone-scoped workloads and bindings to
+the existing provisioner roles, without role creation or mutation of existing
+objects. Bootstrap and cluster administrators retain deployment authority in
+`crane-system`. Anyone granted namespace workload write access must be trusted
+to obtain these identities; Kubernetes RBAC does not separately authorize
+selecting a service account. No additional admission controller is introduced.
 
 The host agent uses the Kubernetes workload attestor to map requesting processes
 through their cgroups to kubelet Pod metadata. It authenticates to the local

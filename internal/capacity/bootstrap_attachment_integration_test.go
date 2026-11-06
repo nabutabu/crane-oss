@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -62,9 +65,43 @@ func TestPostgresAttachmentRemainsEmptyUntilValidated(t *testing.T) {
 		t.Fatal(err)
 	}
 	request := api.BootstrapRequest{Kind: "attach_zone", RequestID: "attach-request", ClusterID: "cluster", ZoneID: zone.ID, Parameters: parameters}
-	id, err := store.CreateBootstrap(ctx, request)
-	if err != nil {
+	route := NewAPI(store, "admin-test", nil)
+	route.AttachmentsEnabled = true
+	route.ValidateAttachment = func(_ context.Context, got api.AttachmentIntent, deployment DeploymentRuntime) error {
+		if got.SourceGroupID != intent.SourceGroupID || deployment.VPCID != "vpc-owned" {
+			t.Fatal("attachment validation lost trusted deployment context")
+		}
+		return nil
+	}
+	submit := func(in api.BootstrapRequest) *httptest.ResponseRecorder {
+		body, err := json.Marshal(in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req := httptest.NewRequest(http.MethodPost, "/v1/bootstrap", strings.NewReader(string(body)))
+		req.Header.Set("Authorization", "Bearer admin-test")
+		response := httptest.NewRecorder()
+		route.Handler().ServeHTTP(response, req)
+		return response
+	}
+	created := submit(request)
+	if created.Code != http.StatusOK {
+		t.Fatalf("attachment admission %d: %s", created.Code, created.Body.String())
+	}
+	var accepted map[string]string
+	if err := json.Unmarshal(created.Body.Bytes(), &accepted); err != nil {
 		t.Fatal(err)
+	}
+	id := accepted["operation_id"]
+	if id == "" {
+		t.Fatal("attachment operation ID missing")
+	}
+	route.ValidateAttachment = func(context.Context, api.AttachmentIntent, DeploymentRuntime) error {
+		t.Fatal("exact replay reached fallible provider discovery")
+		return ErrInvalid
+	}
+	if replayHTTP := submit(request); replayHTTP.Code != http.StatusOK || !strings.Contains(replayHTTP.Body.String(), id) {
+		t.Fatalf("HTTP replay %d: %s", replayHTTP.Code, replayHTTP.Body.String())
 	}
 	if replay, err := store.CreateBootstrap(ctx, request); err != nil || replay != id {
 		t.Fatalf("replay %q: %v", replay, err)

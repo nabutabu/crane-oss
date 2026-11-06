@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"regexp"
 	"strings"
 
 	"github.com/google/uuid"
@@ -115,6 +116,9 @@ func (s *Store) CreateBootstrap(ctx context.Context, in api.BootstrapRequest) (s
 }
 
 func seedAttachmentTx(ctx context.Context, tx *sql.Tx, in api.AttachmentIntent) error {
+	if len(in.Zone.ID) > 48 || !attachmentZoneIDRE.MatchString(in.Zone.ID) {
+		return ErrInvalid
+	}
 	var providerConfig map[string]json.RawMessage
 	if json.Unmarshal(in.ProviderConfig, &providerConfig) != nil || providerConfig == nil {
 		return ErrInvalid
@@ -171,6 +175,8 @@ func seedAttachmentTx(ctx context.Context, tx *sql.Tx, in api.AttachmentIntent) 
 		in.Group.ID, in.Membership.ClusterID, in.Zone.ID)
 	return err
 }
+
+var attachmentZoneIDRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
 
 func safeBootstrapParameters(raw json.RawMessage) bool {
 	var value any

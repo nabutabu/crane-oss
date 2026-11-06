@@ -39,20 +39,59 @@ func EnsureAttachmentNetwork(ctx context.Context, deployment capacity.Deployment
 	return ensureAttachmentNetwork(ctx, ec2.NewFromConfig(cfg), deployment, zone, intent)
 }
 
+// ValidateAttachmentNetwork checks VPC ownership and subnet placement without
+// creating resources. Admission calls this before persisting a new request.
+func ValidateAttachmentNetwork(ctx context.Context, deployment capacity.DeploymentRuntime, zone api.ZoneInput, intent AttachmentConfig) error {
+	cfg, err := config.LoadDefaultConfig(ctx, config.WithRegion(deployment.Region))
+	if err != nil {
+		return errors.New("load AWS attachment configuration")
+	}
+	return validateAttachmentNetwork(ctx, ec2.NewFromConfig(cfg), deployment, zone, intent)
+}
+
+func validateAttachmentNetwork(ctx context.Context, client attachmentEC2, deployment capacity.DeploymentRuntime, zone api.ZoneInput, intent AttachmentConfig) error {
+	existing, public, private, err := attachmentNetworkInventory(ctx, client, deployment, zone, intent)
+	if err != nil {
+		return err
+	}
+	if _, err := findAttachmentSubnet(existing, deployment, zone, public, true); err != nil {
+		return err
+	}
+	_, err = findAttachmentSubnet(existing, deployment, zone, private, false)
+	return err
+}
+
 func ensureAttachmentNetwork(ctx context.Context, client attachmentEC2, deployment capacity.DeploymentRuntime, zone api.ZoneInput, intent AttachmentConfig) (AttachmentNetwork, error) {
 	var result AttachmentNetwork
-	invalid := errors.New("AWS attachment network does not match the deployment")
+	subnets, public, private, err := attachmentNetworkInventory(ctx, client, deployment, zone, intent)
+	if err != nil {
+		return result, err
+	}
+	if result.PublicSubnetID, err = ensureAttachmentSubnet(ctx, client, deployment, zone, public, true, subnets); err != nil {
+		return AttachmentNetwork{}, err
+	}
+	if result.PrivateSubnetID, err = ensureAttachmentSubnet(ctx, client, deployment, zone, private, false, subnets); err != nil {
+		return AttachmentNetwork{}, err
+	}
+	return result, nil
+}
+
+func attachmentNetworkInventory(ctx context.Context, client attachmentEC2, deployment capacity.DeploymentRuntime, zone api.ZoneInput, intent AttachmentConfig) ([]types.Subnet, netip.Prefix, netip.Prefix, error) {
+	invalid := capacity.ErrInvalid
 	if deployment.Provider != "aws" || zone.Provider != "aws" || deployment.AccountID != zone.AccountID ||
 		deployment.Region != zone.Region || deployment.VPCID == "" || deployment.DeploymentID == "" || zone.ProviderZoneID == "" {
-		return result, invalid
+		return nil, netip.Prefix{}, netip.Prefix{}, invalid
 	}
 	vpcs, err := client.DescribeVpcs(ctx, &ec2.DescribeVpcsInput{VpcIds: []string{deployment.VPCID}})
-	if err != nil || len(vpcs.Vpcs) != 1 || tagValue(vpcs.Vpcs[0].Tags, "CraneBootstrap") != deployment.DeploymentID || vpcs.Vpcs[0].State != types.VpcStateAvailable {
-		return result, invalid
+	if err != nil {
+		return nil, netip.Prefix{}, netip.Prefix{}, capacity.ErrAttachmentUnavailable
+	}
+	if len(vpcs.Vpcs) != 1 || tagValue(vpcs.Vpcs[0].Tags, "CraneBootstrap") != deployment.DeploymentID || vpcs.Vpcs[0].State != types.VpcStateAvailable {
+		return nil, netip.Prefix{}, netip.Prefix{}, invalid
 	}
 	vpcCIDR, err := netip.ParsePrefix(aws.ToString(vpcs.Vpcs[0].CidrBlock))
 	if err != nil {
-		return result, invalid
+		return nil, netip.Prefix{}, netip.Prefix{}, invalid
 	}
 	public, e1 := netip.ParsePrefix(intent.PublicSubnetCIDR)
 	private, e2 := netip.ParsePrefix(intent.PrivateSubnetCIDR)
@@ -60,19 +99,13 @@ func ensureAttachmentNetwork(ctx context.Context, client attachmentEC2, deployme
 		public != public.Masked() || private != private.Masked() ||
 		!vpcCIDR.Contains(public.Addr()) || !vpcCIDR.Contains(private.Addr()) ||
 		public.Bits() < vpcCIDR.Bits() || private.Bits() < vpcCIDR.Bits() || public.Overlaps(private) {
-		return result, invalid
+		return nil, netip.Prefix{}, netip.Prefix{}, invalid
 	}
 	subnets, err := client.DescribeSubnets(ctx, &ec2.DescribeSubnetsInput{Filters: []types.Filter{{Name: aws.String("vpc-id"), Values: []string{deployment.VPCID}}}})
 	if err != nil {
-		return result, errors.New("discover deployment subnets")
+		return nil, netip.Prefix{}, netip.Prefix{}, capacity.ErrAttachmentUnavailable
 	}
-	if result.PublicSubnetID, err = ensureAttachmentSubnet(ctx, client, deployment, zone, public, true, subnets.Subnets); err != nil {
-		return AttachmentNetwork{}, err
-	}
-	if result.PrivateSubnetID, err = ensureAttachmentSubnet(ctx, client, deployment, zone, private, false, subnets.Subnets); err != nil {
-		return AttachmentNetwork{}, err
-	}
-	return result, nil
+	return subnets.Subnets, public, private, nil
 }
 
 func ensureAttachmentSubnet(ctx context.Context, client attachmentEC2, deployment capacity.DeploymentRuntime, zone api.ZoneInput, cidr netip.Prefix, public bool, existing []types.Subnet) (string, error) {
@@ -81,17 +114,9 @@ func ensureAttachmentSubnet(ctx context.Context, client attachmentEC2, deploymen
 		kind = "public"
 	}
 	name := attachmentName(deployment, zone.ProviderZoneID+"-"+kind)
-	id := ""
-	for _, subnet := range existing {
-		other, err := netip.ParsePrefix(aws.ToString(subnet.CidrBlock))
-		if err != nil || !cidr.Overlaps(other) {
-			continue
-		}
-		if cidr != other || aws.ToString(subnet.AvailabilityZone) != zone.ProviderZoneID ||
-			tagValue(subnet.Tags, "CraneBootstrap") != deployment.DeploymentID || tagValue(subnet.Tags, "Name") != name || id != "" {
-			return "", errors.New("attachment subnet overlaps an existing subnet")
-		}
-		id = aws.ToString(subnet.SubnetId)
+	id, err := findAttachmentSubnet(existing, deployment, zone, cidr, public)
+	if err != nil {
+		return "", err
 	}
 	if id == "" {
 		out, err := client.CreateSubnet(ctx, &ec2.CreateSubnetInput{
@@ -111,6 +136,27 @@ func ensureAttachmentSubnet(ctx context.Context, client attachmentEC2, deploymen
 	}
 	if err := associateAttachmentRoute(ctx, client, deployment, id, kind); err != nil {
 		return "", err
+	}
+	return id, nil
+}
+
+func findAttachmentSubnet(existing []types.Subnet, deployment capacity.DeploymentRuntime, zone api.ZoneInput, cidr netip.Prefix, public bool) (string, error) {
+	kind := "private"
+	if public {
+		kind = "public"
+	}
+	name := attachmentName(deployment, zone.ProviderZoneID+"-"+kind)
+	id := ""
+	for _, subnet := range existing {
+		other, err := netip.ParsePrefix(aws.ToString(subnet.CidrBlock))
+		if err != nil || !cidr.Overlaps(other) {
+			continue
+		}
+		if cidr != other || aws.ToString(subnet.AvailabilityZone) != zone.ProviderZoneID ||
+			tagValue(subnet.Tags, "CraneBootstrap") != deployment.DeploymentID || tagValue(subnet.Tags, "Name") != name || id != "" {
+			return "", capacity.ErrInvalid
+		}
+		id = aws.ToString(subnet.SubnetId)
 	}
 	return id, nil
 }
