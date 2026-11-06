@@ -123,6 +123,11 @@ func safeBootstrapParameters(raw json.RawMessage) bool {
 			for key, v := range m {
 				name := strings.ToLower(key)
 				if strings.HasSuffix(name, "_arn") || strings.HasSuffix(name, "_ref") || strings.HasSuffix(name, "_reference") {
+					// References must be opaque strings. A nested object here would
+					// otherwise bypass the recursive credential check.
+					if _, ok := v.(string); !ok {
+						return false
+					}
 					continue
 				}
 				for _, forbidden := range []string{"password", "secret", "token", "credential", "private_key"} {

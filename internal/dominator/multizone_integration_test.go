@@ -231,6 +231,15 @@ func TestPostgresTwoZoneWorkerAdmissionAndRestart(t *testing.T) {
 		if _, err = db.Exec(`INSERT INTO host(id,zone,role,state,provider,providerid,protected) VALUES($1,$2,'spire','READY','aws',$3,true)`, "spire-"+az, zone.ID, "spire-id-"+az); err != nil {
 			t.Fatal(err)
 		}
+		if i == 0 {
+			if _, err = db.Exec(`INSERT INTO host(id,zone,role,state,provider,providerid,protected) VALUES('platform-host',$1,'platform','READY','aws','platform-id',true)`, zone.ID); err != nil {
+				t.Fatal(err)
+			}
+			if _, err = db.Exec(`INSERT INTO deployment_runtime(cluster_id,deployment_id,provider,account_id,region,vpc_id,spire_host_id,platform_host_id,dominator_image,runtime_secret_name,trust_domain,pod_cidr)
+ VALUES('shared','synthetic-deployment','aws','synthetic-account','us-west-2','vpc-synthetic','spire-a','platform-host','synthetic-dominator','synthetic-runtime','synthetic.test','10.244.0.0/16')`); err != nil {
+				t.Fatal(err)
+			}
+		}
 		if _, err = store.SetTarget(ctx, api.CapacityRequest{NodeGroupID: group.ID, ClusterID: "shared", RequestID: "scale-" + az, DesiredTarget: 1, TemplateRevision: "v1"}); err != nil {
 			t.Fatal(err)
 		}
