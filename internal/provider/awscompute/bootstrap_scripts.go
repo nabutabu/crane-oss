@@ -95,6 +95,7 @@ func baseScriptData(cfg bootstrapConfig, infra Infrastructure) (scriptData, erro
 		CiliumVersion:     cfg.Platform.CiliumVersion,
 		PodCIDR:           cfg.Platform.PodCIDR,
 		ZoneID:            first.Zone.ID,
+		ClusterID:         first.Cluster.ID,
 	}, nil
 }
 

@@ -22,6 +22,8 @@ func TestSafeBootstrapParameters(t *testing.T) {
 		{`{"auth":{"join_token":"private"}}`, false},
 		{`{"profiles":[{"password":"private"}]}`, false},
 		{`{"password":"private"}`, false},
+		{`{"secret_ref":{"join_token":"private"}}`, false},
+		{`{"secret_ref":["private"]}`, false},
 		{`[]`, false},
 		{`{`, false},
 	} {

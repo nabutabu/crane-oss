@@ -32,6 +32,26 @@ SELECT count(*)=1 AND bool_and(endpoint='https://[[ .PrivateIP ]]:44000' AND ide
 DO $$ BEGIN RAISE EXCEPTION 'conflicting bootstrap Dominator route'; END $$;
 \endif
 [[ end ]][[ end ]]
+INSERT INTO deployment_runtime(cluster_id,deployment_id,provider,account_id,region,vpc_id,
+ spire_host_id,platform_host_id,dominator_image,runtime_secret_name,trust_domain,pod_cidr)
+VALUES('[[ .ClusterID ]]','[[ .Config.Name ]]','aws','[[ .Config.AWS.AccountID ]]',
+ '[[ .Config.AWS.Region ]]','[[ .Infra.VPCID ]]',
+ '[[ .Config.Name ]]/bootstrap/spire','[[ .Config.Name ]]/bootstrap/platform',
+ '[[ .Config.Platform.DominatorImage ]]','crane-runtime','[[ .TrustDomain ]]',
+ '[[ .Config.Platform.PodCIDR ]]')
+ON CONFLICT(cluster_id) DO NOTHING;
+SELECT count(*)=1 AND bool_and(deployment_id='[[ .Config.Name ]]' AND provider='aws'
+ AND account_id='[[ .Config.AWS.AccountID ]]' AND region='[[ .Config.AWS.Region ]]'
+ AND vpc_id='[[ .Infra.VPCID ]]' AND spire_host_id='[[ .Config.Name ]]/bootstrap/spire'
+ AND platform_host_id='[[ .Config.Name ]]/bootstrap/platform'
+ AND dominator_image='[[ .Config.Platform.DominatorImage ]]'
+ AND runtime_secret_name='crane-runtime' AND trust_domain='[[ .TrustDomain ]]'
+ AND pod_cidr='[[ .Config.Platform.PodCIDR ]]') AS deployment_valid
+ FROM deployment_runtime WHERE cluster_id='[[ .ClusterID ]]' \gset
+\if :deployment_valid
+\else
+DO $$ BEGIN RAISE EXCEPTION 'conflicting deployment runtime references'; END $$;
+\endif
 COMMIT;
 SQL
 unset PGPASSWORD
