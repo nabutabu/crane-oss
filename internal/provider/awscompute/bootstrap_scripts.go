@@ -111,7 +111,7 @@ func renderScript(name string, data scriptData) (string, error) {
 }
 
 func renderTemplate(name string, data scriptData) (string, error) {
-	tmpl, err := template.New(name).Delims("[[", "]]").ParseFS(scriptTemplates, "templates/"+name)
+	tmpl, err := template.New(name).Delims("[[", "]]").ParseFS(scriptTemplates, "templates/"+name, "templates/provider-identity.sh.tmpl")
 	if err != nil {
 		return "", fmt.Errorf("parse %s: %w", name, err)
 	}

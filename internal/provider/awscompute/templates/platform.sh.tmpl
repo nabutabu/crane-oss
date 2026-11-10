@@ -68,6 +68,7 @@ fi
 
 # ---- kubeadm init (never reset an existing control plane) ------------------
 step "initializing Kubernetes control plane"
+[[ template "configure-provider-identity" . ]]
 if [ ! -f "$KUBECONFIG_FILE" ]; then
   kubeadm init \
     --kubernetes-version "$K8S_VERSION" \
@@ -79,6 +80,7 @@ install -d -m 0700 /root/.kube
 cp -f "$KUBECONFIG_FILE" /root/.kube/config
 chmod 600 /root/.kube/config
 export KUBECONFIG="$KUBECONFIG_FILE"
+[[ template "reconcile-provider-identity" . ]]
 
 # ---- Cilium (pinned chart) -------------------------------------------------
 step "installing and waiting for Cilium"
