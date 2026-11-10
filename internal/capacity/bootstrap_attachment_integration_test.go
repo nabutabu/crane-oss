@@ -53,7 +53,8 @@ func TestPostgresAttachmentRemainsEmptyUntilValidated(t *testing.T) {
 	}
 	zone := api.ZoneInput{ID: "attached-zone", Provider: "aws", AccountID: "account", Region: "us-west-2", ProviderZoneID: "us-west-2b"}
 	group := api.NodeGroupInput{Naming: api.NodeGroupNaming{Provider: "aws", DevelopmentStage: "test", Region: "us-west-2", AZ: "b", Group: "general"}, ClusterID: "cluster", ZoneID: zone.ID, NodePoolID: "attached-pool", ProviderZoneID: zone.ProviderZoneID, CapacityClass: "general", MinNodes: 0, MaxNodes: 4, TemplateRevision: "pending", PerNode: api.Resources{VCPU: 4, MemoryMiB: 8192}, LaunchParameters: []byte(`{}`)}
-	if err := group.NormalizeID(); err != nil {
+	groupID, err := api.FormatNodeGroupID(group.Naming)
+	if err != nil {
 		t.Fatal(err)
 	}
 	intent := api.AttachmentIntent{SourceGroupID: "aws-test-us-west-2-a-general", Zone: zone,
@@ -106,7 +107,7 @@ func TestPostgresAttachmentRemainsEmptyUntilValidated(t *testing.T) {
 	if replay, err := store.CreateBootstrap(ctx, request); err != nil || replay != id {
 		t.Fatalf("replay %q: %v", replay, err)
 	}
-	if _, err := store.SetTarget(ctx, api.CapacityRequest{NodeGroupID: group.ID, ClusterID: "cluster", RequestID: "premature", DesiredTarget: 1, TemplateRevision: "pending"}); !errors.Is(err, ErrInactive) {
+	if _, err := store.SetTarget(ctx, api.CapacityRequest{NodeGroupID: groupID, ClusterID: "cluster", RequestID: "premature", DesiredTarget: 1, TemplateRevision: "pending"}); !errors.Is(err, ErrInactive) {
 		t.Fatalf("premature capacity admission: %v", err)
 	}
 	fake := &attachmentStepFake{}
@@ -132,7 +133,7 @@ func TestPostgresAttachmentRemainsEmptyUntilValidated(t *testing.T) {
 	if lifecycle != "ready" || groupState != "active" || len(fake.phases) != 4 {
 		t.Fatalf("attachment state zone=%s group=%s phases=%v", lifecycle, groupState, fake.phases)
 	}
-	if _, err := store.SetTarget(ctx, api.CapacityRequest{NodeGroupID: group.ID, ClusterID: "cluster", RequestID: "after-ready", DesiredTarget: 1, TemplateRevision: "attach-pinned"}); err != nil {
+	if _, err := store.SetTarget(ctx, api.CapacityRequest{NodeGroupID: groupID, ClusterID: "cluster", RequestID: "after-ready", DesiredTarget: 1, TemplateRevision: "attach-pinned"}); err != nil {
 		t.Fatal(err)
 	}
 }
