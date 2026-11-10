@@ -15,7 +15,7 @@ func (s *Store) PinAttachmentTemplate(ctx context.Context, op api.Operation, res
 		return ErrInvalid
 	}
 	var intent api.AttachmentIntent
-	if json.Unmarshal(op.Parameters, &intent) != nil || intent.Group.ID == "" ||
+	if json.Unmarshal(op.Parameters, &intent) != nil || intent.Group.NormalizeID() != nil ||
 		intent.Zone.ID != op.ZoneID || result.Scheduling.Region != intent.Zone.Region ||
 		result.Scheduling.Zone != intent.Zone.ProviderZoneID || validateScheduling(result.Scheduling, intent.Pool.ID) != nil {
 		return ErrInvalid
