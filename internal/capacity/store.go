@@ -374,7 +374,7 @@ func (s *Store) Target(ctx context.Context, clusterID, groupID string) (api.Capa
 // Claim is reserved for provider-neutral zone bootstrap, before a zone
 // Dominator exists. Cluster work must use ClaimDominator.
 func (s *Store) Claim(ctx context.Context, zoneID, kind, owner string, duration time.Duration) (api.Operation, error) {
-	if kind != "create_cluster" {
+	if kind != "create_cluster" && kind != "attach_zone" {
 		return api.Operation{}, ErrForbidden
 	}
 	return s.claim(ctx, zoneID, kind, owner, duration, false)
@@ -413,6 +413,7 @@ func (s *Store) claim(ctx context.Context, zoneID, kind, owner string, duration 
 		 WHERE id=(
 		   SELECT id FROM operations
 		   WHERE operations.zone_id=$1 AND operations.kind=$2
+		     AND (operations.kind!='attach_zone' OR COALESCE(operations.parameters->>'source_group_id','')<>'')
 		     AND (state='pending' OR (state IN ('leased','launching')
 		       AND (lease_until IS NULL OR lease_until<=clock_timestamp())))
 		     AND (NOT $5 OR EXISTS (
@@ -598,9 +599,13 @@ func (s *Store) LoadProvisioningTarget(ctx context.Context, op *api.Operation) e
 	op.CapacityClass = template.CapacityClass
 	err := s.DB.QueryRowContext(ctx, `SELECT g.cluster_id,g.node_pool_id,z.provider,z.account_id,z.region,z.provider_zone_id,z.kubernetes_region,z.kubernetes_zone,
  c.api_server_endpoint,c.ca_cert_hash,
- COALESCE((SELECT h.providerid FROM host h WHERE h.protected AND h.crane_zone IS NULL
-   AND h.zone=z.id AND h.role='spire' ORDER BY h.createdat LIMIT 1),'')
+ h.providerid
 	 FROM node_groups g JOIN zones z ON z.id=g.zone_id JOIN clusters c ON c.id=g.cluster_id
+ JOIN deployment_runtime d ON d.cluster_id=c.id AND d.provider=z.provider
+   AND d.account_id=z.account_id AND d.region=z.region
+ JOIN host h ON h.id=d.spire_host_id AND h.protected AND h.role='spire'
+   AND h.provider=d.provider
+ JOIN zones hz ON hz.id=h.zone AND hz.provider=d.provider AND hz.account_id=d.account_id AND hz.region=d.region
  JOIN cluster_zones m ON m.cluster_id=g.cluster_id AND m.zone_id=g.zone_id
  WHERE g.id=$1 AND g.zone_id=$2 AND c.lifecycle_state='ready' AND z.lifecycle_state='ready' AND z.enabled
  AND m.lifecycle_state='ready' AND m.access_state='approved'`, op.NodeGroupID, op.ZoneID).
@@ -610,7 +615,7 @@ func (s *Store) LoadProvisioningTarget(ctx context.Context, op *api.Operation) e
 		return ErrInactive
 	}
 	if err == nil && op.SpireInstanceID == "" {
-		return errors.New("zone SPIRE host is unavailable")
+		return errors.New("deployment SPIRE host is unavailable")
 	}
 	if err == nil && op.Scheduling.Zone != "" && (op.Scheduling.Region != op.KubernetesRegion || op.Scheduling.Zone != op.KubernetesZone) {
 		return ErrInvalid

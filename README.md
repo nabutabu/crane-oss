@@ -92,13 +92,15 @@ The crane-api service will start on port 43060 and begin monitoring hosts in the
 - `PATCH /v1/node-groups/{id}/template` - admin-authenticated, revisioned scheduling and launch-template update
 - `GET /v1/node-groups/{id}/target` - authenticated target/revision read for adapter recovery
 - `POST /v1/node-removals` - authenticated atomic admission of explicit named-node removals; credits remain held until termination
-- `POST /v1/bootstrap` - creates a durable layer-zero `create_cluster` operation
-  (admin bearer token); `GET /v1/bootstrap/{id}` reports its phase and durable
-  state. Cluster creation is executed by `crane-bootstrap -worker`.
-  `attach_zone` is temporarily unavailable and returns HTTP 503 with code
-  `attachment_unavailable`; its host-creating bootstrap path has been removed.
-  [Issue #100](https://github.com/nabutabu/crane-oss/issues/100) tracks the
-  planned API-managed, zero-host attachment flow.
+- `POST /v1/bootstrap` - creates a durable `create_cluster` or `attach_zone`
+  operation (admin bearer token); `GET /v1/bootstrap/{id}` reports its phase
+  and durable state. Cluster creation is executed by `crane-bootstrap -worker`.
+  The in-cluster Crane API executes attachment: it reuses the deployment VPC,
+  SPIRE authority, platform host, and Kubernetes cluster, prepares an empty
+  zone and node group, then activates them after Dominator readiness. No host
+  is launched until a separate capacity request. Outside Kubernetes the attach
+  route returns HTTP 503 (`attachment_unavailable`). See
+  [AWS bootstrap](docs/aws-bootstrap.md#attach-an-empty-zone).
 
 ### dominator (Port 44000)
 

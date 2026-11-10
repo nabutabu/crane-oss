@@ -649,6 +649,7 @@ func ensureIAM(ctx context.Context, aws AWSClient, cfg bootstrapConfig, infra In
 		if kind == "spire" {
 			statements = append(statements, map[string]any{"Effect": "Allow", "Action": "secretsmanager:GetSecretValue", "Resource": infra.DBSecretARN}, map[string]any{"Effect": "Allow", "Action": "ssm:PutParameter", "Resource": bundleParameterARN(cfg)})
 		} else if kind == "platform" {
+			statements = append(statements, attachmentNetworkPolicy(cfg, infra)...)
 			statements = append(statements,
 				map[string]any{"Effect": "Allow", "Action": "ecr:GetAuthorizationToken", "Resource": "*"},
 				map[string]any{"Effect": "Allow", "Action": []string{"ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer", "ecr:BatchCheckLayerAvailability"}, "Resource": "arn:aws:ecr:" + cfg.AWS.Region + ":" + cfg.AWS.AccountID + ":repository/*"},
@@ -705,4 +706,19 @@ func ensureIAM(ctx context.Context, aws AWSClient, cfg bootstrapConfig, infra In
 		}
 	}
 	return infra, nil
+}
+
+// attachmentNetworkPolicy separates existing-resource ownership from the request
+// tags on a new subnet: a subnet cannot have resource tags before creation.
+func attachmentNetworkPolicy(cfg bootstrapConfig, infra Infrastructure) []any {
+	prefix := "arn:aws:ec2:" + cfg.AWS.Region + ":" + cfg.AWS.AccountID + ":"
+	owned := map[string]any{"StringEquals": map[string]string{"aws:RequestedRegion": cfg.AWS.Region, "ec2:ResourceTag/CraneBootstrap": cfg.Name}}
+	return []any{
+		map[string]any{"Effect": "Allow", "Action": []string{"ec2:DescribeVpcs", "ec2:DescribeRouteTables"}, "Resource": "*", "Condition": map[string]any{"StringEquals": map[string]string{"aws:RequestedRegion": cfg.AWS.Region}}},
+		map[string]any{"Effect": "Allow", "Action": "ec2:CreateSubnet", "Resource": prefix + "vpc/" + infra.VPCID, "Condition": owned},
+		map[string]any{"Effect": "Allow", "Action": "ec2:CreateSubnet", "Resource": prefix + "subnet/*", "Condition": map[string]any{"StringEquals": map[string]string{"aws:RequestedRegion": cfg.AWS.Region, "aws:RequestTag/CraneBootstrap": cfg.Name}}},
+		map[string]any{"Effect": "Allow", "Action": "ec2:CreateTags", "Resource": prefix + "subnet/*", "Condition": map[string]any{"StringEquals": map[string]string{"aws:RequestedRegion": cfg.AWS.Region, "ec2:CreateAction": "CreateSubnet", "aws:RequestTag/CraneBootstrap": cfg.Name}}},
+		map[string]any{"Effect": "Allow", "Action": "ec2:ModifySubnetAttribute", "Resource": prefix + "subnet/*", "Condition": owned},
+		map[string]any{"Effect": "Allow", "Action": "ec2:AssociateRouteTable", "Resource": []string{prefix + "subnet/*", prefix + "route-table/*"}, "Condition": owned},
+	}
 }

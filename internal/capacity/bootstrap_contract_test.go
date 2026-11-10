@@ -22,6 +22,8 @@ func TestSafeBootstrapParameters(t *testing.T) {
 		{`{"auth":{"join_token":"private"}}`, false},
 		{`{"profiles":[{"password":"private"}]}`, false},
 		{`{"password":"private"}`, false},
+		{`{"secret_ref":{"join_token":"private"}}`, false},
+		{`{"secret_ref":["private"]}`, false},
 		{`[]`, false},
 		{`{`, false},
 	} {
@@ -58,10 +60,10 @@ func TestBootstrapStatusRequiresAdmin(t *testing.T) {
 
 func TestAttachmentUnavailableBeforeTopologyOrDatabase(t *testing.T) {
 	store := &Store{}
-	if _, err := store.CreateBootstrap(context.Background(), api.BootstrapRequest{Kind: "attach_zone"}); !errors.Is(err, ErrAttachmentUnavailable) {
+	if _, err := store.CreateBootstrap(context.Background(), api.BootstrapRequest{Kind: "attach_zone"}); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("unexpected admission result: %v", err)
 	}
-	if _, err := store.Claim(context.Background(), "zone", "attach_zone", "worker", time.Minute); !errors.Is(err, ErrForbidden) {
+	if _, err := store.Claim(context.Background(), "zone", "unsupported", "worker", time.Minute); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("unexpected claim result: %v", err)
 	}
 	route := NewAPI(store, "admin-test", nil)

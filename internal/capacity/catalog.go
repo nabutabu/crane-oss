@@ -378,7 +378,7 @@ func (s *Store) CreateRemoval(ctx context.Context, clusterID string, expectedRev
 // The final Ready transition requires a validated handoff supplied by the trusted
 // layer-zero executor. A host cannot call this boundary to declare readiness.
 func (s *Store) BootstrapPhase(ctx context.Context, op api.Operation, next api.ZoneBootstrapPhase, validated bool) error {
-	if op.Kind != "create_cluster" {
+	if op.Kind != "create_cluster" && op.Kind != "attach_zone" {
 		return errors.New("not a bootstrap operation")
 	}
 
@@ -410,6 +410,22 @@ func (s *Store) BootstrapPhase(ctx context.Context, op api.Operation, next api.Z
 		return errors.New("bootstrap handoff has not been validated")
 	}
 	if next == api.ZoneReady && clusterID.Valid {
+		if op.Kind == "attach_zone" {
+			var ready bool
+			err = tx.QueryRowContext(ctx, `SELECT EXISTS(
+ SELECT 1 FROM clusters c JOIN deployment_runtime d ON d.cluster_id=c.id
+ JOIN zone_dominators zd ON zd.zone_id=$2
+ JOIN node_groups g ON g.cluster_id=c.id AND g.zone_id=$2
+ WHERE c.id=$1 AND c.lifecycle_state='ready' AND g.lifecycle_state='initializing'
+ AND g.target_nodes=0 AND g.min_nodes=0 AND g.launch_parameters!='{}'::jsonb
+ AND g.scheduling->>'zone'=(SELECT provider_zone_id FROM zones WHERE id=$2))`, clusterID.String, op.ZoneID).Scan(&ready)
+			if err != nil {
+				return err
+			}
+			if !ready {
+				return ErrConflict
+			}
+		}
 		if op.Kind == "create_cluster" {
 			if _, err = tx.ExecContext(ctx, `UPDATE clusters SET lifecycle_state='ready' WHERE id=$1 AND lifecycle_state='initializing'`, clusterID.String); err != nil {
 				return err
@@ -428,6 +444,20 @@ func (s *Store) BootstrapPhase(ctx context.Context, op api.Operation, next api.Z
 		}
 		if count != 1 {
 			return ErrConflict
+		}
+		if op.Kind == "attach_zone" {
+			r, e = tx.ExecContext(ctx, `UPDATE node_groups SET lifecycle_state='active'
+ WHERE cluster_id=$1 AND zone_id=$2 AND lifecycle_state='initializing' AND target_nodes=0 AND min_nodes=0`, clusterID.String, op.ZoneID)
+			if e != nil {
+				return e
+			}
+			count, e = r.RowsAffected()
+			if e != nil {
+				return e
+			}
+			if count != 1 {
+				return ErrConflict
+			}
 		}
 	}
 

@@ -42,7 +42,11 @@ authority.
 Dominator Pods mount their Kubernetes service-account token. Dedicated RBAC grants
 cluster-wide Node list/update and kube-system Pod list plus Secret create/delete
 for short-lived join tokens. These permissions apply to both the initial platform
-Dominator and additional zone Dominators; Crane API does not mount a token.
+Dominator and additional zone Dominators. Crane API mounts a service-account
+token for attachment reconciliation. Its preinstalled RBAC can read the immutable
+cluster marker, list Nodes, read the existing runtime Secret, and create the
+zone-scoped ServiceAccount, Deployment, Service, and bindings to the existing
+provisioner roles. It cannot create new roles or replace conflicting resources.
 
 ## Deployment scope
 

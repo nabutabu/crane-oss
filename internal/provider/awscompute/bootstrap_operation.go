@@ -135,7 +135,7 @@ func (s *operationSession) EnsureInfrastructure(ctx context.Context, op api.Oper
 	if err != nil {
 		return api.BootstrapStepResult{}, err
 	}
-	return api.BootstrapStepResult{ProviderHostID: h.ID, HostPrivateIP: h.PrivateIP, ImageID: s.cfg.Platform.AMIID}, nil
+	return api.BootstrapStepResult{DeploymentID: s.cfg.Name, ProviderHostID: h.ID, HostPrivateIP: h.PrivateIP, ImageID: s.cfg.Platform.AMIID}, nil
 }
 
 func (s *operationSession) operationHost(ctx context.Context, role string) (host, error) {

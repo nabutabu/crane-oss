@@ -283,6 +283,7 @@ func TestInfrastructureFirstRunAndRetry(t *testing.T) {
 	if err := json.Unmarshal([]byte(policies[cfg.Name+"-platform"]), &platformPolicy); err != nil {
 		t.Fatal(err)
 	}
+	checkAttachmentNetworkPermissions(t, policies, cfg, first.VPCID)
 	documentAllowed, targetsRestricted := false, false
 	for _, statement := range platformPolicy.Statement {
 		if statement.Action != "ssm:SendCommand" {

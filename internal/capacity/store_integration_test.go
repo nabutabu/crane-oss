@@ -432,6 +432,10 @@ func TestPostgresProvisioningHandoffIsFencedAndCompletesAtReadiness(t *testing.T
 	ctx := context.Background()
 	mustExec(t, db, `INSERT INTO host(id,role,zone,imageid,state,health,createdat,provider,providerid,protected)
  VALUES('bootstrap/spire','spire','zone','ami-spire','CONVERGING','unknown',clock_timestamp(),'aws','i-spire',true)`)
+	mustExec(t, db, `INSERT INTO host(id,role,zone,imageid,state,health,createdat,provider,providerid,protected)
+ VALUES('bootstrap/platform','platform','zone','ami-platform','CONVERGING','unknown',clock_timestamp(),'aws','i-platform',true)`)
+	mustExec(t, db, `INSERT INTO deployment_runtime(cluster_id,deployment_id,provider,account_id,region,vpc_id,spire_host_id,platform_host_id,dominator_image,runtime_secret_name,trust_domain,pod_cidr)
+ VALUES('cluster','deployment','aws','account','us-west-2','vpc-test','bootstrap/spire','bootstrap/platform','dominator:tag','crane-runtime','test.internal','10.244.0.0/16')`)
 	if _, err := s.SetTarget(ctx, request("runtime", 0, 1)); err != nil {
 		t.Fatal(err)
 	}

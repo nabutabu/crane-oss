@@ -37,6 +37,8 @@ import (
 	"github.com/nabutabu/crane-oss/pkg/api"
 	"github.com/spiffe/go-spiffe/v2/workloadapi"
 	"go.opentelemetry.io/otel"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 )
 
 const BHD_CONFIG_YAML_PATH = "bhd.json"
@@ -221,6 +223,39 @@ func run() (runErr error) {
 	}
 	defer identitySource.Close()
 
+	capacityStore := capacity.NewStore(db)
+	attachmentEnabled := false
+	if os.Getenv("KUBERNETES_SERVICE_HOST") != "" {
+		kubeConfig, err := rest.InClusterConfig()
+		if err != nil {
+			return fmt.Errorf("attachment Kubernetes access unavailable")
+		}
+		clusterCA := kubeConfig.CAData
+		if len(clusterCA) == 0 {
+			clusterCA, err = os.ReadFile(kubeConfig.CAFile)
+			if err != nil {
+				return fmt.Errorf("attachment cluster CA unavailable")
+			}
+		}
+		kube, err := kubernetes.NewForConfig(kubeConfig)
+		if err != nil {
+			return fmt.Errorf("attachment Kubernetes client unavailable")
+		}
+		owner, err := os.Hostname()
+		if err != nil || owner == "" {
+			return fmt.Errorf("attachment controller identity unavailable")
+		}
+		controller := capacity.BootstrapController{Store: capacityStore,
+			Executor: registry.AttachmentExecutor{Store: capacityStore, Kubernetes: kube, ClusterCA: clusterCA, Caller: hostrpc.Client{Source: identitySource}},
+			Lease:    2 * time.Minute}
+		background.Add(1)
+		go func() {
+			defer background.Done()
+			_ = controller.RunAttachments(ctx, "crane-api-"+owner, 5*time.Second, logger.Logger)
+		}()
+		attachmentEnabled = true
+	}
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", health.health)
 	mux.HandleFunc("/v1/db/health", health.dbHealth)
@@ -232,8 +267,10 @@ func run() (runErr error) {
 	if err != nil {
 		return err
 	}
-	capacityAPI := capacity.NewAPI(capacity.NewStore(db), intconfig.GetEnv("CRANE_ADMIN_TOKEN", ""), principals)
+	capacityAPI := capacity.NewAPI(capacityStore, intconfig.GetEnv("CRANE_ADMIN_TOKEN", ""), principals)
 	capacityAPI.ValidateTopology = registry.ValidateTopology
+	capacityAPI.ValidateAttachment = registry.ValidateAttachment
+	capacityAPI.AttachmentsEnabled = attachmentEnabled
 	mux.Handle("/v1/", capacityAPI.Handler())
 
 	server := &http.Server{Addr: ":43060", Handler: telemetryProvider.HTTPHandler(mux, logger.Logger), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: api.OperationTimeout + time.Minute}

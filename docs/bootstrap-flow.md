@@ -98,8 +98,9 @@ states. They are not made ready until the validation handoff succeeds.
 
 ### 9. Install Kubernetes attestation and observability
 
-Bootstrap installs the Kubernetes RBAC needed by the SPIRE Kubernetes attestor
-and Subd. Service-account token automount is disabled; workload identity comes
+Bootstrap installs the Kubernetes RBAC needed by the SPIRE Kubernetes attestor,
+Subd, and API-managed attachment. Crane API and Dominator mount service-account
+tokens for their bounded Kubernetes operations; their workload identities come
 from SPIRE.
 
 It also installs the internal OpenTelemetry Collector credentials, TLS material,

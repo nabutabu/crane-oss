@@ -14,7 +14,7 @@ import (
 // ReleaseBootstrapLease makes a completed nonterminal phase immediately
 // claimable. The fence prevents a stale controller from releasing a new lease.
 func (s *Store) ReleaseBootstrapLease(ctx context.Context, op api.Operation) error {
-	if op.Kind != "create_cluster" {
+	if op.Kind != "create_cluster" && op.Kind != "attach_zone" {
 		return ErrForbidden
 	}
 	r, err := s.DB.ExecContext(ctx, `UPDATE operations SET state='pending',lease_owner=NULL,lease_until=NULL,updated_at=clock_timestamp()
@@ -25,17 +25,34 @@ func (s *Store) ReleaseBootstrapLease(ctx context.Context, op api.Operation) err
 // NextBootstrapZone returns one runnable zone; expired leases are recoverable
 // after a worker restart. This read does not claim work.
 func (s *Store) NextBootstrapZone(ctx context.Context) (string, error) {
+	return s.nextBootstrapZone(ctx, "create_cluster")
+}
+
+func (s *Store) NextAttachmentZone(ctx context.Context) (string, error) {
+	return s.nextBootstrapZone(ctx, "attach_zone")
+}
+
+func (s *Store) nextBootstrapZone(ctx context.Context, kind string) (string, error) {
 	var zoneID string
 	err := s.DB.QueryRowContext(ctx, `SELECT o.zone_id FROM operations o JOIN zone_bootstrap_operations b ON b.operation_id=o.id
- WHERE o.kind='create_cluster' AND b.phase NOT IN ('Ready','Failed')
+ WHERE o.kind=$1 AND b.phase NOT IN ('Ready','Failed')
+ AND (o.kind!='attach_zone' OR COALESCE(o.parameters->>'source_group_id','')<>'')
  AND (o.state='pending' OR (o.state IN ('leased','launching') AND o.lease_until<=clock_timestamp()))
- ORDER BY o.created_at,o.id LIMIT 1`).Scan(&zoneID)
+ ORDER BY o.created_at,o.id LIMIT 1`, kind).Scan(&zoneID)
 	return zoneID, err
 }
 
 // Run polls durable work until cancellation. Only configured layer-zero
 // executors should be passed to this loop; errors are sanitized in logs.
 func (c *BootstrapController) Run(ctx context.Context, owner string, interval time.Duration, logger *slog.Logger) error {
+	return c.run(ctx, owner, interval, logger, "create_cluster")
+}
+
+func (c *BootstrapController) RunAttachments(ctx context.Context, owner string, interval time.Duration, logger *slog.Logger) error {
+	return c.run(ctx, owner, interval, logger, "attach_zone")
+}
+
+func (c *BootstrapController) run(ctx context.Context, owner string, interval time.Duration, logger *slog.Logger, kind string) error {
 	if c.Store == nil || c.Executor == nil || owner == "" || interval <= 0 {
 		return fmt.Errorf("bootstrap worker is not configured")
 	}
@@ -45,9 +62,9 @@ func (c *BootstrapController) Run(ctx context.Context, owner string, interval ti
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
-		zoneID, err := c.Store.NextBootstrapZone(ctx)
+		zoneID, err := c.Store.nextBootstrapZone(ctx, kind)
 		if err == nil {
-			if stepErr := c.RunOnce(ctx, zoneID, owner); stepErr != nil && ctx.Err() == nil {
+			if stepErr := c.runOnce(ctx, zoneID, owner, kind); stepErr != nil && ctx.Err() == nil {
 				logger.WarnContext(ctx, "bootstrap phase failed", "zone_id", zoneID)
 			}
 		} else if !errors.Is(err, sql.ErrNoRows) && ctx.Err() == nil {
