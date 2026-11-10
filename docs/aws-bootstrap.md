@@ -386,3 +386,22 @@ go run ./cmd/crane-bootstrap -dsn "$CRANE_DATABASE_URL" -config first-zone.json
 ```
 
 Services verify schema readiness at startup; bootstrap initializes the schema.
+
+## Runtime zone attachment permissions
+
+The platform instance's `<deployment>-platform` role has the `crane-runtime`
+inline policy. Zone attachment runs in `crane-api` using that instance role.
+The policy allows regional VPC/route-table discovery, subnet creation in the
+exact deployment VPC, and creation-time subnet tagging with the deployment's
+`CraneBootstrap` tag. Subnet updates and route associations require existing
+resources to carry that deployment tag; resource ARNs restrict writes to the
+configured account and region. Workers and the SPIRE role do not receive these
+network write permissions. No additional instance-launch or pass-role grants
+are needed for attachment, which starts with zero workers.
+
+Existing deployments must reconcile their platform IAM policy using the same
+bootstrap configuration and state before using attachment. Restarting
+`crane-api` alone does not update IAM. IAM authorization follows the
+[AWS EC2 action/resource reference](https://docs.aws.amazon.com/service-authorization/latest/reference/list_ec2.html):
+`CreateSubnet` authorizes the existing VPC and the new subnet separately, and
+creation-time tags require `ec2:CreateTags` with `ec2:CreateAction=CreateSubnet`.
