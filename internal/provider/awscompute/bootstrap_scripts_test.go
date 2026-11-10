@@ -356,3 +356,75 @@ source ` + shellQuote(file)
 		})
 	}
 }
+
+func TestControlPlanesConfigureAndRepairProviderIdentity(t *testing.T) {
+	for _, name := range []string{"platform.sh.tmpl", "cluster-control-plane.sh.tmpl"} {
+		script, err := renderTemplate(name, scriptData{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, required := range []string{"latest/api/token", "latest/meta-data/instance-id", "placement/availability-zone", "--provider-id=$PROVIDER_ID", "cmp -s", "InternalIP", "conflicting provider identity", "kubectl patch node", "test \"$(kubectl get node"} {
+			if !strings.Contains(script, required) {
+				t.Errorf("%s missing %s", name, required)
+			}
+		}
+		if strings.Index(script, "--provider-id=$PROVIDER_ID") > strings.Index(script, "kubeadm init \\") {
+			t.Errorf("%s configures provider identity after init", name)
+		}
+	}
+}
+
+func TestRepairExistingNodeProviderIdentity(t *testing.T) {
+	raw, err := scriptTemplates.ReadFile("templates/provider-identity.sh.tmpl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := strings.Split(strings.Split(string(raw), `[[ define "reconcile-provider-identity" ]]`)[1], `[[ end ]]`)[0]
+	for _, initial := range []string{"", "aws:///us-west-2a/i-11111111111111111", "aws:///us-west-2a/i-22222222222222222"} {
+		t.Run(initial, func(t *testing.T) {
+			dir := t.TempDir()
+			state := filepath.Join(dir, "provider")
+			if err := os.WriteFile(state, []byte(initial), 0600); err != nil {
+				t.Fatal(err)
+			}
+			fake := `#!/usr/bin/env bash
+set -eu
+if [ "$1 $2" = 'get nodes' ]; then
+ echo '{"items":[{"metadata":{"name":"platform"},"status":{"addresses":[{"type":"InternalIP","address":"10.80.0.129"}]}}]}'
+elif [ "$1 $2" = 'get node' ]; then cat "$TEST_STATE"
+elif [ "$1 $2" = 'patch node' ]; then printf '%s' "$PROVIDER_ID" > "$TEST_STATE"; echo patch >> "$TEST_PATCHES"
+else exit 1
+fi
+`
+			if err := os.WriteFile(filepath.Join(dir, "kubectl"), []byte(fake), 0700); err != nil {
+				t.Fatal(err)
+			}
+			cmd := exec.Command("bash", "-eu", "-c", script+"\n"+script)
+			expected := "aws:///us-west-2a/i-11111111111111111"
+			patches := filepath.Join(dir, "patches")
+			cmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"), "TEST_STATE="+state, "TEST_PATCHES="+patches, "PROVIDER_ID="+expected, "PRIVATE_IP=10.80.0.129")
+			out, err := cmd.CombinedOutput()
+			if initial != "" && initial != expected {
+				if err == nil {
+					t.Fatal("conflicting identity accepted")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("repair failed: %v %s", err, out)
+			}
+			got, _ := os.ReadFile(state)
+			if string(got) != expected {
+				t.Fatal("identity not repaired")
+			}
+			log, _ := os.ReadFile(patches)
+			want := ""
+			if initial == "" {
+				want = "patch\n"
+			}
+			if string(log) != want {
+				t.Fatalf("unexpected patches: %q", log)
+			}
+		})
+	}
+}

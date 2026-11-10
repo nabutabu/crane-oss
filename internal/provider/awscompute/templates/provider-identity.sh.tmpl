@@ -1,0 +1,43 @@
+[[ define "configure-provider-identity" ]]
+# Bind kubelet registration to this EC2 host using IMDSv2, never request input.
+PROVIDER_IMDS_TOKEN="$(curl -fsS -X PUT http://169.254.169.254/latest/api/token -H 'X-aws-ec2-metadata-token-ttl-seconds: 300')"
+PROVIDER_INSTANCE_ID="$(curl -fsS -H "X-aws-ec2-metadata-token: $PROVIDER_IMDS_TOKEN" http://169.254.169.254/latest/meta-data/instance-id)"
+PROVIDER_AZ="$(curl -fsS -H "X-aws-ec2-metadata-token: $PROVIDER_IMDS_TOKEN" http://169.254.169.254/latest/meta-data/placement/availability-zone)"
+printf '%s\n' "$PROVIDER_INSTANCE_ID" | grep -Eq '^i-([0-9a-f]{8}|[0-9a-f]{17})$'
+printf '%s\n' "$PROVIDER_AZ" | grep -Eq '^[a-z]{2}(-[a-z]+)+-[0-9][a-z]$'
+PROVIDER_ID="aws:///$PROVIDER_AZ/$PROVIDER_INSTANCE_ID"
+install -d -m 0755 /etc/systemd/system/kubelet.service.d
+PROVIDER_DROPIN=/etc/systemd/system/kubelet.service.d/20-crane-provider.conf
+PROVIDER_TMP="$(mktemp)"
+cat > "$PROVIDER_TMP" <<DROPIN
+[Service]
+ExecStart=
+ExecStart=/usr/bin/kubelet \$KUBELET_KUBECONFIG_ARGS \$KUBELET_CONFIG_ARGS \$KUBELET_KUBEADM_ARGS \$KUBELET_EXTRA_ARGS --provider-id=$PROVIDER_ID
+DROPIN
+if ! cmp -s "$PROVIDER_TMP" "$PROVIDER_DROPIN"; then
+  install -m 0644 "$PROVIDER_TMP" "$PROVIDER_DROPIN"
+  systemctl daemon-reload
+  if systemctl is-active --quiet kubelet; then systemctl restart kubelet; fi
+fi
+rm -f "$PROVIDER_TMP"
+[[ end ]]
+[[ define "reconcile-provider-identity" ]]
+# Kubelet registration does not repair an existing Node. Locate the local node
+# by its IMDS-derived internal address, reject conflicting identity, then patch.
+PROVIDER_NODE=""
+for _ in $(seq 1 60); do
+  PROVIDER_NODE="$(kubectl get nodes -o json | python3 -c 'import json,sys; ip=sys.argv[1]; nodes=[n for n in json.load(sys.stdin)["items"] if any(a["type"]=="InternalIP" and a["address"]==ip for a in n["status"].get("addresses",[]))]; print(nodes[0]["metadata"]["name"] if len(nodes)==1 else "")' "$PRIVATE_IP")"
+  [ -n "$PROVIDER_NODE" ] && break
+  sleep 5
+done
+test -n "$PROVIDER_NODE"
+CURRENT_PROVIDER_ID="$(kubectl get node "$PROVIDER_NODE" -o jsonpath='{.spec.providerID}')"
+if [ -n "$CURRENT_PROVIDER_ID" ] && [ "$CURRENT_PROVIDER_ID" != "$PROVIDER_ID" ]; then
+  echo 'platform node has conflicting provider identity' >&2
+  exit 1
+fi
+if [ -z "$CURRENT_PROVIDER_ID" ]; then
+  kubectl patch node "$PROVIDER_NODE" --type=merge -p "{\"spec\":{\"providerID\":\"$PROVIDER_ID\"}}" >/dev/null
+fi
+test "$(kubectl get node "$PROVIDER_NODE" -o jsonpath='{.spec.providerID}')" = "$PROVIDER_ID"
+[[ end ]]

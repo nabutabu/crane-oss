@@ -12,6 +12,7 @@ readonly KUBECONFIG_FILE=/etc/kubernetes/admin.conf
 
 for executable in kubeadm kubectl openssl awk; do command -v "$executable" >/dev/null; done
 test "$(kubeadm version -o short)" = "$K8S_VERSION"
+[[ template "configure-provider-identity" . ]]
 if [ ! -f "$KUBECONFIG_FILE" ]; then
   kubeadm init \
     --kubernetes-version "$K8S_VERSION" \
@@ -20,6 +21,7 @@ if [ ! -f "$KUBECONFIG_FILE" ]; then
     --cri-socket unix:///run/containerd/containerd.sock
 fi
 export KUBECONFIG="$KUBECONFIG_FILE"
+[[ template "reconcile-provider-identity" . ]]
 kubectl get --raw=/readyz >/dev/null
 API_ENDPOINT="$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}')"
 CA_CERT_HASH="sha256:$(openssl x509 -in /etc/kubernetes/pki/ca.crt -pubkey -noout | openssl pkey -pubin -outform DER | openssl dgst -sha256 | awk '{print $2}')"
