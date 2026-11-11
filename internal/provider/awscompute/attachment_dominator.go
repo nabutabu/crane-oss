@@ -54,6 +54,7 @@ func ReconcileAttachmentDominator(ctx context.Context, kube kubernetes.Interface
 		return result, err
 	}
 	replicas := int32(1)
+	caMode := int32(0444)
 	deploymentObject := &apps.Deployment{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace, Labels: labels}, Spec: apps.DeploymentSpec{
 		Replicas: &replicas, Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": name}},
 		Template: core.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: labels}, Spec: core.PodSpec{
@@ -65,8 +66,14 @@ func ReconcileAttachmentDominator(ctx context.Context, kube kubernetes.Interface
 					{Name: "SPIFFE_TRUST_DOMAIN", Value: deployment.TrustDomain}, {Name: "SPIFFE_ENDPOINT_SOCKET", Value: "unix:///run/spire/sockets/agent.sock"},
 					{Name: "ENVIRONMENT", Value: "production"}, {Name: "AWS_REGION", Value: deployment.Region},
 				}, EnvFrom: []core.EnvFromSource{{SecretRef: &core.SecretEnvSource{LocalObjectReference: core.LocalObjectReference{Name: deployment.RuntimeSecretName}}}},
-				VolumeMounts: []core.VolumeMount{{Name: "spire", MountPath: "/run/spire/sockets"}},
-			}}, Volumes: []core.Volume{{Name: "spire", VolumeSource: core.VolumeSource{HostPath: &core.HostPathVolumeSource{Path: "/run/spire/sockets"}}}},
+				VolumeMounts: []core.VolumeMount{{Name: "spire", MountPath: "/run/spire/sockets"}, {Name: "rds-ca", MountPath: "/etc/crane", ReadOnly: true}},
+			}}, Volumes: []core.Volume{
+				{Name: "spire", VolumeSource: core.VolumeSource{HostPath: &core.HostPathVolumeSource{Path: "/run/spire/sockets"}}},
+				{Name: "rds-ca", VolumeSource: core.VolumeSource{ConfigMap: &core.ConfigMapVolumeSource{
+					LocalObjectReference: core.LocalObjectReference{Name: "crane-rds-ca"}, DefaultMode: &caMode,
+					Items: []core.KeyToPath{{Key: "rds-ca.pem", Path: "rds-ca.pem"}},
+				}}},
+			},
 		}},
 	}}
 	if err := ensureAttachmentDeployment(ctx, kube, deploymentObject); err != nil {

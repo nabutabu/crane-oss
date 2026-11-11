@@ -39,6 +39,15 @@ func TestReconcileAttachmentDominatorIsZoneScopedAndRepeatable(t *testing.T) {
 	if err != nil || deploymentObject.Spec.Template.Spec.NodeName != "platform-node" {
 		t.Fatal("Dominator is not pinned to protected platform node")
 	}
+	volume := deploymentObject.Spec.Template.Spec.Volumes[1].ConfigMap
+	if volume == nil || volume.Name != "crane-rds-ca" || volume.DefaultMode == nil || *volume.DefaultMode != 0444 ||
+		len(volume.Items) != 1 || volume.Items[0].Key != "rds-ca.pem" || volume.Items[0].Path != "rds-ca.pem" || (volume.Optional != nil && *volume.Optional) {
+		t.Fatal("Dominator requires the projected RDS CA bundle")
+	}
+	mount := deploymentObject.Spec.Template.Spec.Containers[0].VolumeMounts[1]
+	if mount.Name != "rds-ca" || mount.MountPath != "/etc/crane" || !mount.ReadOnly || mount.SubPath != "" {
+		t.Fatal("Dominator must mount the CA directory read-only")
+	}
 	if _, err := kube.AppsV1().Deployments("crane-system").Update(ctx, &apps.Deployment{ObjectMeta: deploymentObject.ObjectMeta, Spec: apps.DeploymentSpec{Replicas: deploymentObject.Spec.Replicas}}, metav1.UpdateOptions{}); err != nil {
 		t.Fatal(err)
 	}

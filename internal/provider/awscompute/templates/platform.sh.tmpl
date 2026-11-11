@@ -152,6 +152,9 @@ metadata:
   name: crane-system
 NS
 
+test -s "$CA_BUNDLE"
+kubectl -n crane-system create configmap crane-rds-ca --from-file="rds-ca.pem=$CA_BUNDLE" --dry-run=client -o yaml | kubectl apply -f -
+
 # Resolve the protected node by this host's private address, not list ordering.
 NODE_NAME="$(kubectl get nodes -o json | PRIVATE_IP="$PRIVATE_IP" python3 -c '
 import json, os, sys
@@ -579,8 +582,12 @@ spec:
               mountPath: /tmp
       volumes:
         - name: etc-crane
-          hostPath:
-            path: /etc/crane
+          configMap:
+            name: crane-rds-ca
+            defaultMode: 0444
+            items:
+              - key: rds-ca.pem
+                path: rds-ca.pem
         - name: spire-sockets
           hostPath:
             path: /run/spire/sockets
@@ -702,8 +709,12 @@ spec:
               mountPath: /tmp
       volumes:
         - name: etc-crane
-          hostPath:
-            path: /etc/crane
+          configMap:
+            name: crane-rds-ca
+            defaultMode: 0444
+            items:
+              - key: rds-ca.pem
+                path: rds-ca.pem
         - name: spire-sockets
           hostPath:
             path: /run/spire/sockets

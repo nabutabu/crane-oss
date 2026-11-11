@@ -73,6 +73,12 @@ func TestZoneDominatorScriptUsesZoneIdentityAndRuntimeSecret(t *testing.T) {
 		"name: dominator-zone-b",
 		"port: 44000",
 		"crane-dominator-endpoint:",
+		"test -s /etc/crane/rds-ca.pem",
+		"create configmap crane-rds-ca --from-file=rds-ca.pem=/etc/crane/rds-ca.pem",
+		"name: crane-rds-ca",
+		"defaultMode: 0444",
+		"{key: rds-ca.pem, path: rds-ca.pem}",
+		"{name: rds-ca, mountPath: /etc/crane, readOnly: true}",
 	} {
 		if !strings.Contains(script, required) {
 			t.Fatalf("missing %s", required)
