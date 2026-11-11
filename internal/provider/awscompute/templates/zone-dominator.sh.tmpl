@@ -7,6 +7,8 @@ NODE_NAME="$(kubectl get nodes -o json | python3 -c 'import json,sys; d=json.loa
 SECRET_DIR="$(mktemp -d)"
 trap 'rm -rf "$SECRET_DIR"' EXIT
 kubectl create namespace crane-system --dry-run=client -o yaml | kubectl apply -f -
+test -s /etc/crane/rds-ca.pem
+kubectl -n crane-system create configmap crane-rds-ca --from-file=rds-ca.pem=/etc/crane/rds-ca.pem --dry-run=client -o yaml | kubectl apply -f -
 aws secretsmanager get-secret-value --secret-id "[[ .Infra.RuntimeSecretARN ]]" --query SecretString --output text > "$SECRET_DIR/runtime.json"
 SECRET_FILE="$SECRET_DIR/crane-runtime.json"
 DB_ENDPOINT="[[ .Infra.DBEndpoint ]]" DB_PORT="[[ .Config.RDS.Port ]]" python3 - "$SECRET_DIR/runtime.json" "$SECRET_FILE" <<'PY'
@@ -120,8 +122,17 @@ spec:
         envFrom:
         - secretRef: {name: crane-runtime}
         ports: [{containerPort: 44000, name: mtls}]
-        volumeMounts: [{name: spire, mountPath: /run/spire/sockets}]
-      volumes: [{name: spire, hostPath: {path: /run/spire/sockets}}]
+        volumeMounts:
+        - {name: spire, mountPath: /run/spire/sockets}
+        - {name: rds-ca, mountPath: /etc/crane, readOnly: true}
+      volumes:
+      - {name: spire, hostPath: {path: /run/spire/sockets}}
+      - name: rds-ca
+        configMap:
+          name: crane-rds-ca
+          defaultMode: 0444
+          items:
+          - {key: rds-ca.pem, path: rds-ca.pem}
 YAML
 kubectl -n crane-system apply -f - <<YAML
 apiVersion: v1
