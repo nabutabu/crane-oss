@@ -31,6 +31,34 @@ func (h LocalHost) kubeletPath() string {
 	return "/etc/kubernetes/kubelet.conf"
 }
 
+func (h LocalHost) kubeletDataDir() string {
+	if h.KubeletDataDir != "" {
+		return h.KubeletDataDir
+	}
+	return "/var/lib/kubelet"
+}
+
+func (h LocalHost) workerJoinConfigDir() string {
+	if h.workerJoinDir != "" {
+		return h.workerJoinDir
+	}
+	return "/run"
+}
+
+func removeIncompleteJoinFile(path string) error {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil || !info.Mode().IsRegular() {
+		return errors.New("cannot inspect incomplete worker join file")
+	}
+	if err := os.Remove(path); err != nil {
+		return errors.New("cannot clear incomplete worker join file")
+	}
+	return nil
+}
+
 func kubeletCredentials(path, endpoint, caHash string) (*rest.Config, tls.Certificate, error) {
 	invalid := errors.New("local kubelet cluster identity does not match trusted discovery")
 	cfg, err := clientcmd.BuildConfigFromFlags("", path)
@@ -101,6 +129,9 @@ func renderWorkerJoin(in api.ClusterJoinRequest) ([]byte, error) {
 }
 
 func (h LocalHost) JoinCluster(ctx context.Context, in api.ClusterJoinRequest) error {
+	ctx, cancel := context.WithTimeout(ctx, api.OperationTimeout)
+	defer cancel()
+
 	config, err := renderWorkerJoin(in)
 	if err != nil {
 		return err
@@ -118,8 +149,9 @@ func (h LocalHost) JoinCluster(ctx context.Context, in api.ClusterJoinRequest) e
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return errors.New("cannot inspect existing kubelet identity")
 	}
-	// An interrupted bootstrap can leave kubelet running with an expired token.
-	// Refresh only the credentials of the already pinned local bootstrap config.
+	// A prior kubeadm attempt may have left a bootstrap kubeconfig. Only resume
+	// kubelet when kubeadm's main configuration was also written. Without it,
+	// restart kubeadm after clearing the narrow set of generated bootstrap files.
 	bootstrapPath := filepath.Join(filepath.Dir(h.kubeletPath()), "bootstrap-kubelet.conf")
 	if _, err := os.Stat(bootstrapPath); err == nil {
 		cfg, err := clientcmd.LoadFromFile(bootstrapPath)
@@ -146,46 +178,67 @@ func (h LocalHost) JoinCluster(ctx context.Context, in api.ClusterJoinRequest) e
 		if err != nil || pin != in.CACertHash {
 			return errors.New("bootstrap trust root conflicts with destination")
 		}
-		auth.Token = in.Token
-		auth.TokenFile = ""
-		data, err := clientcmd.Write(*cfg)
-		if err != nil {
-			return errors.New("cannot refresh bootstrap credentials")
-		}
-		file, err := os.CreateTemp(filepath.Dir(bootstrapPath), ".crane-bootstrap-*")
-		if err != nil {
-			return errors.New("cannot stage bootstrap retry")
-		}
-		defer os.Remove(file.Name())
-		if err = file.Chmod(0600); err == nil {
-			_, err = file.Write(data)
-		}
-		closeErr := file.Close()
-		if err != nil || closeErr != nil || os.Rename(file.Name(), bootstrapPath) != nil {
-			return errors.New("cannot persist bootstrap retry")
-		}
 		run := h.run
 		if run == nil {
 			run = hostCommand
 		}
-		if run(ctx, "systemctl", "restart", "kubelet") != nil {
-			return errors.New("cannot resume worker kubelet")
-		}
-		if wait.PollUntilContextTimeout(ctx, time.Second, time.Minute, true, func(context.Context) (bool, error) {
-			_, cert, err := kubeletCredentials(h.kubeletPath(), in.APIServerEndpoint, in.CACertHash)
-			if err != nil {
-				return false, nil
+		kubeletConfigPath := filepath.Join(h.kubeletDataDir(), "config.yaml")
+		if _, err := os.Stat(kubeletConfigPath); errors.Is(err, os.ErrNotExist) {
+			if run(ctx, "systemctl", "stop", "kubelet") != nil {
+				return errors.New("cannot stop incomplete worker kubelet")
 			}
-			leaf, err := x509.ParseCertificate(cert.Certificate[0])
-			return err == nil && leaf.Subject.CommonName == "system:node:"+in.Registration.NodeName, nil
-		}) != nil {
-			return errors.New("worker join retry is not complete")
+			// kubelet.conf was verified absent above and the bootstrap config is
+			// pinned to this destination. Remove only kubeadm's bootstrap
+			// kubeconfig and generated kubelet config/flags before retrying join.
+			for _, path := range []string{
+				bootstrapPath,
+				filepath.Join(h.kubeletDataDir(), "instance-config.yaml"),
+				filepath.Join(h.kubeletDataDir(), "kubeadm-flags.env"),
+			} {
+				if err := removeIncompleteJoinFile(path); err != nil {
+					return err
+				}
+			}
+		} else if err != nil {
+			return errors.New("cannot inspect kubelet bootstrap configuration")
+		} else {
+			auth.Token = in.Token
+			auth.TokenFile = ""
+			data, err := clientcmd.Write(*cfg)
+			if err != nil {
+				return errors.New("cannot refresh bootstrap credentials")
+			}
+			file, err := os.CreateTemp(filepath.Dir(bootstrapPath), ".crane-bootstrap-*")
+			if err != nil {
+				return errors.New("cannot stage bootstrap retry")
+			}
+			defer os.Remove(file.Name())
+			if err = file.Chmod(0600); err == nil {
+				_, err = file.Write(data)
+			}
+			closeErr := file.Close()
+			if err != nil || closeErr != nil || os.Rename(file.Name(), bootstrapPath) != nil {
+				return errors.New("cannot persist bootstrap retry")
+			}
+			if run(ctx, "systemctl", "restart", "kubelet") != nil {
+				return errors.New("cannot resume worker kubelet")
+			}
+			if wait.PollUntilContextTimeout(ctx, time.Second, time.Minute, true, func(context.Context) (bool, error) {
+				_, cert, err := kubeletCredentials(h.kubeletPath(), in.APIServerEndpoint, in.CACertHash)
+				if err != nil {
+					return false, nil
+				}
+				leaf, err := x509.ParseCertificate(cert.Certificate[0])
+				return err == nil && leaf.Subject.CommonName == "system:node:"+in.Registration.NodeName, nil
+			}) != nil {
+				return errors.New("worker join retry is not complete")
+			}
+			return nil
 		}
-		return nil
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return errors.New("cannot inspect bootstrap retry")
 	}
-	file, err := os.CreateTemp("/run", "crane-worker-join-*.json")
+	file, err := os.CreateTemp(h.workerJoinConfigDir(), "crane-worker-join-*.json")
 	if err != nil {
 		return errors.New("cannot stage worker join")
 	}
@@ -199,9 +252,12 @@ func (h LocalHost) JoinCluster(ctx context.Context, in api.ClusterJoinRequest) e
 	}
 	run := h.run
 	if run == nil {
-		run = hostCommand
+		run = hostJoinCommand
 	}
-	if run(ctx, "kubeadm", "join", "--config", file.Name()) != nil {
+	if err := run(ctx, "kubeadm", "join", "--config", file.Name()); err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return errors.New("Kubernetes worker join timed out")
+		}
 		return errors.New("Kubernetes worker join failed")
 	}
 	return nil
