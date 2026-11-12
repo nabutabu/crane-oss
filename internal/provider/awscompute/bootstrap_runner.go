@@ -56,7 +56,7 @@ func ensureHost(ctx context.Context, aws AWSClient, cfg bootstrapConfig, infra I
 		h = found[0]
 	} else {
 		token := sha256.Sum256([]byte(cfg.AWS.AccountID + "/" + cfg.AWS.Region + "/" + cfg.Name + "/" + role))
-		hopLimit := int32(2)
+		hopLimit := 2
 		if role == "platform" || strings.HasPrefix(role, "cluster-") {
 			// Dominator runs in Cilium-routed pods and obtains its deployment
 			// role credentials from IMDSv2. The measured pod path consumes two

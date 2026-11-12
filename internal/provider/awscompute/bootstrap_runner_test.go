@@ -101,14 +101,14 @@ func TestHostLaunchUsesStableTokenAndMetadataProtection(t *testing.T) {
 func TestHostLaunchMetadataHopLimitMatchesRoleNetwork(t *testing.T) {
 	for _, tc := range []struct {
 		role string
-		want int32
+		want int
 	}{
 		{role: "platform", want: 3},
 		{role: "cluster-cluster-b", want: 3},
 		{role: "spire", want: 2},
 	} {
 		t.Run(tc.role, func(t *testing.T) {
-			var hopLimit int32
+			var hopLimit int
 			aws := &fakeAWS{call: func(service, op string, input any) (any, error) {
 				switch service + ":" + op {
 				case "ec2:describe-instances":
@@ -116,7 +116,7 @@ func TestHostLaunchMetadataHopLimitMatchesRoleNetwork(t *testing.T) {
 				case "ec2:run-instances":
 					launch := input.(map[string]any)
 					metadata := launch["MetadataOptions"].(map[string]any)
-					hopLimit = metadata["HttpPutResponseHopLimit"].(int32)
+				hopLimit = metadata["HttpPutResponseHopLimit"].(int)
 					if metadata["HttpTokens"] != "required" {
 						t.Fatal("IMDSv2 tokens must be required")
 					}
