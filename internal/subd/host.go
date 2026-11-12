@@ -23,9 +23,11 @@ type clusterJoinHost interface {
 }
 
 type LocalHost struct {
-	run           func(context.Context, string, ...string) error
-	Kubeconfig    string
-	KubeletConfig string
+	run            func(context.Context, string, ...string) error
+	Kubeconfig     string
+	KubeletConfig  string
+	KubeletDataDir string
+	workerJoinDir  string
 }
 
 var serviceName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.@:-]*\.service$`)
@@ -106,5 +108,12 @@ func hostCommand(ctx context.Context, command string, args ...string) error {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	// Command output may contain repository credentials; never journal it.
+	return exec.CommandContext(ctx, command, args...).Run()
+}
+
+func hostJoinCommand(ctx context.Context, command string, args ...string) error {
+	// The cluster-join request supplies the bounded operation deadline. In
+	// particular, kubeadm may need more than two minutes for TLS bootstrap.
+	// Command output may contain credentials; never journal it.
 	return exec.CommandContext(ctx, command, args...).Run()
 }
