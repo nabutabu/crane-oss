@@ -116,7 +116,7 @@ func TestHostLaunchMetadataHopLimitMatchesRoleNetwork(t *testing.T) {
 				case "ec2:run-instances":
 					launch := input.(map[string]any)
 					metadata := launch["MetadataOptions"].(map[string]any)
-				hopLimit = metadata["HttpPutResponseHopLimit"].(int)
+					hopLimit = metadata["HttpPutResponseHopLimit"].(int)
 					if metadata["HttpTokens"] != "required" {
 						t.Fatal("IMDSv2 tokens must be required")
 					}
