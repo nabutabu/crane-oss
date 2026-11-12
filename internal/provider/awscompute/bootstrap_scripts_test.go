@@ -363,7 +363,7 @@ func TestControlPlanesConfigureAndRepairProviderIdentity(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, required := range []string{"latest/api/token", "latest/meta-data/instance-id", "placement/availability-zone", "--provider-id=$PROVIDER_ID", "cmp -s", "InternalIP", "conflicting provider identity", "kubectl patch node", "test \"$(kubectl get node"} {
+		for _, required := range []string{"latest/api/token", "latest/meta-data/instance-id", "placement/availability-zone", "--provider-id=$PROVIDER_ID", "cmp -s", "InternalIP", "conflicting provider identity", "kubectl patch node", "test \"$(kubectl get node", "name: crane-worker-bootstrap-config", "resources: [\"configmaps\"]", "resourceNames: [\"kubeadm-config\", \"kubelet-config\"]", "verbs: [\"get\"]", "name: system:bootstrappers:crane"} {
 			if !strings.Contains(script, required) {
 				t.Errorf("%s missing %s", name, required)
 			}
