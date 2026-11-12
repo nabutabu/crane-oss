@@ -98,6 +98,47 @@ func TestHostLaunchUsesStableTokenAndMetadataProtection(t *testing.T) {
 	}
 }
 
+func TestHostLaunchMetadataHopLimitMatchesRoleNetwork(t *testing.T) {
+	for _, tc := range []struct {
+		role string
+		want int32
+	}{
+		{role: "platform", want: 3},
+		{role: "cluster-cluster-b", want: 3},
+		{role: "spire", want: 2},
+	} {
+		t.Run(tc.role, func(t *testing.T) {
+			var hopLimit int32
+			aws := &fakeAWS{call: func(service, op string, input any) (any, error) {
+				switch service + ":" + op {
+				case "ec2:describe-instances":
+					return map[string]any{"Reservations": []any{}}, nil
+				case "ec2:run-instances":
+					launch := input.(map[string]any)
+					metadata := launch["MetadataOptions"].(map[string]any)
+					hopLimit = metadata["HttpPutResponseHopLimit"].(int32)
+					if metadata["HttpTokens"] != "required" {
+						t.Fatal("IMDSv2 tokens must be required")
+					}
+					return map[string]any{"Instances": []any{map[string]string{"InstanceId": "i-new", "PrivateIpAddress": "10.80.0.10"}}}, nil
+				case "ssm:describe-instance-information":
+					return map[string]any{"InstanceInformationList": []any{map[string]string{"InstanceId": "i-new", "PingStatus": "Online"}}}, nil
+				default:
+					t.Fatalf("unexpected call %s:%s", service, op)
+					return nil, nil
+				}
+			}}
+			_, err := ensureHost(context.Background(), aws, bootstrapConfig{Name: "test", AWS: AWSConfig{Region: "us-west-2", AccountID: "123456789012"}}, Infrastructure{PublicSubnetIDs: []string{"subnet-1"}}, tc.role, "ami", "t3.small", 20, "profile", "sg")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if hopLimit != tc.want {
+				t.Fatalf("hop limit = %d, want %d", hopLimit, tc.want)
+			}
+		})
+	}
+}
+
 func TestPauseHonorsCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

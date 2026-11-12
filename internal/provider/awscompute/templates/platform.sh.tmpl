@@ -82,6 +82,36 @@ chmod 600 /root/.kube/config
 export KUBECONFIG="$KUBECONFIG_FILE"
 [[ template "reconcile-provider-identity" . ]]
 
+# Crane uses a dedicated bootstrap-token group rather than kubeadm's
+# auto-approved default group. Allow it to read only the cluster configuration
+# ConfigMaps kubeadm needs during discovery and node configuration.
+kubectl apply -f - <<'YAML'
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: crane-worker-bootstrap-config
+  namespace: kube-system
+rules:
+- apiGroups: [""]
+  resources: ["configmaps"]
+  resourceNames: ["kubeadm-config", "kubelet-config"]
+  verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: crane-worker-bootstrap-config
+  namespace: kube-system
+subjects:
+- kind: Group
+  name: system:bootstrappers:crane
+  apiGroup: rbac.authorization.k8s.io
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: crane-worker-bootstrap-config
+YAML
+
 # ---- Cilium (pinned chart) -------------------------------------------------
 step "installing and waiting for Cilium"
 helm repo add cilium https://helm.cilium.io/ --force-update >/dev/null

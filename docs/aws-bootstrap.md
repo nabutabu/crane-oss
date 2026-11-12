@@ -65,6 +65,19 @@ the command from this checkout. Packer builds the deployment AMI.
      -bootstrap-config bootstrap.example.json
    ```
 
+Platform and additional-cluster control-plane instances require IMDSv2 and use
+an IMDS response hop limit of 3 so Cilium-routed Dominator pods can obtain the
+instance role credentials needed for AWS provisioning. Pods on those instances
+that can reach IMDS can also obtain that instance role; keep platform workloads
+and their network access restricted accordingly. SPIRE and worker instances
+retain a hop limit of 2.
+
+Each Crane-managed Kubernetes cluster grants the dedicated
+`system:bootstrappers:crane` group read access only to the `kubeadm-config` and
+`kubelet-config` ConfigMaps in `kube-system`, which kubeadm needs to join
+workers. CSR approval remains separately constrained to Dominator's verified
+worker identity checks.
+
 ## Configure the Collector backend
 
 The platform bootstrap installs the shared OpenTelemetry Collector after it

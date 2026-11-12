@@ -56,13 +56,20 @@ func ensureHost(ctx context.Context, aws AWSClient, cfg bootstrapConfig, infra I
 		h = found[0]
 	} else {
 		token := sha256.Sum256([]byte(cfg.AWS.AccountID + "/" + cfg.AWS.Region + "/" + cfg.Name + "/" + role))
+		hopLimit := int32(2)
+		if role == "platform" || strings.HasPrefix(role, "cluster-") {
+			// Dominator runs in Cilium-routed pods and obtains its deployment
+			// role credentials from IMDSv2. The measured pod path consumes two
+			// hops before the response reaches the pod network namespace.
+			hopLimit = 3
+		}
 		var launched struct {
 			Instances []struct {
 				InstanceID       string `json:"InstanceId"`
 				PrivateIPAddress string
 			}
 		}
-		launch := map[string]any{"ImageId": ami, "InstanceType": instanceType, "MinCount": 1, "MaxCount": 1, "ClientToken": hex.EncodeToString(token[:]), "IamInstanceProfile": map[string]string{"Name": profile}, "MetadataOptions": map[string]any{"HttpTokens": "required", "HttpPutResponseHopLimit": 2}, "NetworkInterfaces": []map[string]any{{"DeviceIndex": 0, "SubnetId": infra.PublicSubnetIDs[0], "Groups": []string{sg}, "AssociatePublicIpAddress": true}}, "BlockDeviceMappings": []map[string]any{{"DeviceName": "/dev/sda1", "Ebs": map[string]any{"VolumeSize": storage, "VolumeType": "gp3", "Encrypted": true, "DeleteOnTermination": true}}}, "TagSpecifications": []map[string]any{{"ResourceType": "instance", "Tags": []map[string]string{{"Key": "Name", "Value": cfg.Name + "-" + role}, {"Key": "CraneBootstrap", "Value": cfg.Name}, {"Key": "BootstrapRole", "Value": role}}}, {"ResourceType": "volume", "Tags": []map[string]string{{"Key": "CraneBootstrap", "Value": cfg.Name}}}}}
+		launch := map[string]any{"ImageId": ami, "InstanceType": instanceType, "MinCount": 1, "MaxCount": 1, "ClientToken": hex.EncodeToString(token[:]), "IamInstanceProfile": map[string]string{"Name": profile}, "MetadataOptions": map[string]any{"HttpTokens": "required", "HttpPutResponseHopLimit": hopLimit}, "NetworkInterfaces": []map[string]any{{"DeviceIndex": 0, "SubnetId": infra.PublicSubnetIDs[0], "Groups": []string{sg}, "AssociatePublicIpAddress": true}}, "BlockDeviceMappings": []map[string]any{{"DeviceName": "/dev/sda1", "Ebs": map[string]any{"VolumeSize": storage, "VolumeType": "gp3", "Encrypted": true, "DeleteOnTermination": true}}}, "TagSpecifications": []map[string]any{{"ResourceType": "instance", "Tags": []map[string]string{{"Key": "Name", "Value": cfg.Name + "-" + role}, {"Key": "CraneBootstrap", "Value": cfg.Name}, {"Key": "BootstrapRole", "Value": role}}}, {"ResourceType": "volume", "Tags": []map[string]string{{"Key": "CraneBootstrap", "Value": cfg.Name}}}}}
 		for attempt := 0; ; attempt++ {
 			err := aws.Call(ctx, "ec2", "run-instances", launch, &launched)
 			if err == nil {
