@@ -93,6 +93,23 @@ Exact retries can rotate credentials; changed contracts and older fences fail.
 An interrupted bootstrap can refresh its token only after its existing cluster
 discovery configuration matches the pinned destination.
 
+On new deployments, an interrupted join with neither `kubelet.conf` nor
+`/var/lib/kubelet/config.yaml` is retried through kubeadm. Subd first validates
+any bootstrap kubeconfig and generated `pki/ca.crt` against the requested cluster
+CA pin (and the endpoint in the kubeconfig), then stops kubelet and clears only
+bootstrap credentials, generated instance configuration/flags, and that matching
+CA. The bootstrap kubeconfig is removed first and the CA last, so interruption
+can resume safely with just the CA left. Conflicting identities, unsafe file
+paths and control-plane artifacts prevent cleanup. A configured kubelet instead
+refreshes bootstrap credentials and resumes; a completed identity is preserved.
+
+Local `worker join failed` events include operation/host IDs and a fixed
+`failure_category`: `cleanup_validation`, `cleanup_execution`, `preflight`,
+`discovery`, `kubelet_bootstrap`, `timeout`, or `command_failed`. Kubeadm output
+is bounded in memory and used only to classify known signatures; it is never
+logged or returned. Unknown signatures remain `command_failed`. These categories
+do not prove the underlying cause without further credential-safe inspection.
+
 `POST /v1/cluster-membership` is restricted to the configured writer identity.
 Its fresh challenge is signed with the host's kubelet private key; the response
 contains the public client certificate, contract fingerprint, Node name and UID.

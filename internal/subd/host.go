@@ -110,10 +110,3 @@ func hostCommand(ctx context.Context, command string, args ...string) error {
 	// Command output may contain repository credentials; never journal it.
 	return exec.CommandContext(ctx, command, args...).Run()
 }
-
-func hostJoinCommand(ctx context.Context, command string, args ...string) error {
-	// The cluster-join request supplies the bounded operation deadline. In
-	// particular, kubeadm may need more than two minutes for TLS bootstrap.
-	// Command output may contain credentials; never journal it.
-	return exec.CommandContext(ctx, command, args...).Run()
-}
