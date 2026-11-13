@@ -110,9 +110,26 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
   name: crane-worker-bootstrap-config
+---
+# kubeadm checks for an existing Node before writing kubelet configuration.
+# Reuse its read-only node lookup role without granting default CSR approval.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: crane-bootstrap-node-discovery
+subjects:
+- kind: Group
+  name: system:bootstrappers:crane
+  apiGroup: rbac.authorization.k8s.io
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kubeadm:get-nodes
 YAML
 
 # ---- Cilium (pinned chart) -------------------------------------------------
+# Its agents must initialize networking before Crane releases worker quarantine,
+# and must tolerate Cilium's own startup taint when an agent is replaced.
 step "installing and waiting for Cilium"
 helm repo add cilium https://helm.cilium.io/ --force-update >/dev/null
 helm repo update >/dev/null
@@ -127,6 +144,13 @@ helm upgrade --install cilium cilium/cilium \
   --set 'tolerations[1].key=node.kubernetes.io/not-ready' \
   --set 'tolerations[1].operator=Exists' \
   --set 'tolerations[1].effect=NoSchedule' \
+  --set 'tolerations[2].key=platform.crane.io/provisioning' \
+  --set 'tolerations[2].operator=Equal' \
+  --set 'tolerations[2].value=pending' \
+  --set 'tolerations[2].effect=NoSchedule' \
+  --set 'tolerations[3].key=node.cilium.io/agent-not-ready' \
+  --set 'tolerations[3].operator=Exists' \
+  --set 'tolerations[3].effect=NoSchedule' \
   --set 'operator.tolerations[0].key=node-role.kubernetes.io/control-plane' \
   --set 'operator.tolerations[0].operator=Exists' \
   --set 'operator.tolerations[0].effect=NoSchedule' \
