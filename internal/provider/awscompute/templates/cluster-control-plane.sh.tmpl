@@ -51,6 +51,21 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
   name: crane-worker-bootstrap-config
+---
+# kubeadm checks for an existing Node before writing kubelet configuration.
+# Reuse its read-only node lookup role without granting default CSR approval.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: crane-bootstrap-node-discovery
+subjects:
+- kind: Group
+  name: system:bootstrappers:crane
+  apiGroup: rbac.authorization.k8s.io
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kubeadm:get-nodes
 YAML
 
 kubectl get --raw=/readyz >/dev/null

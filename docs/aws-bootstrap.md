@@ -75,8 +75,15 @@ retain a hop limit of 2.
 Each Crane-managed Kubernetes cluster grants the dedicated
 `system:bootstrappers:crane` group read access only to the `kubeadm-config` and
 `kubelet-config` ConfigMaps in `kube-system`, which kubeadm needs to join
-workers. CSR approval remains separately constrained to Dominator's verified
-worker identity checks.
+workers. It also binds that group to kubeadm's read-only `kubeadm:get-nodes`
+role so kubeadm can check for an existing Node before configuring kubelet.
+CSR approval remains separately constrained to Dominator's verified worker
+identity checks; the group does not gain kubeadm's default auto-approval.
+
+Cilium agents tolerate Crane's `platform.crane.io/provisioning=pending:NoSchedule`
+quarantine and Cilium's `node.cilium.io/agent-not-ready:NoSchedule` startup taint.
+This lets networking initialize on new workers and recover after agent restarts.
+Crane removes quarantine only after the existing worker readiness gates pass.
 
 ## Configure the Collector backend
 
